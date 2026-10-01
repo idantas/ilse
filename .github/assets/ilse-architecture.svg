@@ -158,7 +158,7 @@
 <text x="841.5" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">classes as JSON</text>
 <rect x="946.25" y="1126" width="49.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
 <text x="952.25" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">~$0.01</text>
-<rect x="740" y="1220" width="300" height="112" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
+<rect x="740" y="1220" width="300" height="136" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="756" y="1245" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">2</text>
 <text x="773.5" y="1245" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Agent</text>
 <rect x="756" y="1256" width="174.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
@@ -173,6 +173,8 @@
 <text x="921.0" y="1293" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">reads a slice</text>
 <rect x="756" y="1304" width="205.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
 <text x="762" y="1317" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">account limit → queue → resumes</text>
+<rect x="756" y="1328" width="224.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="762" y="1341" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">broke the syntax → fixes or undoes</text>
 <rect x="740" y="1452" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25" stroke-dasharray="5 4"/>
 <text x="756" y="1477" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">·</text>
 <text x="773.5" y="1477" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Or the agent pulls</text>
@@ -186,10 +188,10 @@
 <text x="898.0" y="978.0" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#6b6b6b" text-anchor="start">classes of 1 element</text>
 <path d="M 890.0 1154 L 890.0 1220" fill="none" stroke="#FA6900" stroke-width="1.4" marker-end="url(#arrow-brand)"/>
 <text x="898.0" y="1178" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">needs more → agent</text>
-<path d="M 700 1002.0 L 722 1002.0 L 722 1276.0 L 740 1276.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 700 1002.0 L 722 1002.0 L 722 1288.0 L 740 1288.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <text x="714" y="1132" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#6b6b6b" text-anchor="middle" transform="rotate(-90 714 1132)">structure · create</text>
-<path d="M 780 1332 L 780 1348 L 836 1348 L 836 1334" fill="none" stroke="#FA6900" stroke-width="1.4" marker-end="url(#arrow-brand)"/>
-<text x="846" y="1353" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="15" font-weight="400" fill="#FA6900" text-anchor="start">nothing changed → one tier up</text>
+<path d="M 780 1356 L 780 1372 L 836 1372 L 836 1358" fill="none" stroke="#FA6900" stroke-width="1.4" marker-end="url(#arrow-brand)"/>
+<text x="846" y="1377" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="15" font-weight="400" fill="#FA6900" text-anchor="start">nothing changed → one tier up</text>
 <rect x="1080" y="1090" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="1096" y="1115" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">7</text>
 <text x="1113.5" y="1115" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">File changes</text>
@@ -215,8 +217,8 @@
 <text x="1194.0" y="1501" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">ilse_changes</text>
 <path d="M 1040 1122.0 L 1080 1122.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <path d="M 550.0 1154 L 550.0 1196 L 1060 1196 L 1060 1132.0 L 1080 1132.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
-<path d="M 1040 1262.0 L 1060 1262.0 L 1060 1196" fill="none" stroke="#9b9b9b" stroke-width="1.4"/>
-<path d="M 1040 1484.0 L 1060 1484.0 L 1060 1262.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" stroke-dasharray="4 4"/>
+<path d="M 1040 1274.0 L 1060 1274.0 L 1060 1196" fill="none" stroke="#9b9b9b" stroke-width="1.4"/>
+<path d="M 1040 1484.0 L 1060 1484.0 L 1060 1274.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" stroke-dasharray="4 4"/>
 <path d="M 1230.0 1154 L 1230.0 1220" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <path d="M 1230.0 1308 L 1230.0 1452" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <rect x="60" y="1090" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>

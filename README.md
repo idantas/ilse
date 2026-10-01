@@ -84,7 +84,7 @@ Every annotation takes the cheapest route that can apply it:
 
 1. **Class swap — no AI.** A property-panel edit that maps cleanly to a Tailwind class (gap 12px → 16px, weight 500 → 600, a color from your tokens, a border, a width), or retyped text that is written as plain text in the JSX, is changed by Ilse itself. Instant, no tokens.
 2. **Quick — one call, fast model.** A note about one located element that is really a class change ("a bit more space", "stronger title") goes to your agent's fast model with only that element's code, no tools, and comes back as "remove these classes, add those". Ilse applies it. About $0.01 and a few seconds. Notes that plainly need more than classes ("remove", "swap the icon", "a carousel") skip straight to the agent, and the decisions for a batch are asked in parallel, so one slow answer doesn't hold up the rest.
-3. **Agent.** Anything bigger — new UI, structure, several files — runs your agent, isolated (no personal `CLAUDE.md` or memory, the project's own instructions only), without a shell, on a model sized to the task. If a cheap run changes no file, it is retried once a tier up.
+3. **Agent.** Anything bigger — new UI, structure, several files — runs your agent, isolated (no personal `CLAUDE.md` or memory, the project's own instructions only), without a shell, on a model sized to the task. If a cheap run changes no file, it is retried once a tier up. Since the agent can't build your project, Ilse parses every file it changed: if one no longer parses, the agent gets one turn to fix exactly that error, and if it is still broken the whole batch is undone and the card shows where.
 
 **Models.** Two tiers per agent, `fast` and `strong`; open-ended work keeps the agent's own default. Claude ships with `haiku` / `sonnet`; set your own in `.ilserc.json`:
 
@@ -135,7 +135,7 @@ Ilse's edits land through another process, so the session that later commits did
 - **3 capture modes:** click an element, select text, or draw an area
 - **Property panel:** layout (width/height as Fixed · Hug · Fill, flow, alignment, gap, padding and margin per side), typography, colors, stroke and radius — with your project's scale and tokens
 - **Edit text:** a text element gets a *Text* field at the top of the panel. Type and see it on the page; text that comes from a variable, prop or translation goes to the agent, which changes it at the source.
-- **Remove an element:** *Remove element* at the bottom of the panel, or Delete/Backspace while the note is empty. It disappears on screen right away; the agent takes it out of the code (from a `.map` list, only that item unless *Apply to* says all). The command's × or ⌘Z brings it back.
+- **Remove an element:** *Remove element* at the bottom of the panel, or the Delete key (fn+⌫ on a Mac) while the note is empty — ⌫ works once focus is out of the note. It disappears on screen right away; the agent takes it out of the code (from a `.map` list, only that item unless *Apply to* says all). The command's × or ⌘Z brings it back.
 - **Move for real:** drag to reorder, or into and out of containers, and the page re-flows live
 - **Move and resize:** drag or resize elements with snap-to-grid, and the gesture becomes the instruction
 - **Reference images:** paste or upload a screenshot or SVG

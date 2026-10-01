@@ -647,6 +647,13 @@ function AnnotationPopover({
             ))}
           </div>
         )}
+        {/* Remove + a written request go to the agent as one job — easy to miss
+            when the removal came from a stray key before typing */}
+        {summary?.some(l => l.key === 'remove') && note.trim() && (
+          <div style={{ padding: '6px 12px 0', fontSize: 11, lineHeight: 1.4, color: '#8A4B12' }}>
+            {t('toolbar.removeWithNote')}
+          </div>
+        )}
         <div
           ref={(el) => {
             if (!el) return;
@@ -2453,13 +2460,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   }, []);
 
   // Delete / Backspace removes the selected element, like in a design tool —
-  // never while typing. The note takes focus as soon as the card opens, so an
-  // empty note counts as "not typing": there is nothing in it to delete.
+  // never while typing. The note takes focus as soon as the card opens; there
+  // only the forward Delete (fn+⌫ on a Mac) counts: ⌫ in an empty box is a
+  // reflex — it once queued a removal on top of a whole new page request.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key !== 'Delete' && e.key !== 'Backspace') || e.metaKey || e.ctrlKey || e.altKey) return;
+      if ((e.key !== 'Delete' && e.key !== 'Backspace') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
       const el = e.target as HTMLElement | null;
-      const emptyNote = el?.hasAttribute('data-ilse-note') && !el.textContent;
+      const emptyNote = e.key === 'Delete' && el?.hasAttribute('data-ilse-note') && !el.textContent;
       if (el && !emptyNote && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
       if (!pendingCaptureRef.current || pendingCaptureRef.current.markerType !== 'element') return;
       e.preventDefault();

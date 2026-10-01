@@ -46,6 +46,7 @@ EN = {
     'ajuste do painel': 'panel tweak', 'classes de 1 elemento': 'classes of 1 element',
     'precisa de mais → agente': 'needs more → agent', 'estrutura · criar': 'structure · create',
     'nada mudou → sobe 1 nível': 'nothing changed → one tier up',
+    'quebrou a sintaxe → corrige ou desfaz': 'broke the syntax → fixes or undoes',
     'Arquivo muda': 'File changes', 'a página atualiza': 'the page updates',
     'Registra': 'Records', 'desfazer ⌘Z': 'undo ⌘Z', 'Commit com contexto': 'Commit with context',
     'Vê na hora': 'Sees it live', 'na própria tela': 'on the real screen',
@@ -171,7 +172,7 @@ note(768, u5['cy'] - 14, ['o agente não procura', 'chega sabendo onde, o que j�
 
 d0 = box('d0', 2, 1090, '0', 'Troca de classe', [['sem IA', '$0 · instantâneo']])
 d1 = box('d1', 3, 1090, '1', 'Rápido', [['modelo fast', 'JSON de classes', '~$0,01']])
-d3 = box('d3', 3, 1220, '2', 'Agente', [['claude -p · codex · cursor', 'sessão nova'], ['sem Bash', 'fast / strong', 'lê só o trecho'], ['limite da conta → fila → retoma']])
+d3 = box('d3', 3, 1220, '2', 'Agente', [['claude -p · codex · cursor', 'sessão nova'], ['sem Bash', 'fast / strong', 'lê só o trecho'], ['limite da conta → fila → retoma'], ['quebrou a sintaxe → corrige ou desfaz']])
 mcp = box('mcp', 3, 1452, '·', 'Ou o agente puxa', [['MCP', 'ilse_watch']], dashed=True)
 arrow([(u6['cx'], u6['b']), (d0['cx'], d0['y'])], label='ajuste do painel', lx=u6['cx'] + 8, ly=u6['b'] + 20, lanchor='start')
 arrow([(u6['r'], u6['cy'] - 6), (d1['cx'], u6['cy'] - 6), (d1['cx'], d1['y'])], label='classes de 1 elemento', lx=d1['cx'] + 8, ly=u6['cy'] - 14, lanchor='start')
