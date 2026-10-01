@@ -1,0 +1,15 @@
+# Ilse
+
+> The designer's eye inside the code agent. Point at what's wrong in the running app in the browser; your own coding agent (Claude Code, Codex, Cursor CLI, Gemini CLI) fixes it in the code — or Ilse applies it itself when no AI is needed. Local only, no API keys of its own. MIT.
+
+## Use it
+
+- Install and run, in a React project with its dev server running: `npx github:idantas/ilse` (opens the app at http://localhost:4700 with the toolbar)
+- [README](README.md): setup, how it works, the cost ladder, usage limits, CLI, MCP
+
+## Work on it
+
+- [AGENTS.md](AGENTS.md): commands, rules, code map, recipes, definition of done — start here
+- [CONTRIBUTING.md](CONTRIBUTING.md): issues and pull requests
+- [SECURITY.md](SECURITY.md): reporting vulnerabilities, what Ilse guarantees
+- [Architecture diagram](.github/assets/ilse-architecture.svg)

@@ -11,6 +11,12 @@ npx github:idantas/ilse
 
 That's the whole setup. No import, no changes to your project.
 
+Or ask your coding agent:
+
+```
+Install and run Ilse in this project — see https://github.com/idantas/ilse
+```
+
 > Ilse 0.5 isn't on npm yet, so this installs straight from GitHub and builds on the first run (takes a minute). To keep the command around, install it once — in two steps, because npm can't build a package during a global install straight from git:
 >
 > ```bash
@@ -261,7 +267,7 @@ Ilse is the designer's eye inside the agent: you point at what's wrong, the agen
 
 ## Contributing
 
-Issues and pull requests are welcome — start with [CONTRIBUTING.md](CONTRIBUTING.md). The code map and principles are in [AGENTS.md](AGENTS.md). Report security problems privately: [SECURITY.md](SECURITY.md).
+Issues and pull requests are welcome. The repo is built with coding agents and documented for them first: open your agent in the repo and it reads [AGENTS.md](AGENTS.md) — commands, rules, code map, recipes and what "done" means. Humans: same file, plus [CONTRIBUTING.md](CONTRIBUTING.md). Security problems go privately: [SECURITY.md](SECURITY.md).
 
 ## License
 
