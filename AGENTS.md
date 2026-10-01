@@ -83,4 +83,5 @@ Add a key with `pt` and `en` to `src/i18n/messages.ts` and use `t('key')`. Don't
 - [ ] New logic has tests; UI changes were tried in a browser — or the PR says they weren't.
 - [ ] New strings exist in English and Portuguese.
 - [ ] README updated if users see the change (commands, flags, behavior).
+- [ ] Flow changed (a new step, path, loop or setup question)? Update `scripts/architecture-svg.py` and regenerate both diagrams: `python3 scripts/architecture-svg.py en && python3 scripts/architecture-svg.py pt`.
 - [ ] The rules above still hold.
