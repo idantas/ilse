@@ -34,7 +34,7 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/bridge/ws-server.ts` | WebSocket server (loopback, origin check), toolbar ↔ CLI messages |
 | `src/bridge/augment.ts` | What the agent reads: source block, read hint, component card, Ilse history, scope |
 | `src/context/locate.ts` | Browser element → `file:line` (AST + React dev stack); component card |
-| `src/context/token-swap.ts` | Panel/class edits written into the JSX `className`, no AI (`FAMILIES` maps CSS → Tailwind) |
+| `src/context/token-swap.ts` | Panel/class edits written into the JSX `className`, and retyped plain JSX text, no AI (`FAMILIES` maps CSS → Tailwind) |
 | `src/agent/executor.ts` | Spawns the agent CLI, parses its stream, builds the batch prompt, failure reasons |
 | `src/agent/agent-profile.ts` | Model tier per task, isolated env, Claude account, project instructions |
 | `src/agent/quick-edit.ts` | Quick path: fast model → JSON `{remove, add, needsAgent}` → applied by token-swap |

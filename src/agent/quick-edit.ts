@@ -71,6 +71,8 @@ export const QUICK_SCHEMA = JSON.stringify({
 export function quickBlocker(a: Annotation, cwd: string, env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.ILSE_QUICK === '0') return 'desligado';
   if (a.remove) return 'remover elemento';
+  // The quick path answers in classes; a text the swap couldn't place needs the agent
+  if (a.textEdit) return 'texto';
   if (!INTENTS.has(a.intent ?? 'fix')) return `intent ${a.intent}`;
   if (a.imageRef || a.imageRefs?.length) return 'tem imagem';
   if (!designerWords(a) && !a.styleData?.changes.length) return 'sem pedido';

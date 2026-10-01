@@ -177,6 +177,11 @@ function parseFrames(v: unknown): LocateQuery['frames'] {
   return out.element || out.owner ? out : undefined;
 }
 
+function parseTextEdit(v: unknown): Annotation['textEdit'] {
+  const t = v as { from?: unknown; to?: unknown } | null;
+  return t && typeof t.from === 'string' && typeof t.to === 'string' && t.from !== t.to ? { from: t.from, to: t.to } : undefined;
+}
+
 function parseScope(v: unknown): Annotation['scope'] {
   const s = v as { component?: unknown; count?: unknown; choice?: unknown } | undefined;
   if (!s || typeof s.component !== 'string' || typeof s.count !== 'number' || (s.choice !== 'one' && s.choice !== 'all')) return undefined;
@@ -195,6 +200,7 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
         designerNote: typeof msg.designerNote === 'string' ? msg.designerNote : undefined,
         scope: parseScope(msg.scope),
         remove: msg.remove === true ? true : undefined,
+        textEdit: parseTextEdit(msg.textEdit),
         element: (msg.element as string) ?? '',
         component: msg.component as string | undefined,
         styles: (msg.styles as Record<string, string>) ?? {},

@@ -17,7 +17,7 @@ import { checkForUpdate } from './update-check.js';
 import { startProxy } from '../proxy/server.js';
 import { waitForDevServer } from '../proxy/find-dev-server.js';
 import { spawn } from 'node:child_process';
-import { planTokenSwap, applyTokenSwap, describeSwap } from '../context/token-swap.js';
+import { planTokenSwap, planTextSwap, applyTokenSwap, describeSwap, type SwapPlan } from '../context/token-swap.js';
 import {
   takeSnapshot, diffSnapshot, discardChangeSet, reapplyChangeSet, pushUndo, popUndo, pushRedo, popRedo, undoState, summarizeChangeSet, type ChangeSet,
 } from '../agent/changeset.js';
@@ -439,6 +439,15 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   const applySwaps = (annotations: Annotation[]): Annotation[] => {
     const rest: Annotation[] = [];
     for (const ann of annotations) {
+      // Text only (no panel styles, nothing written): straight into the JSX when it's literal there
+      if (ann.textEdit) {
+        const simple = !ann.designerNote && !ann.styleData?.changes.length && !ann.remove && !ann.rearrangeData
+          && (!ann.scope || swapMatchesScope(ann));
+        const res = simple ? planTextSwap(ann, cwdRoot) : { ok: false as const, reason: 'texto com outros pedidos' };
+        if (!res.ok) { journal.swap(ann.id, false, res.reason); rest.push(ann); continue; }
+        commitSwap(ann, res.plan);
+        continue;
+      }
       if (ann.intent !== 'style' || !ann.styleData?.changes.length) { rest.push(ann); continue; }
       // The designer also wrote something ("aplique em todos os cards") — that needs
       // an agent to read it; a class swap would apply the panel values and drop the words
@@ -454,22 +463,25 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         rest.push(ann);
         continue;
       }
-      announce(ann);
-      applyTokenSwap(res.plan, cwdRoot);
-      journal.swap(ann.id, true);
-      const summary = describeSwap(res.plan);
-      console.log(chalk.dim('  ') + chalk.green('✓') + ' ' + chalk.dim(`#${ann.id}`) + ' ' + summary);
-      const resolved = resolveAndLog(ann.id, summary);
-      if (resolved) broadcast({ type: 'resolved', annotation: resolved });
-      recordUndo({
-        id: `sw-${ann.id}`,
-        annotationIds: [ann.id],
-        label: summary,
-        files: [{ path: res.plan.file, before: res.plan.before, after: res.plan.after }],
-        createdAt: Date.now(),
-      }, 'swap');
+      commitSwap(ann, res.plan);
     }
     return rest;
+  };
+  const commitSwap = (ann: Annotation, plan: SwapPlan) => {
+    announce(ann);
+    applyTokenSwap(plan, cwdRoot);
+    journal.swap(ann.id, true);
+    const summary = describeSwap(plan);
+    console.log(chalk.dim('  ') + chalk.green('✓') + ' ' + chalk.dim(`#${ann.id}`) + ' ' + summary);
+    const resolved = resolveAndLog(ann.id, summary);
+    if (resolved) broadcast({ type: 'resolved', annotation: resolved });
+    recordUndo({
+      id: `sw-${ann.id}`,
+      annotationIds: [ann.id],
+      label: summary,
+      files: [{ path: plan.file, before: plan.before, after: plan.after }],
+      createdAt: Date.now(),
+    }, 'swap');
   };
 
   // Quick path: the fast model answers "which classes" as JSON, Ilse applies it.

@@ -428,3 +428,44 @@ export function describeSwap(plan: SwapPlan): string {
   const parts = plan.edits.map(e => `${e.removed.length ? e.removed.join(' ') : '∅'} → ${e.added}`);
   return `${parts.join(', ')} em ${plan.file}:${plan.line} (sem IA)`;
 }
+
+// ── Text: the panel's retyped text, written where the JSX has it ────────────
+
+/**
+ * Replace the located element's text when it is plain JSX text (`<h2>Plans</h2>`).
+ * Anything else — `{t('plans')}`, `{title}`, text mixed with expressions — lives
+ * somewhere the agent has to find, so it goes there.
+ */
+export function planTextSwap(annotation: Annotation, cwd: string): SwapResult {
+  const edit = annotation.textEdit;
+  if (!edit) return { ok: false, reason: 'sem texto' };
+  const hit = annotation.source?.[0];
+  if (!hit || hit.kind !== 'element') return { ok: false, reason: 'elemento não localizado' };
+  const second = annotation.source?.[1];
+  if (second && second.kind === 'element' && second.score >= hit.score) return { ok: false, reason: 'localização ambígua' };
+  const abs = join(cwd, hit.file);
+  if (!existsSync(abs)) return { ok: false, reason: 'arquivo não encontrado' };
+  const code = readFileSync(abs, 'utf8');
+  const parsed = parseCode(code, abs);
+  if (!parsed.ok) return { ok: false, reason: 'arquivo não parseou' };
+  const tag = /^([a-z][\w-]*)/.exec(annotation.element ?? '')?.[1];
+  const el = jsxAt(parsed.value, hit.line, tag);
+  if (!el) return { ok: false, reason: 'nó JSX não encontrado' };
+
+  const kids = el.children;
+  if (kids.length === 0 || !kids.every(k => k.type === 'JSXText')) return { ok: false, reason: 'texto dinâmico' };
+  const start = kids[0].start, end = kids[kids.length - 1].end;
+  if (start == null || end == null) return { ok: false, reason: 'nó JSX não encontrado' };
+  const raw = code.slice(start, end);
+  const squash = (x: string) => x.replace(/\s+/g, ' ').trim();
+  // What the browser showed must be what the file says — else it's another element's text
+  if (squash(raw) !== squash(edit.from)) return { ok: false, reason: 'texto do arquivo difere' };
+
+  // Characters JSX would read as code go in as a string expression
+  const next = /[{}<>]/.test(edit.to) || edit.to.includes('\n') ? `{${JSON.stringify(edit.to)}}` : edit.to;
+  const lead = raw.match(/^\s*/)![0];
+  const trail = raw.match(/\s*$/)![0];
+  const after = code.slice(0, start) + lead + next + trail + code.slice(end);
+  if (after === code) return { ok: false, reason: 'nada a mudar' };
+  return { ok: true, plan: { file: hit.file, line: hit.line, before: code, after, edits: [{ property: 'text', removed: [squash(edit.from)], added: next }] } };
+}

@@ -75,6 +75,8 @@ export interface Annotation {
   scope?: { component: string; count: number; choice: 'one' | 'all' };
   /** Remove the element (structural: always the agent, never the quick path) */
   remove?: boolean;
+  /** The element's text, retyped in the property panel */
+  textEdit?: { from: string; to: string };
   element: string;           // CSS selector (e.g. "button.cta-primary")
   component?: string;        // React component name
   styles: Record<string, string>;  // computed styles

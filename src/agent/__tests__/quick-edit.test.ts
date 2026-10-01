@@ -34,6 +34,7 @@ describe('quick path', () => {
     expect(quickBlocker(ann(), cwd, { ILSE_QUICK: '0' })).toBe('desligado');
     // Removing is structural: always the agent
     expect(quickBlocker(ann({ remove: true }), cwd, {})).toBe('remover elemento');
+    expect(quickBlocker(ann({ textEdit: { from: 'a', to: 'b' } }), cwd, {})).toBe('texto');
     expect(quickBlocker(ann({ intent: 'create' }), cwd, {})).toBe('intent create');
     expect(quickBlocker(ann({ imageRefs: ['data:'] }), cwd, {})).toBe('tem imagem');
     expect(quickBlocker(ann({ designerNote: undefined }), cwd, {})).toBe('sem pedido');

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { planTokenSwap, classFor, tokenSuffix } from '../token-swap.js';
+import { planTokenSwap, planTextSwap, classFor, tokenSuffix } from '../token-swap.js';
 import { locateSource, clearLocateCache } from '../locate.js';
 import type { Annotation, StyleChange } from '../../types.js';
 
@@ -184,5 +184,45 @@ describe('planClassEdit — element without className', () => {
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.plan.after).toContain('<li className="px-2 py-1">primeiro item</li>');
     expect(planClassEdit(a, cwd, ['gap-2'], ['gap-3'])).toMatchObject({ ok: false });
+  });
+});
+
+describe('planTextSwap', () => {
+  const textAnn = (cwd: string, element: string, from: string, to: string): Annotation => {
+    clearLocateCache();
+    return {
+      id: 't1', note: '', element, styles: {}, status: 'pending', timestamp: '',
+      intent: 'fix', source: locateSource({ element, text: from }, { cwd }), textEdit: { from, to },
+    };
+  };
+
+  it('rewrites plain JSX text, keeping the indentation', () => {
+    const cwd = project({ 'src/Plans.tsx': `export function Plans() {
+  return (
+    <h2 className="text-xl">
+      Escolha seu plano
+    </h2>
+  );
+}
+` });
+    const res = planTextSwap(textAnn(cwd, 'h2.text-xl', 'Escolha seu plano', 'Planos'), cwd);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.plan.after).toContain('<h2 className="text-xl">\n      Planos\n    </h2>');
+  });
+
+  it('writes characters JSX would read as code as a string', () => {
+    const cwd = project({ 'src/Card.tsx': CARD });
+    const res = planTextSwap(textAnn(cwd, 'button.px-4', 'Comprar', 'Comprar {agora}'), cwd);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.plan.after).toContain('>{"Comprar {agora}"}</button>');
+  });
+
+  it('hands text from an expression to the agent', () => {
+    const cwd = project({ 'src/Title.tsx': `export function Title({ label }: { label: string }) {
+  return <h1 className="font-bold">{label}</h1>;
+}
+` });
+    const res = planTextSwap(textAnn(cwd, 'h1.font-bold', 'Olá', 'Oi'), cwd);
+    expect(res.ok).toBe(false);
   });
 });

@@ -25,7 +25,7 @@ import { captureElement, captureTextSelection, captureArea, captureEnvironment, 
 import { analyzeElement, scanPage, setDSTokens, getDSTokens, parseTokensJSON, type Suggestion, type PageIssue } from './analyze.js';
 import { connect, disconnect, send, onMessage, onStatus, isConnected } from './ws-client.js';
 import { useImageInput, InlineAttachments } from './image-input.js';
-import { PropertyPanel, type PanelHistory } from './property-panel.js';
+import { PropertyPanel, type PanelHistory, type TextEdit } from './property-panel.js';
 import { SketchLayer, PencilControl, PEN_COLORS } from './sketch-layer.js';
 import { analyzeSketch, renderSketchImage, formatSketchNote, type Stroke } from './sketch.js';
 import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, type LiveDrag } from './live-layout.js';
@@ -109,11 +109,14 @@ interface AutoContext {
   /** Remove the element: what the agent reads, and the chip's text */
   remove?: string;
   removeLabel?: string;
+  /** Text retyped in the panel: what the agent reads, and the chip's text */
+  text?: string;
+  textLabel?: string;
 }
 
 /** The note as the agent receives it: the designer's words first, then Ilse's context. */
 function composeNote(note: string, auto?: AutoContext): string {
-  const blocks = auto ? [auto.remove, auto.reorder, auto.move, auto.resize, auto.area, auto.style, auto.sketch].filter(Boolean) as string[] : [];
+  const blocks = auto ? [auto.remove, auto.text, auto.reorder, auto.move, auto.resize, auto.area, auto.style, auto.sketch].filter(Boolean) as string[] : [];
   return [note.trim(), ...blocks].filter(Boolean).join('\n\n');
 }
 
@@ -142,7 +145,7 @@ function reconcileSent(drafts: AnnotationDraft[], known: Array<{ id: string; sta
  * One line per thing Ilse will tell the agent — shown in the card so the
  * designer sees how it read the gesture, while the note stays theirs.
  */
-type AutoKey = 'remove' | 'reorder' | 'move' | 'resize' | 'style' | 'sketch' | 'area';
+type AutoKey = 'remove' | 'text' | 'reorder' | 'move' | 'resize' | 'style' | 'sketch' | 'area';
 interface AutoLine { key: AutoKey; text: string }
 
 function autoSummary(auto?: AutoContext): AutoLine[] {
@@ -151,6 +154,7 @@ function autoSummary(auto?: AutoContext): AutoLine[] {
   const push = (key: AutoKey, text: string) => out.push({ key, text });
   const count = (text: string, re: RegExp) => (text.match(re) ?? []).length;
   if (auto.removeLabel) push('remove', auto.removeLabel);
+  if (auto.textLabel) push('text', auto.textLabel);
   if (auto.reorderLabel) push('reorder', auto.reorderLabel);
   if (auto.move) push('move', `${auto.move.replace(/\.$/, '')}`);
   if (auto.resize) push('resize', `${auto.resize.replace(/\.$/, '')}`);
@@ -164,6 +168,19 @@ function autoSummary(auto?: AutoContext): AutoLine[] {
   }
   if (auto.area) push('area', `${auto.area.split(':')[0]}`);
   return out;
+}
+
+/** The command for a retyped text: the chip, and what the agent is told */
+function textCommand(edit?: { from: string; to: string }): Pick<AutoContext, 'text' | 'textLabel'> {
+  if (!edit) return { text: undefined, textLabel: undefined };
+  const short = (x: string) => x.length > 28 ? `${x.slice(0, 27)}…` : x;
+  return {
+    textLabel: `${t('toolbar.textCommand')} “${short(edit.to.trim() || '∅')}”`,
+    text: [
+      `Trocar o texto deste elemento de ${JSON.stringify(edit.from)} para ${JSON.stringify(edit.to)}.`,
+      'Se o texto vem de uma variável, prop, tradução (i18n) ou dados de lista, troque na origem — só este texto, respeitando o Scope.',
+    ].join('\n'),
+  };
 }
 
 const hasAuto = (auto?: AutoContext) => !!auto && Object.values(auto).some(Boolean);
@@ -269,6 +286,7 @@ interface AnnotationDraft {
   /** Pencil strokes (page coordinates) — shown on the page until the note is sent */
   sketch?: Stroke[];
   auto?: AutoContext;
+  textEdit?: TextEdit;
 }
 
 interface PopoverRect {
@@ -279,6 +297,8 @@ interface PopoverRect {
 }
 
 interface PendingCapture {
+  /** The element's text, retyped in the panel */
+  textEdit?: TextEdit;
   capture: ElementCapture;
   scope?: Scope;
   context: string;        // CSS selector (for grep/code)
@@ -1738,6 +1758,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       imageRefs: pendingCapture.imageRefs,
       ...(pendingCapture.sketch ? { sketch: pendingCapture.sketch } : {}),
       ...(pendingCapture.auto ? { auto: pendingCapture.auto } : {}),
+      ...(pendingCapture.textEdit ? { textEdit: pendingCapture.textEdit } : {}),
       ...(styleChanges.length > 0 ? {
         styleData: { selector: pendingCapture.capture.element, changes: styleChanges },
       } : {}),
@@ -1752,7 +1773,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       } : {}),
     }]);
     // Sent — leave the preview standing until the agent rewrites the source.
-    stylePreviewCommitted.current = styleChanges.length > 0;
+    stylePreviewCommitted.current = styleChanges.length > 0 || !!pendingCapture.textEdit;
     setPendingCapture(null);
     setAnnotating(true);
   }, [pendingCapture]);
@@ -2252,6 +2273,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       designerNote: ann.note.trim() || undefined,
       scope: ann.scope,
       remove: ann.auto?.remove ? true : undefined,
+      textEdit: ann.textEdit,
       element: ann.capture.element,
       component: ann.capture.component,
       styles: ann.capture.styles,
@@ -2428,6 +2450,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   /** Take back one of Ilse's commands (× on its chip, or ⌘Z in the draft): its preview goes away, the card stays */
   const takeBack = useCallback((key: AutoKey) => {
+    // Retyped text: the panel puts the original back (and clears the command)
+    if (key === 'text') { panelHistoryRef.current?.resetText(); return; }
     if (key === 'remove') {
       const id = pendingCaptureRef.current?.pixelTargetId;
       if (id) unhide(id);
@@ -2853,6 +2877,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       <style>{`
         [data-ilse-toolbar] .ilse-hidden-scroll::-webkit-scrollbar { width: 0; height: 0; }
         [data-ilse-toolbar] .ilse-hidden-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+        [data-ilse-toolbar] .ilse-panel-remove:not(:disabled):hover { background: ${color.muted} !important; color: ${color.destructive} !important; }
         [data-ilse-toolbar] [contenteditable][data-placeholder]:empty::before {
           content: attr(data-placeholder);
           color: #9ca3af;
@@ -3205,6 +3230,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           historyRef={panelHistoryRef}
           onRemove={pendingCapture.markerType === 'element' ? removeSelected : undefined}
           removed={!!pendingCapture.auto?.remove}
+          textEdit={pendingCapture.textEdit}
+          onTextChange={(edit) => setPendingCapture(prev => prev ? {
+            ...prev,
+            textEdit: edit,
+            auto: { ...prev.auto, ...textCommand(edit) },
+          } : null)}
           onStep={() => pushDraftStep({ kind: 'panel' })}
           styles={pendingCapture.capture.styles}
           targetId={pendingCapture.pixelTargetId}
