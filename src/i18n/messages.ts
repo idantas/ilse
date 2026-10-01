@@ -462,7 +462,7 @@ const messages = {
   },
   'settings.accountHint': { pt: 'Conta em que o agente roda. Para trocar: ilse --account', en: 'Account the agent runs on. To switch: ilse --account' },
   'toolbar.deferred': { pt: 'Na fila até o limite do agente renovar', en: "Queued until the agent's limit resets" },
-  'panel.remove': { pt: 'Remover elemento (Delete)', en: 'Remove element (Delete)' },
+  'panel.remove': { pt: 'Remover elemento (Delete, com a nota vazia)', en: 'Remove element (Delete, with the note empty)' },
   'panel.removed': { pt: 'Marcado para remover — o × no comando desfaz', en: 'Marked for removal — the × on its command takes it back' },
   'panel.noTokens': { pt: 'nenhum token detectado no projeto', en: 'no tokens detected in this project' },
   'toolbar.removeCommand': { pt: 'Remover {what}', en: 'Remove {what}' },

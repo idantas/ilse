@@ -634,6 +634,7 @@ function AnnotationPopover({
           }}
           contentEditable
           role="textbox"
+          data-ilse-note=""
           suppressContentEditableWarning
           onInput={(e) => onNoteChange((e.target as HTMLDivElement).textContent ?? '')}
           onPaste={handlePaste}
@@ -2409,12 +2410,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   }, []);
 
   // Delete / Backspace removes the selected element, like in a design tool —
-  // never while typing (the note, a panel field)
+  // never while typing. The note takes focus as soon as the card opens, so an
+  // empty note counts as "not typing": there is nothing in it to delete.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.key !== 'Delete' && e.key !== 'Backspace') || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement | null;
-      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      const emptyNote = el?.hasAttribute('data-ilse-note') && !el.textContent;
+      if (el && !emptyNote && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
       if (!pendingCaptureRef.current || pendingCaptureRef.current.markerType !== 'element') return;
       e.preventDefault();
       removeSelected();

@@ -134,7 +134,7 @@ Ilse's edits land through another process, so the session that later commits did
 
 - **3 capture modes:** click an element, select text, or draw an area
 - **Property panel:** layout (width/height as Fixed · Hug · Fill, flow, alignment, gap, padding and margin per side), typography, colors, stroke and radius — with your project's scale and tokens
-- **Remove an element:** the trash button in the panel, or Delete/Backspace. It disappears on screen right away; the agent takes it out of the code (from a `.map` list, only that item unless *Apply to* says all). The command's × or ⌘Z brings it back.
+- **Remove an element:** the trash button in the panel, or Delete/Backspace while the note is empty. It disappears on screen right away; the agent takes it out of the code (from a `.map` list, only that item unless *Apply to* says all). The command's × or ⌘Z brings it back.
 - **Move for real:** drag to reorder, or into and out of containers, and the page re-flows live
 - **Move and resize:** drag or resize elements with snap-to-grid, and the gesture becomes the instruction
 - **Reference images:** paste or upload a screenshot or SVG
