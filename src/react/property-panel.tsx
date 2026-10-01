@@ -16,6 +16,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { radius, color, shadow, font, ilse } from './tokens.js';
+import { useFrontLayer } from './front-layer.js';
 import { t } from '../i18n/index.js';
 import { getDSTokens, type DSToken } from './analyze.js';
 import { readColor, canonicalColor, toHex, isTransparent } from './color.js';
@@ -152,7 +153,13 @@ function matchToken(value: string, tokens: DSToken[], isColor: boolean, preferre
 // ── Panel ──────────────────────────────────────────────────────────────────
 
 /** Handle the toolbar keeps to step the panel back (⌘Z while a draft is open) */
-export interface PanelHistory { undo: () => string | undefined; size: () => number; resetText: () => void }
+export interface PanelHistory {
+  undo: () => string | undefined;
+  size: () => number;
+  resetText: () => void;
+  /** The preview outlives the panel (the draft was added): how to put the page back later */
+  detachPreview: () => () => void;
+}
 
 export interface TextEdit { from: string; to: string }
 
@@ -393,7 +400,19 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     if (snap.text !== textRef.current) setTextValue(snap.text);
     return snap.label;
   }
-  if (historyRef) historyRef.current = { undo, size: () => history.current.length, resetText: () => setTextValue(textOriginal) };
+  function detachPreview() {
+    const styles = { ...originalInline.current };
+    const texts = [...(textNodes.current ?? [])];
+    return () => {
+      const e = getElement();
+      if (e) for (const [prop, original] of Object.entries(styles)) {
+        e.style.setProperty(prop.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`), original || null);
+      }
+      texts.forEach(n => { n.node.data = n.data; });
+    };
+  }
+  if (historyRef) historyRef.current = { undo, size: () => history.current.length, resetText: () => setTextValue(textOriginal), detachPreview };
+  const [front, bringToFront] = useFrontLayer('panel', false);
 
   function applyMany(values: Record<string, string>, label = PROPS.find(p => p.key === Object.keys(values)[0])?.label ?? 'Layout') {
     record(label);
@@ -408,6 +427,8 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     <div
       ref={panelRef}
       data-ilse-toolbar
+      data-ilse-panel
+      onMouseDownCapture={bringToFront}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       style={{
@@ -420,7 +441,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
         borderRadius: radius.xl,
         boxShadow: shadow.xl,
         fontFamily: font.sans,
-        zIndex: 99998,
+        zIndex: front ? 99999 : 99998,
         overflow: 'hidden',
       }}
     >

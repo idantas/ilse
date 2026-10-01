@@ -26,6 +26,7 @@ import { analyzeElement, scanPage, setDSTokens, getDSTokens, parseTokensJSON, ty
 import { connect, disconnect, send, onMessage, onStatus, isConnected } from './ws-client.js';
 import { useImageInput, InlineAttachments } from './image-input.js';
 import { PropertyPanel, type PanelHistory, type TextEdit } from './property-panel.js';
+import { useFrontLayer } from './front-layer.js';
 import { SketchLayer, PencilControl, PEN_COLORS } from './sketch-layer.js';
 import { analyzeSketch, renderSketchImage, formatSketchNote, type Stroke } from './sketch.js';
 import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, type LiveDrag } from './live-layout.js';
@@ -407,18 +408,31 @@ function AnnotationEditor({
 
 // ─── AnnotationPopover ────────────────────────────────────────────────────────
 
-function computePopoverPos(rect: PopoverRect): { top: number; left: number } {
+function computePopoverPos(rect: PopoverRect, height = 168, width = 322): { top: number; left: number } {
   if (typeof window === 'undefined') return { top: rect.top, left: rect.left };
-  const width = 290;
-  const height = 168;
   const gap = 8;
-  let top = rect.top + rect.height + gap;
-  let left = rect.left;
-  if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
-  if (left < 8) left = 8;
-  if (top + height > window.innerHeight - 8) top = rect.top - height - gap;
-  if (top < 8) top = 8;
-  return { top, left };
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const clamp = (p: { top: number; left: number }) => ({
+    top: Math.max(8, Math.min(p.top, vh - height - 8)),
+    left: Math.max(8, Math.min(p.left, vw - width - 8)),
+  });
+  // The property panel is a window of its own: the card is placed around it,
+  // never on top of it (the designer can still drag one over the other)
+  const panel = document.querySelector('[data-ilse-panel]')?.getBoundingClientRect();
+  const hits = (p: { top: number; left: number }) => !!panel && p.left < panel.right + gap && p.left + width > panel.left - gap
+    && p.top < panel.bottom + gap && p.top + height > panel.top - gap;
+  const below = { top: rect.top + rect.height + gap, left: rect.left };
+  const above = { top: rect.top - height - gap, left: rect.left };
+  const candidates = [
+    below.top + height <= vh - 8 ? below : above,
+    below.top + height <= vh - 8 ? above : below,
+    ...(panel ? [
+      { top: below.top, left: panel.left - width - gap },
+      { top: above.top, left: panel.left - width - gap },
+      { top: rect.top, left: panel.left - width - gap },
+    ] : []),
+  ].map(clamp);
+  return candidates.find(p => !hits(p)) ?? candidates[0];
 }
 
 function AnnotationPopover({
@@ -463,10 +477,13 @@ function AnnotationPopover({
   const dragRef = useRef<{ startX: number; startY: number; origTop: number; origLeft: number } | null>(null);
   const noteFocusedRef = useRef(false);
 
-  // Re-compute on rect change — only when not being dragged
+  // Re-compute on rect change — only when not being dragged. After layout: the
+  // panel it steers around mounts in the same commit, and the card's own height is known.
+  const cardRef = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
-    if (!dragRef.current) setPos(computePopoverPos(rect));
+    if (!dragRef.current) setPos(computePopoverPos(rect, cardRef.current?.offsetHeight || undefined, cardRef.current?.offsetWidth || undefined));
   }, [rect]);
+  const [front, bringToFront] = useFrontLayer('card', true);
 
   // Drag handlers
   useEffect(() => {
@@ -484,11 +501,13 @@ function AnnotationPopover({
 
   return (
     <div
+      ref={cardRef}
       data-ilse-toolbar
+      onMouseDownCapture={bringToFront}
       style={{
         position: 'fixed', top: pos.top, left: pos.left, width: 290,
         backgroundColor: color.popover, border: `1px solid ${color.border}`,
-        borderRadius: radius.xl, padding: 16, zIndex: 99999,
+        borderRadius: radius.xl, padding: 16, zIndex: front ? 99999 : 99998,
         boxShadow: shadow.xl,
         fontFamily: font.sans,
       }}
@@ -1406,6 +1425,11 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // Whether the current style preview should survive the panel unmounting.
   // Flipped on send, cleared on cancel and on every new capture.
   const stylePreviewCommitted = useRef(false);
+  /** Per element: how to undo the on-screen preview of a draft that was added but not sent */
+  const previewReverts = useRef(new Map<string, () => void>());
+  // A new selection starts uncommitted, whichever way it was made — else a
+  // cancel after an earlier send would leave this draft's preview on the page
+  useEffect(() => { if (pendingCapture?.pixelTargetId) stylePreviewCommitted.current = false; }, [pendingCapture?.pixelTargetId]);
   const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number }>(() => getInitialToolbarPos());
 
   const [hoverLabel, setHoverLabel] = useState<string | null>(null);
@@ -1774,6 +1798,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     }]);
     // Sent — leave the preview standing until the agent rewrites the source.
     stylePreviewCommitted.current = styleChanges.length > 0 || !!pendingCapture.textEdit;
+    // …but keep a way back: deleting this draft before it's sent undoes it on screen
+    const revert = panelHistoryRef.current?.detachPreview();
+    if (revert && pendingCapture.pixelTargetId) previewReverts.current.set(pendingCapture.pixelTargetId, revert);
     setPendingCapture(null);
     setAnnotating(true);
   }, [pendingCapture]);
@@ -2067,14 +2094,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (e.key !== 'Escape') return;
       // Progressive close: dismiss the topmost layer first
       if (pendingCaptureForEsc.current) {
-        // Dropping the selection drops its live layout preview too
-        liveDragRef.current?.cancel();
-        liveDragRef.current = null;
-        setLiveDragging(false);
-        const id = pendingCaptureForEsc.current.pixelTargetId;
-        if (id) settleElement(document.querySelector(`[data-ilse-pixel-target="${id}"]`));
-        setPendingCapture(null);
-        setAnnotating(true); // stay in select mode
+        // Same as cancel: every preview of this draft goes, selection mode stays
+        cancelCapture();
         return;
       }
       if (chatOpenForEsc.current) {
@@ -2613,6 +2634,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const removeAnnotation = useCallback((index: number) => {
     const gone = annotationsRef.current[index];
     if (gone?.pixelTargetId) settleElement(document.querySelector(`[data-ilse-pixel-target="${gone.pixelTargetId}"]`));
+    // Never sent: nothing will make its preview real, so it goes (panel edits, text, removal)
+    if (gone?.pixelTargetId && gone.status === 'pending') {
+      previewReverts.current.get(gone.pixelTargetId)?.();
+      unhide(gone.pixelTargetId);
+    }
+    if (gone?.pixelTargetId) previewReverts.current.delete(gone.pixelTargetId);
     setAnnotations(prev => prev.filter((_, i) => i !== index));
     if (activeMarker === index) setActiveMarker(null);
   }, [activeMarker]);
@@ -2721,6 +2748,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   const handleClear = () => {
     if (clearConfirm) {
+      // Unsent drafts take their on-screen previews with them
+      for (const a of annotationsRef.current) {
+        if (!a.pixelTargetId) continue;
+        if (a.status === 'pending') { previewReverts.current.get(a.pixelTargetId)?.(); unhide(a.pixelTargetId); }
+        previewReverts.current.delete(a.pixelTargetId);
+      }
       setAnnotations([]);
       setActiveMarker(null);
       setClearConfirm(false);
@@ -2853,7 +2886,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     setAnnotating(false);
     setDrawMode(false);
     setStrokes([]);
-    setPendingCapture(null);
+    if (pendingCaptureRef.current) cancelCapture();
     setActiveMarker(null);
     setShowSettings(false);
     setChatOpen(false);
@@ -4589,7 +4622,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 onClick={() => {
                   if (drawMode) { exitDrawMode(); return; }
                   setAnnotating(false);
-                  setPendingCapture(null);
+                  if (pendingCaptureRef.current) cancelCapture();
                   setActiveMarker(null);
                   setDrawMode(true);
                 }}
