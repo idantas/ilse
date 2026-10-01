@@ -584,6 +584,8 @@ export async function executeBatch(
     sessionId?: string;
     /** Claude Code model alias or id; undefined = the user's default */
     model?: string;
+    /** Send this instead of the batch prompt (a follow-up turn, e.g. a syntax repair) */
+    prompt?: string;
   } = {}
 ): Promise<BatchExecutionResult> {
   if (agent.kind === 'none' || !agent.command) {
@@ -607,7 +609,7 @@ export async function executeBatch(
     }
   }
 
-  const prompt = buildBatchPrompt(annotations, { isResume: !!options.sessionId }, imagePathsMap);
+  const prompt = options.prompt ?? buildBatchPrompt(annotations, { isResume: !!options.sessionId }, imagePathsMap);
   const cwd = options.cwd ?? process.cwd();
   const timeout = options.timeoutMs ?? 300_000;
   const useStreamJson = agent.kind === 'claude';

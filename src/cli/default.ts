@@ -28,6 +28,7 @@ import { pickTier, escalateTier, resolveModel, modelTiers, expectsEdit, type Tie
 import { historyCount, swapMatchesScope } from '../bridge/augment.js';
 import { quickBlocker, buildQuickPrompt, runQuick } from '../agent/quick-edit.js';
 import { recordChange, recordUndone, describeAnnotation, ledgerFile, type LedgerPath } from '../git/ledger.js';
+import { syntaxBreaks, describeBreaks, repairPrompt, type SyntaxBreak } from '../agent/verify.js';
 import { planClassEdit } from '../context/token-swap.js';
 import { hasCommitContext, addCommitContext, commitContextChoice, saveCommitContextChoice, instructionsFile } from '../git/commit-context.js';
 
@@ -565,7 +566,11 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     const willEdit = config.mode === 'automatic' && agent.kind !== 'none';
     const snapshot = willEdit ? takeSnapshot(cwdRoot) : null;
     try {
-      await runAgentBatch(annotations, { touched: () => !!snapshot && !!diffSnapshot(snapshot, []) });
+      await runAgentBatch(annotations, {
+        touched: () => !!snapshot && !!diffSnapshot(snapshot, []),
+        broken: () => snapshot ? syntaxBreaks(diffSnapshot(snapshot, [])?.files ?? []) : [],
+        revert: () => { const cs = snapshot && diffSnapshot(snapshot, []); if (cs) discardChangeSet(cs, cwdRoot); },
+      });
     } finally {
       const cs = snapshot ? diffSnapshot(snapshot, annotations.map(a => a.id)) : null;
       if (cs) {
@@ -606,7 +611,13 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     broadcast({ type: 'undo-state', ...undoState() });
   };
 
-  const runAgentBatch = async (annotations: Annotation[], opts: { touched?: () => boolean } = {}) => {
+  const runAgentBatch = async (annotations: Annotation[], opts: {
+    touched?: () => boolean;
+    /** Files the batch left unparseable (they parsed before it) */
+    broken?: () => SyntaxBreak[];
+    /** Put every file back as it was before the batch */
+    revert?: () => void;
+  } = {}) => {
     if (annotations.length === 0) return;
 
     // Print all headers first
@@ -687,7 +698,36 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         result = await run(undefined); // fresh: the failed run's history would only weigh it down
       }
 
-      journal.batchEnd(batchId, { ok: result.ok, error: result.error, stopped: userStopped });
+      // The agent can't build the project, so Ilse checks what it wrote parses.
+      // Broken: one repair turn in the same session; still broken: undo the batch.
+      let reverted: string | undefined;
+      let breaks = result.ok && !userStopped && opts.broken ? opts.broken() : [];
+      if (breaks.length > 0) {
+        journal.batchEnd(batchId, { ok: false, error: 'syntax' });
+        console.log(chalk.dim('  ') + chalk.yellow('⚠') + chalk.dim(` ${t('cli.syntaxRepair', { where: describeBreaks(breaks) })}`));
+        batchId = `b${++batchSeq}`;
+        currentBatchId = batchId;
+        deferredSummaries.clear();
+        journal.batchStart(batchId, annotations.map(a => a.id), 'agent', agent.kind, !!result.sessionId, { model });
+        const repair = await executeBatch(annotations, agent, {
+          sessionId: result.sessionId,
+          model,
+          prompt: repairPrompt(breaks),
+          onEvent: (event) => journal.agentEvent(batchId, event),
+          onThinking: (text) => broadcast({ type: 'thinking', text }),
+        });
+        breaks = repair.ok && !userStopped ? opts.broken!() : breaks;
+        if (repair.sessionId) result = { ...result, sessionId: repair.sessionId };
+        if (breaks.length > 0) {
+          opts.revert?.();
+          reverted = t('cli.syntaxReverted', { where: describeBreaks(breaks) });
+          result = { ...result, ok: false, error: reverted };
+        } else {
+          console.log(chalk.dim('  ') + chalk.green('✓') + chalk.dim(` ${t('cli.syntaxRepaired')}`));
+        }
+      }
+
+      journal.batchEnd(batchId, { ok: result.ok, error: reverted ? 'syntax' : result.error, stopped: userStopped });
 
       // Update session ID for next invocation (only from real annotations, not chat/analyze)
       if (result.sessionId && !isEphemeral) {
@@ -746,7 +786,8 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         } else {
           console.log(chalk.dim('  ') + chalk.red('✗') + ' ' + (result.error ?? t('cli.batchError')));
           for (const ann of annotations) {
-            if (!resolvedIds.has(ann.id)) {
+            // Reverted: even what was reported done along the way is gone
+            if (reverted || !resolvedIds.has(ann.id)) {
               broadcast({ type: 'error', id: ann.id, message: result.error ?? 'Erro ao executar batch' });
             }
           }

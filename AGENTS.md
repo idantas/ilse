@@ -39,6 +39,7 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/agent/agent-profile.ts` | Model tier per task, isolated env, Claude account, project instructions |
 | `src/agent/quick-edit.ts` | Quick path: fast model → JSON `{remove, add, needsAgent}` → applied by token-swap |
 | `src/agent/claude-accounts.ts` | Finds Claude logins (`CLAUDE_CONFIG_DIR`) to pick one per project |
+| `src/agent/verify.ts` | After an agent batch: changed files that no longer parse → one repair turn, else undo |
 | `src/agent/changeset.ts` | File snapshots before a batch → diff → undo / redo |
 | `src/git/` | `.git/ilse/changes.jsonl` ledger (`ilse changes`), commit note for the project's agent |
 | `src/mcp/` | MCP tools served by the running `ilse` at `/mcp`; stdio bridge `ilse-mcp` |
