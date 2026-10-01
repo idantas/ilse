@@ -1,24 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1540" viewBox="0 0 1680 1540" role="img" aria-labelledby="t d">
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1600" viewBox="0 0 1680 1600" role="img" aria-labelledby="t d">
 <title id="t">Ilse — como funciona</title>
 <desc id="d">Fluxo da Ilse: montagem (npx ilse, detecção, proxy) e uso a cada ajuste (apontar, ajustar ao vivo, enviar, localizar, montar contexto, escolher o degrau — troca de classe, rápido, agente — arquivo muda, designer vê, registra e commita).</desc>
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="#9b9b9b"/></marker>
 <marker id="arrow-brand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="#FA6900"/></marker>
 </defs>
-<rect width="1680" height="1540" fill="#fafafa"/>
+<rect width="1680" height="1600" fill="#fafafa"/>
 <g transform="translate(60 44) scale(0.2)"><path d="M54.9554 13.7935H68.4799V-1.52588e-05H149.626V96.551V110.345V151.721H14.3823V137.932H0.857956V-1.52588e-05H54.9554V13.7935ZM109.053 137.932H122.577V124.138H109.053V137.932ZM14.3823 110.345H27.9067V96.551H68.4799V110.345H41.431V124.138H27.9067V137.932H82.004V124.138H95.5284V110.345H109.053V82.7575H122.577V55.1705H82.004V68.964H14.3823V110.345Z" fill="#FA6900"/></g>
 <text x="98" y="69" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#0a0a0a" text-anchor="start">Ilse</text>
 <text x="146" y="69" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#6b6b6b" text-anchor="start">como funciona — do clique no browser ao commit</text>
 <text x="1640" y="60" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#6b6b6b" text-anchor="end">tracejado = opcional (modo MCP)</text>
 <text x="1640" y="80" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#6b6b6b" text-anchor="end">laranja = volta, decisão ou nota</text>
 <text x="60" y="150" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="500" fill="#6b6b6b" text-anchor="start" letter-spacing="2">DESIGNER · APONTA</text>
-<rect x="50" y="166" width="320" height="1340" rx="4" fill="none" stroke="#dcdcdc" stroke-dasharray="2 5"/>
+<rect x="50" y="166" width="320" height="1400" rx="4" fill="none" stroke="#dcdcdc" stroke-dasharray="2 5"/>
 <text x="400" y="150" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="500" fill="#6b6b6b" text-anchor="start" letter-spacing="2">ILSE · ENTENDE E ROTEIA</text>
-<rect x="390" y="166" width="320" height="1340" rx="4" fill="none" stroke="#dcdcdc" stroke-dasharray="2 5"/>
+<rect x="390" y="166" width="320" height="1400" rx="4" fill="none" stroke="#dcdcdc" stroke-dasharray="2 5"/>
 <text x="740" y="150" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="500" fill="#6b6b6b" text-anchor="start" letter-spacing="2">AGENTE · EXECUTA</text>
-<rect x="730" y="166" width="320" height="1340" rx="4" fill="none" stroke="#dcdcdc" stroke-dasharray="2 5"/>
+<rect x="730" y="166" width="320" height="1400" rx="4" fill="none" stroke="#dcdcdc" stroke-dasharray="2 5"/>
 <text x="1080" y="150" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="500" fill="#6b6b6b" text-anchor="start" letter-spacing="2">CÓDIGO · MOSTRA E REGISTRA</text>
-<rect x="1070" y="166" width="320" height="1340" rx="4" fill="none" stroke="#dcdcdc" stroke-dasharray="2 5"/>
+<rect x="1070" y="166" width="320" height="1400" rx="4" fill="none" stroke="#dcdcdc" stroke-dasharray="2 5"/>
 <rect x="60" y="200" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="76" y="225" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">0</text>
 <text x="93.5" y="225" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Roda npx ilse</text>
@@ -31,10 +31,12 @@
 <text x="433.5" y="225" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Detecta sozinho</text>
 <rect x="416" y="236" width="49.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
 <text x="422" y="249" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">agente</text>
-<rect x="470.5" y="236" width="74.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="476.5" y="249" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">dev server</text>
-<rect x="550.0" y="236" width="49.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="556.0" y="249" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">tokens</text>
+<rect x="470.5" y="236" width="43.2" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="476.5" y="249" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">conta</text>
+<rect x="518.75" y="236" width="74.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="524.75" y="249" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">dev server</text>
+<rect x="598.25" y="236" width="49.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="604.25" y="249" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">tokens</text>
 <rect x="400" y="310" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="416" y="335" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">·</text>
 <text x="433.5" y="335" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Sobe o proxy</text>
@@ -59,6 +61,9 @@
 <text x="768" y="328.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">nada da Ilse vai pro repo</text>
 <text x="768" y="350.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">é um proxy local — o projeto</text>
 <text x="768" y="372.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">não ganha dependência</text>
+<path d="M 700 256 L 760 256" stroke="#FA6900" stroke-width="1.1" stroke-dasharray="3 4" fill="none"/>
+<text x="768" y="262" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">mais de uma conta do Claude?</text>
+<text x="768" y="284" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">pergunta qual, uma vez por projeto</text>
 <path d="M 1380 342.0 L 1420 342.0" stroke="#FA6900" stroke-width="1.1" stroke-dasharray="3 4" fill="none"/>
 <text x="1428" y="336.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">quem commita</text>
 <text x="1428" y="358.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">sabe o porquê de cada</text>
@@ -90,6 +95,8 @@
 <text x="82" y="673" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">painel</text>
 <rect x="130.5" y="660" width="74.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
 <text x="136.5" y="673" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">Aplicar em</text>
+<rect x="210.0" y="660" width="99.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="216.0" y="673" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">⌘Z no rascunho</text>
 <rect x="60" y="730" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="76" y="755" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">3</text>
 <text x="93.5" y="755" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Envia</text>
@@ -151,7 +158,7 @@
 <text x="847.75" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">JSON de classes</text>
 <rect x="952.5" y="1126" width="49.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
 <text x="958.5" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">~$0,01</text>
-<rect x="740" y="1220" width="300" height="88" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
+<rect x="740" y="1220" width="300" height="112" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="756" y="1245" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">2</text>
 <text x="773.5" y="1245" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Agente</text>
 <rect x="756" y="1256" width="174.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
@@ -164,23 +171,25 @@
 <text x="829.0" y="1293" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">fast / strong</text>
 <rect x="921.25" y="1280" width="99.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
 <text x="927.25" y="1293" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">lê só o trecho</text>
-<rect x="740" y="1392" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25" stroke-dasharray="5 4"/>
-<text x="756" y="1417" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">·</text>
-<text x="773.5" y="1417" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Ou o agente puxa</text>
-<rect x="756" y="1428" width="30.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="762" y="1441" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">MCP</text>
-<rect x="791.75" y="1428" width="74.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="797.75" y="1441" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">ilse_watch</text>
+<rect x="756" y="1304" width="205.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="762" y="1317" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">limite da conta → fila → retoma</text>
+<rect x="740" y="1452" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25" stroke-dasharray="5 4"/>
+<text x="756" y="1477" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">·</text>
+<text x="773.5" y="1477" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Ou o agente puxa</text>
+<rect x="756" y="1488" width="30.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="762" y="1501" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">MCP</text>
+<rect x="791.75" y="1488" width="74.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="797.75" y="1501" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">ilse_watch</text>
 <path d="M 550.0 1024 L 550.0 1090" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <text x="558.0" y="1044" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#6b6b6b" text-anchor="start">ajuste do painel</text>
 <path d="M 700 986.0 L 890.0 986.0 L 890.0 1090" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <text x="898.0" y="978.0" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#6b6b6b" text-anchor="start">classes de 1 elemento</text>
 <path d="M 890.0 1154 L 890.0 1220" fill="none" stroke="#FA6900" stroke-width="1.4" marker-end="url(#arrow-brand)"/>
 <text x="898.0" y="1178" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">precisa de mais → agente</text>
-<path d="M 700 1002.0 L 722 1002.0 L 722 1264.0 L 740 1264.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 700 1002.0 L 722 1002.0 L 722 1276.0 L 740 1276.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <text x="714" y="1132" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#6b6b6b" text-anchor="middle" transform="rotate(-90 714 1132)">estrutura · criar</text>
-<path d="M 780 1308 L 780 1324 L 836 1324 L 836 1310" fill="none" stroke="#FA6900" stroke-width="1.4" marker-end="url(#arrow-brand)"/>
-<text x="846" y="1329" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="15" font-weight="400" fill="#FA6900" text-anchor="start">nada mudou → sobe 1 nível</text>
+<path d="M 780 1332 L 780 1348 L 836 1348 L 836 1334" fill="none" stroke="#FA6900" stroke-width="1.4" marker-end="url(#arrow-brand)"/>
+<text x="846" y="1353" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="15" font-weight="400" fill="#FA6900" text-anchor="start">nada mudou → sobe 1 nível</text>
 <rect x="1080" y="1090" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="1096" y="1115" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">7</text>
 <text x="1113.5" y="1115" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Arquivo muda</text>
@@ -191,25 +200,25 @@
 <rect x="1080" y="1220" width="300" height="88" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="1096" y="1245" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">9</text>
 <text x="1113.5" y="1245" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Registra</text>
-<rect x="1096" y="1256" width="80.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="1102" y="1269" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">desfazer ⌘Z</text>
-<rect x="1181.75" y="1256" width="55.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="1187.75" y="1269" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">journal</text>
+<rect x="1096" y="1256" width="168.2" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="1102" y="1269" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">desfazer ⌘Z · refazer ⇧⌘Z</text>
+<rect x="1269.25" y="1256" width="55.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="1275.25" y="1269" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">journal</text>
 <rect x="1096" y="1280" width="155.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
 <text x="1102" y="1293" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">.git/ilse/changes.jsonl</text>
-<rect x="1080" y="1392" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
-<text x="1096" y="1417" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">10</text>
-<text x="1121.0" y="1417" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Commit com contexto</text>
-<rect x="1096" y="1428" width="87.0" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="1102" y="1441" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">ilse changes</text>
-<rect x="1188.0" y="1428" width="87.0" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="1194.0" y="1441" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">ilse_changes</text>
+<rect x="1080" y="1452" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
+<text x="1096" y="1477" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">10</text>
+<text x="1121.0" y="1477" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Commit com contexto</text>
+<rect x="1096" y="1488" width="87.0" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="1102" y="1501" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">ilse changes</text>
+<rect x="1188.0" y="1488" width="87.0" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="1194.0" y="1501" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">ilse_changes</text>
 <path d="M 1040 1122.0 L 1080 1122.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <path d="M 550.0 1154 L 550.0 1196 L 1060 1196 L 1060 1132.0 L 1080 1132.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
-<path d="M 1040 1250.0 L 1060 1250.0 L 1060 1196" fill="none" stroke="#9b9b9b" stroke-width="1.4"/>
-<path d="M 1040 1424.0 L 1060 1424.0 L 1060 1250.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" stroke-dasharray="4 4"/>
+<path d="M 1040 1262.0 L 1060 1262.0 L 1060 1196" fill="none" stroke="#9b9b9b" stroke-width="1.4"/>
+<path d="M 1040 1484.0 L 1060 1484.0 L 1060 1262.0" fill="none" stroke="#9b9b9b" stroke-width="1.4" stroke-dasharray="4 4"/>
 <path d="M 1230.0 1154 L 1230.0 1220" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
-<path d="M 1230.0 1308 L 1230.0 1392" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M 1230.0 1308 L 1230.0 1452" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <rect x="60" y="1090" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="76" y="1115" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">8</text>
 <text x="93.5" y="1115" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Vê na hora</text>
@@ -217,8 +226,8 @@
 <text x="82" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">na própria tela</text>
 <path d="M 1230.0 1090 L 1230.0 1062 L 210.0 1062 L 210.0 1090" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <text x="300" y="1056" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#6b6b6b" text-anchor="middle">a página muda sozinha</text>
-<path d="M 210.0 1154 L 210.0 1360 L 1290.0 1360 L 1290.0 1308" fill="none" stroke="#FA6900" stroke-width="1.4" marker-end="url(#arrow-brand)"/>
-<text x="220.0" y="1352" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">não gostou → ⌘Z desfaz</text>
+<path d="M 210.0 1154 L 210.0 1410 L 1290.0 1410 L 1290.0 1308" fill="none" stroke="#FA6900" stroke-width="1.4" marker-end="url(#arrow-brand)"/>
+<text x="220.0" y="1402" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">não gostou → ⌘Z desfaz</text>
 <path d="M 60 1122.0 L 36 1122.0 L 36 532.0 L 60 532.0" fill="none" stroke="#FA6900" stroke-width="1.4" marker-end="url(#arrow-brand)"/>
 <text x="28" y="827.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="middle" transform="rotate(-90 28 827.0)">próximo ajuste</text>
 <path d="M 1380 1122.0 L 1420 1122.0" stroke="#FA6900" stroke-width="1.1" stroke-dasharray="3 4" fill="none"/>
@@ -229,7 +238,7 @@
 <text x="1428" y="1258.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">tudo desfazível,</text>
 <text x="1428" y="1280.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">tudo medido</text>
 <text x="1428" y="1302.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">(tempo, tokens, custo)</text>
-<text x="1428" y="1430.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">a IA é sempre</text>
-<text x="1428" y="1452.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">a do usuário — sem chave,</text>
-<text x="1428" y="1474.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">sem conta da Ilse</text>
+<text x="1428" y="1490.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">a IA é sempre</text>
+<text x="1428" y="1512.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">a do usuário — sem chave,</text>
+<text x="1428" y="1534.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">sem conta da Ilse</text>
 </svg>

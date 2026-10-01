@@ -30,6 +30,9 @@ EN = {
     'painel': 'panel', 'Aplicar em': 'Apply to',
     'Envia': 'Sends', 'comandos no campo': 'commands in the field', 'nota': 'note',
     'Localiza': 'Locates', 'arquivo:linha': 'file:line', 'pilha do React': 'React stack',
+    'conta': 'account', '⌘Z no rascunho': '⌘Z in the draft', 'limite da conta → fila → retoma': 'account limit → queue → resumes',
+    'desfazer ⌘Z · refazer ⇧⌘Z': 'undo ⌘Z · redo ⇧⌘Z',
+    'mais de uma conta do Claude?': 'more than one Claude account?', 'pergunta qual, uma vez por projeto': 'asks which, once per project',
     'sessão nova': 'new session', 'lê só o trecho': 'reads a slice',
     'dois sinais que concordam': 'two signals that agree', 'o código (AST) e a pilha': 'the code (AST) and React\'s',
     'do próprio React': 'own stack',
@@ -59,7 +62,7 @@ def tr(s):
 ROOT = Path(__file__).resolve().parent.parent
 LOGO = '<path d="M54.9554 13.7935H68.4799V-1.52588e-05H149.626V96.551V110.345V151.721H14.3823V137.932H0.857956V-1.52588e-05H54.9554V13.7935ZM109.053 137.932H122.577V124.138H109.053V137.932ZM14.3823 110.345H27.9067V96.551H68.4799V110.345H41.431V124.138H27.9067V137.932H82.004V124.138H95.5284V110.345H109.053V82.7575H122.577V55.1705H82.004V68.964H14.3823V110.345Z" fill="#FA6900"/>'
 
-W, H = 1680, 1540
+W, H = 1680, 1600
 FG, MUTED, FAINT, LINE, BG, CARD, BRAND = '#0a0a0a', '#6b6b6b', '#a1a1a1', '#9b9b9b', '#fafafa', '#ffffff', '#FA6900'
 SANS = "Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
 MONO = "'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace"
@@ -129,7 +132,7 @@ for lane, label in {1: 'DESIGNER · APONTA', 2: 'ILSE · ENTENDE E ROTEIA', 3: '
 
 # ── Setup, once ─────────────────────────────────────────────────────────────
 s1 = box('s1', 1, 200, '0', 'Roda npx ilse', [['terminal', 'na pasta do projeto']])
-s2 = box('s2', 2, 200, '·', 'Detecta sozinho', [['agente', 'dev server', 'tokens']])
+s2 = box('s2', 2, 200, '·', 'Detecta sozinho', [['agente', 'conta', 'dev server', 'tokens']])
 s3 = box('s3', 2, 310, '·', 'Sobe o proxy', [['localhost:4700', 'injeta a toolbar']])
 s4 = box('s4', 4, 310, '·', 'Combina o commit', [['AGENTS.md', 'CLAUDE.md']])
 arrow([(s1['r'], s1['cy']), (s2['x'], s2['cy'])])
@@ -138,6 +141,8 @@ arrow([(s2['r'], s2['cy']), (s4['cx'], s2['cy']), (s4['cx'], s4['y'])], label='s
 arrow([(s3['x'], s3['cy'] + 12), (s1['r'] - 50, s3['cy'] + 12), (s1['r'] - 50, 500)], label='abre o browser', lx=s1['r'] - 42, ly=s3['cy'] + 40, lanchor='start')
 connector(s3['r'], s3['cy'] - 8, 760, s3['cy'] - 8)
 note(768, s3['cy'] - 14, ['nada da Ilse vai pro repo', 'é um proxy local — o projeto', 'não ganha dependência'])
+connector(s2['r'], s2['b'] - 8, 760, s2['b'] - 8)
+note(768, s2['b'] - 2, ['mais de uma conta do Claude?', 'pergunta qual, uma vez por projeto'])
 connector(s4['r'], s4['cy'], 1420, s4['cy'])
 note(1428, s4['cy'] - 6, ['quem commita', 'sabe o porquê de cada', 'mudança da Ilse'])
 
@@ -148,7 +153,7 @@ text(60, 478, '↓ USO · A CADA AJUSTE', 11.5, MUTED, MONO, 500, spacing=2)
 
 # ── Use, every adjustment ───────────────────────────────────────────────────
 u1 = box('u1', 1, 500, '1', 'Aponta', [['clique', 'texto', 'área', 'lápis']])
-u2 = box('u2', 1, 600, '2', 'Ajusta ao vivo', [['arrasta', 'entra/sai', 'redimensiona'], ['painel', 'Aplicar em']])
+u2 = box('u2', 1, 600, '2', 'Ajusta ao vivo', [['arrasta', 'entra/sai', 'redimensiona'], ['painel', 'Aplicar em', '⌘Z no rascunho']])
 u3 = box('u3', 1, 730, '3', 'Envia', [['comandos no campo', 'nota']])
 arrow([(u1['cx'], u1['b']), (u2['cx'], u2['y'])])
 arrow([(u2['cx'], u2['b']), (u3['cx'], u3['y'])])
@@ -166,8 +171,8 @@ note(768, u5['cy'] - 14, ['o agente não procura', 'chega sabendo onde, o que j�
 
 d0 = box('d0', 2, 1090, '0', 'Troca de classe', [['sem IA', '$0 · instantâneo']])
 d1 = box('d1', 3, 1090, '1', 'Rápido', [['modelo fast', 'JSON de classes', '~$0,01']])
-d3 = box('d3', 3, 1220, '2', 'Agente', [['claude -p · codex · cursor', 'sessão nova'], ['sem Bash', 'fast / strong', 'lê só o trecho']])
-mcp = box('mcp', 3, 1392, '·', 'Ou o agente puxa', [['MCP', 'ilse_watch']], dashed=True)
+d3 = box('d3', 3, 1220, '2', 'Agente', [['claude -p · codex · cursor', 'sessão nova'], ['sem Bash', 'fast / strong', 'lê só o trecho'], ['limite da conta → fila → retoma']])
+mcp = box('mcp', 3, 1452, '·', 'Ou o agente puxa', [['MCP', 'ilse_watch']], dashed=True)
 arrow([(u6['cx'], u6['b']), (d0['cx'], d0['y'])], label='ajuste do painel', lx=u6['cx'] + 8, ly=u6['b'] + 20, lanchor='start')
 arrow([(u6['r'], u6['cy'] - 6), (d1['cx'], u6['cy'] - 6), (d1['cx'], d1['y'])], label='classes de 1 elemento', lx=d1['cx'] + 8, ly=u6['cy'] - 14, lanchor='start')
 arrow([(d1['cx'], d1['b']), (d1['cx'], d3['y'])], color=BRAND, label='precisa de mais → agente', lx=d1['cx'] + 8, ly=d1['b'] + 24, lanchor='start', hand=True)
@@ -179,8 +184,8 @@ text(lx1 + 10, d3['b'] + 21, 'nada mudou → sobe 1 nível', 15, BRAND, HAND, 40
 
 # ── Code lane ───────────────────────────────────────────────────────────────
 c1 = box('c1', 4, 1090, '7', 'Arquivo muda', [['HMR', 'a página atualiza']])
-c2 = box('c2', 4, 1220, '9', 'Registra', [['desfazer ⌘Z', 'journal'], ['.git/ilse/changes.jsonl']])
-c3 = box('c3', 4, 1392, '10', 'Commit com contexto', [['ilse changes', 'ilse_changes']])
+c2 = box('c2', 4, 1220, '9', 'Registra', [['desfazer ⌘Z · refazer ⇧⌘Z', 'journal'], ['.git/ilse/changes.jsonl']])
+c3 = box('c3', 4, 1452, '10', 'Commit com contexto', [['ilse changes', 'ilse_changes']])
 arrow([(d1['r'], d1['cy']), (c1['x'], d1['cy'])])
 bus = 1060
 arrow([(d0['cx'], d0['b']), (d0['cx'], 1196), (bus, 1196), (bus, c1['cy'] + 10), (c1['x'], c1['cy'] + 10)])
@@ -192,7 +197,7 @@ arrow([(c2['cx'], c2['b']), (c3['cx'], c3['y'])])
 # designer sees it, then keeps, undoes or points again
 u7 = box('u7', 1, 1090, '8', 'Vê na hora', [['na própria tela']])
 arrow([(c1['cx'], c1['y']), (c1['cx'], 1062), (u7['cx'], 1062), (u7['cx'], u7['y'])], label='a página muda sozinha', lx=300, ly=1056)
-arrow([(u7['cx'], u7['b']), (u7['cx'], 1360), (c2['cx'] + 60, 1360), (c2['cx'] + 60, c2['b'])], color=BRAND, label='não gostou → ⌘Z desfaz', lx=u7['cx'] + 10, ly=1352, lanchor='start', hand=True)
+arrow([(u7['cx'], u7['b']), (u7['cx'], 1410), (c2['cx'] + 60, 1410), (c2['cx'] + 60, c2['b'])], color=BRAND, label='não gostou → ⌘Z desfaz', lx=u7['cx'] + 10, ly=1402, lanchor='start', hand=True)
 arrow([(u7['x'], u7['cy']), (36, u7['cy']), (36, u1['cy']), (u1['x'], u1['cy'])], color=BRAND, label='próximo ajuste', lx=28, ly=(u1['cy'] + u7['cy']) / 2, lrot=-90, hand=True)
 
 connector(c1['r'], c1['cy'], 1420, c1['cy'])
