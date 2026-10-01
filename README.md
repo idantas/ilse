@@ -1,4 +1,9 @@
-# Ilse
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-ilse-dark.svg">
+    <img src=".github/assets/logo-ilse.svg" alt="Ilse" width="220">
+  </picture>
+</p>
 
 **The designer's eye inside the code agent.**
 
