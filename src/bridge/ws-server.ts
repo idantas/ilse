@@ -194,6 +194,7 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
         note: (msg.note as string) ?? '',
         designerNote: typeof msg.designerNote === 'string' ? msg.designerNote : undefined,
         scope: parseScope(msg.scope),
+        remove: msg.remove === true ? true : undefined,
         element: (msg.element as string) ?? '',
         component: msg.component as string | undefined,
         styles: (msg.styles as Record<string, string>) ?? {},

@@ -106,11 +106,14 @@ interface AutoContext {
   area?: string;
   move?: string;
   resize?: string;
+  /** Remove the element: what the agent reads, and the chip's text */
+  remove?: string;
+  removeLabel?: string;
 }
 
 /** The note as the agent receives it: the designer's words first, then Ilse's context. */
 function composeNote(note: string, auto?: AutoContext): string {
-  const blocks = auto ? [auto.reorder, auto.move, auto.resize, auto.area, auto.style, auto.sketch].filter(Boolean) as string[] : [];
+  const blocks = auto ? [auto.remove, auto.reorder, auto.move, auto.resize, auto.area, auto.style, auto.sketch].filter(Boolean) as string[] : [];
   return [note.trim(), ...blocks].filter(Boolean).join('\n\n');
 }
 
@@ -139,7 +142,7 @@ function reconcileSent(drafts: AnnotationDraft[], known: Array<{ id: string; sta
  * One line per thing Ilse will tell the agent — shown in the card so the
  * designer sees how it read the gesture, while the note stays theirs.
  */
-type AutoKey = 'reorder' | 'move' | 'resize' | 'style' | 'sketch' | 'area';
+type AutoKey = 'remove' | 'reorder' | 'move' | 'resize' | 'style' | 'sketch' | 'area';
 interface AutoLine { key: AutoKey; text: string }
 
 function autoSummary(auto?: AutoContext): AutoLine[] {
@@ -147,6 +150,7 @@ function autoSummary(auto?: AutoContext): AutoLine[] {
   const out: AutoLine[] = [];
   const push = (key: AutoKey, text: string) => out.push({ key, text });
   const count = (text: string, re: RegExp) => (text.match(re) ?? []).length;
+  if (auto.removeLabel) push('remove', auto.removeLabel);
   if (auto.reorderLabel) push('reorder', auto.reorderLabel);
   if (auto.move) push('move', `${auto.move.replace(/\.$/, '')}`);
   if (auto.resize) push('resize', `${auto.resize.replace(/\.$/, '')}`);
@@ -1519,6 +1523,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         const draft = annotationsRef.current.find(d => d.id === a.id);
         if (draft?.styleData) setTimeout(() => clearStylePreview(draft), 600);
         if (draft?.pixelTargetId) expireElement(document.querySelector(`[data-ilse-pixel-target="${draft.pixelTargetId}"]`));
+        if (draft?.pixelTargetId) setTimeout(() => unhide(draft.pixelTargetId!), 4000); // still in the DOM = the code kept it
         setAnnotations(prev => prev.map(ann =>
           ann.id === a.id ? { ...ann, status: 'resolved' as const, resolvedSummary: a.resolvedSummary as string } : ann
         ));
@@ -1758,6 +1763,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     setLiveDragging(false);
     const pc = pendingCaptureRef.current;
     if (pc?.pixelTargetId) settleElement(document.querySelector(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`));
+    if (pc?.pixelTargetId) unhide(pc.pixelTargetId);
     setPendingCapture(null);
     setAnnotating(true);
   }, []);
@@ -2244,6 +2250,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       // What the designer typed, apart from Ilse's own context — the CLI must not skip it
       designerNote: ann.note.trim() || undefined,
       scope: ann.scope,
+      remove: ann.auto?.remove ? true : undefined,
       element: ann.capture.element,
       component: ann.capture.component,
       styles: ann.capture.styles,
@@ -2366,8 +2373,64 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     }
   }, [annotations, sendAnnotation]);
 
+  // ── Remove the selected element ──
+  // Preview: hidden in place (display:none on React's own node — never removed
+  // from the DOM, React owns it). The agent takes it out of the JSX; × or ⌘Z
+  // shows it again. Kept per pixel target, so the original display comes back.
+  const hiddenDisplay = useRef(new Map<string, string>());
+  const unhide = (id: string) => {
+    const saved = hiddenDisplay.current.get(id);
+    if (saved === undefined) return;
+    hiddenDisplay.current.delete(id);
+    const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${id}"]`);
+    if (el?.isConnected) el.style.display = saved;
+  };
+  const removeSelected = useCallback(() => {
+    const pc = pendingCaptureRef.current;
+    if (!pc?.pixelTargetId || pc.markerType !== 'element' || pc.auto?.remove) return;
+    const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`);
+    if (!el) return;
+    hiddenDisplay.current.set(pc.pixelTargetId, el.style.display);
+    el.style.display = 'none';
+    const what = pc.contextLabel;
+    setPendingCapture(prev => prev ? {
+      ...prev,
+      auto: {
+        ...prev.auto,
+        removeLabel: t('toolbar.removeCommand', { what }),
+        remove: [
+          `Remover este elemento (já escondido na tela pelo designer): ${what}.`,
+          'Tire o elemento do JSX. Se ele vem de uma lista gerada por .map, remova este item dos dados (ou filtre só ele), não o template de todos — a menos que o Scope diga ALL.',
+          'Limpe imports, props, estado e estilos que ficarem sem uso. Não simule com CSS (display:none, hidden, opacity).',
+        ].join('\n'),
+      },
+    } : null);
+    pushDraftStep({ kind: 'gesture', key: 'remove', label: t('undo.remove') });
+  }, []);
+
+  // Delete / Backspace removes the selected element, like in a design tool —
+  // never while typing (the note, a panel field)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== 'Delete' && e.key !== 'Backspace') || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      if (!pendingCaptureRef.current || pendingCaptureRef.current.markerType !== 'element') return;
+      e.preventDefault();
+      removeSelected();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [removeSelected]);
+
   /** Take back one of Ilse's commands (× on its chip, or ⌘Z in the draft): its preview goes away, the card stays */
   const takeBack = useCallback((key: AutoKey) => {
+    if (key === 'remove') {
+      const id = pendingCaptureRef.current?.pixelTargetId;
+      if (id) unhide(id);
+      setPendingCapture(prev => prev ? { ...prev, auto: { ...prev.auto, remove: undefined, removeLabel: undefined } } : null);
+      return;
+    }
     // Panel edits: remount the panel, which reverts its preview and starts clean
     if (key === 'style') setPanelEpoch(n => n + 1);
     // Move / resize / reorder: put the element back. The selection and
@@ -3137,6 +3200,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         <PropertyPanel
           key={panelEpoch}
           historyRef={panelHistoryRef}
+          onRemove={pendingCapture.markerType === 'element' ? removeSelected : undefined}
+          removed={!!pendingCapture.auto?.remove}
           onStep={() => pushDraftStep({ kind: 'panel' })}
           styles={pendingCapture.capture.styles}
           targetId={pendingCapture.pixelTargetId}

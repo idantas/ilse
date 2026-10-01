@@ -70,6 +70,7 @@ export const QUICK_SCHEMA = JSON.stringify({
 /** Why this annotation can't take the quick path — or null when it can */
 export function quickBlocker(a: Annotation, cwd: string, env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.ILSE_QUICK === '0') return 'desligado';
+  if (a.remove) return 'remover elemento';
   if (!INTENTS.has(a.intent ?? 'fix')) return `intent ${a.intent}`;
   if (a.imageRef || a.imageRefs?.length) return 'tem imagem';
   if (!designerWords(a) && !a.styleData?.changes.length) return 'sem pedido';

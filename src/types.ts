@@ -73,6 +73,8 @@ export interface Annotation {
   designerNote?: string;
   /** Element of a component repeated on the page: edit this instance, or all of them */
   scope?: { component: string; count: number; choice: 'one' | 'all' };
+  /** Remove the element (structural: always the agent, never the quick path) */
+  remove?: boolean;
   element: string;           // CSS selector (e.g. "button.cta-primary")
   component?: string;        // React component name
   styles: Record<string, string>;  // computed styles

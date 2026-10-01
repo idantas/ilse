@@ -15,7 +15,8 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { radius, color, shadow, font } from './tokens.js';
+import { radius, color, shadow, font, ilse } from './tokens.js';
+import { t } from '../i18n/index.js';
 import { getDSTokens, type DSToken } from './analyze.js';
 import { readColor, canonicalColor, toHex, isTransparent } from './color.js';
 import { collectColorTokens, withStaticTokens, byBaseness, type ColorToken } from './color-tokens.js';
@@ -145,7 +146,11 @@ function matchToken(value: string, tokens: DSToken[], isColor: boolean, preferre
 /** Handle the toolbar keeps to step the panel back (⌘Z while a draft is open) */
 export interface PanelHistory { undo: () => string | undefined; size: () => number }
 
-export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep }: {
+export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep, onRemove, removed }: {
+  /** Remove the element (preview: hidden; the agent takes it out of the JSX) */
+  onRemove?: () => void;
+  /** Already marked for removal — the command's × in the card takes it back */
+  removed?: boolean;
   /** Filled by the panel: undo its last edit */
   historyRef?: { current: PanelHistory | null };
   /** An edit worth one ⌘Z happened (label: what changed) */
@@ -396,7 +401,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
           <div style={{ fontSize: 9, color: color.mutedForeground, marginTop: 1 }}>
             {(() => {
               const all = [...dsTokens.filter(t => t.type !== 'color'), ...colorTokens];
-              return all.length > 0 ? `${all.length} tokens · ${countByType(all)}` : 'sem design context — rode ilse init';
+              return all.length > 0 ? `${all.length} tokens · ${countByType(all)}` : t('panel.noTokens');
             })()}
           </div>
         </div>
@@ -407,6 +412,22 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
           }}>
             {editCount}
           </span>
+        )}
+        {onRemove && (
+          <button
+            onClick={onRemove}
+            disabled={removed}
+            title={removed ? t('panel.removed') : t('panel.remove')}
+            aria-label={t('panel.remove')}
+            style={{
+              background: 'none', border: 'none', cursor: removed ? 'default' : 'pointer', padding: 2,
+              color: removed ? ilse.brand : color.mutedForeground, flexShrink: 0, display: 'flex',
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.5 6.5v4.5M9.5 6.5v4.5" />
+            </svg>
+          </button>
         )}
         {onClose && (
           <button
