@@ -30,7 +30,7 @@ Na primeira vez, a Ilse pergunta como entregar as anotações ao seu agente:
 ### Apontar e ajustar
 
 - **3 jeitos de apontar:** clicar num elemento, selecionar texto ou desenhar uma área.
-- **Selecionar o pai:** o botão ↰ no card da nota sobe a seleção para o elemento que contém o atual (wrappers de biblioteca do mesmo tamanho são pulados). Um clique dentro de um SVG seleciona o `<svg>` inteiro.
+- **Selecionar o pai:** o botão ↰ no card da nota sobe a seleção para o elemento que contém o atual (wrappers de biblioteca do mesmo tamanho são pulados). Um clique dentro de um SVG seleciona o `<svg>` inteiro; ⌘-clique (Ctrl-clique) seleciona o elemento exato, como um path de um ícone.
 - **Painel de propriedades:** texto, layout (largura/altura como Fixed · Hug · Fill, fluxo, alinhamento, gap, padding e margin por lado), tipografia, cores, borda, arredondamento e opacidade — com a escala e os tokens do seu projeto.
 - **None:** as listas de espaçamento, arredondamento e espessura da borda começam com *None* (zero) — sem padding, cantos retos, sem borda.
 - **Borda:** o *+* adiciona e já mostra cor, espessura, estilo e lados; o *−* tira.

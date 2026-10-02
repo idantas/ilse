@@ -119,11 +119,12 @@ export function reactView(el: Element): ReactView {
  * fibers), not DOM nodes. Dev builds only (React keeps _debugOwner there).
  */
 /**
- * What a click on this element selects. Inside an SVG it is the whole <svg>: a chart's
- * <path> or an icon's stroke is never what a designer means, and the generated
- * internals can't be found in the code.
+ * What a click on this element selects. Inside an SVG it is the whole <svg>, like a
+ * group in Figma: a chart's generated <path> can't be found in the code. A deep
+ * click (⌘/Ctrl, as in Figma) takes the exact element — an icon's own path, say.
  */
-export function selectionTarget(el: Element): Element {
+export function selectionTarget(el: Element, deep = false): Element {
+  if (deep) return el;
   let target = el;
   while (target instanceof SVGElement && target.ownerSVGElement) target = target.ownerSVGElement;
   return target;

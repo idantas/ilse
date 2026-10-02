@@ -1882,8 +1882,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // ── Unified annotation mode handlers ──────────────────────────────────────
 
   /** Put the selection (card + property panel) on this element */
-  const selectElement = useCallback((clicked: Element) => {
-    const target = selectionTarget(clicked);
+  const selectElement = useCallback((clicked: Element, deep = false) => {
+    const target = selectionTarget(clicked, deep);
     const capture = captureElement(target);
     const domRect = target.getBoundingClientRect();
     // Tag the exact clicked element with a unique attribute so the PixelOverlay
@@ -1936,7 +1936,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const swallow = (ev: Event) => { ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation(); };
       window.addEventListener('click', swallow, { capture: true, once: true });
       if (selected) settleElement(selected);
-      selectElement(target);
+      selectElement(target, e.metaKey || e.ctrlKey);
     };
     document.addEventListener('mousedown', onDown, true);
     return () => document.removeEventListener('mousedown', onDown, true);
@@ -1971,7 +1971,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
     if (!target.closest('[data-ilse-toolbar]')) {
       // Highlight what a click would select (a whole <svg>, not one of its paths)
-      const hovered = selectionTarget(target);
+      const hovered = selectionTarget(target, e.metaKey || e.ctrlKey);
       const rect = hovered.getBoundingClientRect();
       const r: PopoverRect = { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
       // Only update if rect actually changed — avoids re-render loops
@@ -2059,7 +2059,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       return;
     }
 
-    selectElement(target);
+    selectElement(target, e.metaKey || e.ctrlKey);
   }, []);
 
   // Aggressive event blocker — prevents page events from firing while annotating.

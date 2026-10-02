@@ -30,7 +30,7 @@ The first run asks how Ilse should hand annotations to your agent:
 ### Point and adjust
 
 - **3 ways to point:** click an element, select text, or draw an area.
-- **Select the parent:** the ↰ button on the note card moves the selection up to the containing element (library wrappers of the same size are skipped). A click inside an SVG selects the whole `<svg>`.
+- **Select the parent:** the ↰ button on the note card moves the selection up to the containing element (library wrappers of the same size are skipped). A click inside an SVG selects the whole `<svg>`; ⌘-click (Ctrl-click) selects the exact element, such as one path of an icon.
 - **Property panel:** text, layout (width/height as Fixed · Hug · Fill, flow, alignment, gap, padding and margin per side), typography, colors, stroke, radius and opacity — with your project's scale and tokens.
 - **None:** spacing, radius and stroke-weight lists start with *None* (zero) — no padding, square corners, no stroke.
 - **Stroke:** *+* adds one and shows its color, weight, style and sides; *−* takes it away.
