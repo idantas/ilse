@@ -10,6 +10,5 @@ coverage/
 .ilse-tokens.json
 .ilse-snapshot.json
 .npmrc
-docs/
 .claude/agent-memory/
 .claude/agents/

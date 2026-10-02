@@ -5,7 +5,9 @@
 ## Use it
 
 - Install and run, in a React project with its dev server running: `npx github:idantas/ilse` (opens the app at http://localhost:4700 with the toolbar)
-- [README](README.md): setup, how it works, the cost ladder, usage limits, CLI, MCP
+- [README](README.md): what it does, requirements, how to run it (Portuguese: README.pt-BR.md)
+- [How it works](docs/how-it-works.md): locating code, the cost ladder, models, safety checks, undo, usage limits, commits
+- [Reference](docs/reference.md): install, modes, toolbar, CLI, environment switches, logs, MCP, Claude accounts, compatibility
 
 ## Work on it
 
