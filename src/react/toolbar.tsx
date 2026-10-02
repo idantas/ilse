@@ -3272,6 +3272,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           onRemove={pendingCapture.markerType === 'element' ? removeSelected : undefined}
           removed={!!pendingCapture.auto?.remove}
           textEdit={pendingCapture.textEdit}
+          mirrorAll={pendingCapture.scope?.choice === 'all'}
           onTextChange={(edit) => setPendingCapture(prev => prev ? {
             ...prev,
             textEdit: edit,

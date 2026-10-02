@@ -134,6 +134,32 @@ export function componentScope(el: Element): { component: string; count: number 
   return { component, count: instances.size };
 }
 
+/**
+ * The same JSX node in the component's other instances on the page — what
+ * "all of them" changes. Same tag, same owning component and the same place
+ * in its code (where React created the element: line:column in the dev stack),
+ * or, without a dev stack, the same classes.
+ */
+export function scopeTwins(el: Element): HTMLElement[] {
+  const owner = fiberOf(el)?._debugOwner;
+  if (!owner) return [];
+  const site = jsxSite(el);
+  const cls = el.getAttribute('class') ?? '';
+  return Array.from(document.getElementsByTagName(el.tagName)).filter((node): node is HTMLElement => {
+    if (node === el || !(node instanceof HTMLElement) || node.closest('[data-ilse-toolbar]')) return false;
+    if (fiberOf(node)?._debugOwner?.type !== owner.type) return false;
+    const other = jsxSite(node);
+    return site && other ? other === site : (node.getAttribute('class') ?? '') === cls;
+  });
+}
+
+/** Where React created the element: the first app frame of its dev stack, with line:column */
+function jsxSite(el: Element): string | undefined {
+  const stack = (fiberOf(el) as (Fiber & { _debugStack?: { stack?: string } }) | null)?._debugStack?.stack;
+  return (stack ?? '').split('\n').find(l => /^\s*at\s/.test(l) && /:\d+:\d+\)?\s*$/.test(l)
+    && !/node_modules|react-stack|jsx-dev-runtime|react-dom|jsxDEV/.test(l))?.trim();
+}
+
 // ── Live preview (browser) ─────────────────────────────────────────────────
 
 export function itemLabel(el: Element): string {

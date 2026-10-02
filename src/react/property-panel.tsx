@@ -16,6 +16,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { radius, color, shadow, font, ilse } from './tokens.js';
+import { scopeTwins } from './live-layout.js';
 import { useFrontLayer } from './front-layer.js';
 import { t } from '../i18n/index.js';
 import { getDSTokens, type DSToken } from './analyze.js';
@@ -96,6 +97,10 @@ const groupTitle = {
   color: color.mutedForeground, marginBottom: 6,
 } as const;
 
+/** Properties whose lists start with "None" (0): spacing, radius, stroke weight */
+const NONE_KEYS = /^(gap|padding|margin|borderRadius|border(Top|Right|Bottom|Left)?Width)/;
+const isZero = (v: string) => /^-?0(\.0+)?(px|rem|em|%)?$/.test(v.trim());
+
 const COLOR_PROPS = new Set(['color', 'backgroundColor', 'borderColor']);
 
 // ── Value helpers ──────────────────────────────────────────────────────────
@@ -163,7 +168,9 @@ export interface PanelHistory {
 
 export interface TextEdit { from: string; to: string }
 
-export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep, onRemove, removed, textEdit, onTextChange }: {
+export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep, onRemove, removed, textEdit, onTextChange, mirrorAll }: {
+  /** "Apply to: all of them" — preview the edits on the component's other instances too */
+  mirrorAll?: boolean;
   /** The text already retyped in this draft — a remounted panel picks it up again */
   textEdit?: TextEdit;
   /** The element's text was retyped (undefined: back to what it was) */
@@ -193,6 +200,9 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   onPickerOpen?: (open: boolean) => void;
   onClose?: () => void;
 }) {
+  // Held once found: on cancel the selection's marker attribute can be gone
+  // before this panel unmounts, and the preview must still be put back
+  const targetEl = useRef<HTMLElement | null>(null);
   const dsTokens = getDSTokens();
   const [edits, setEdits] = useState<Record<string, string>>({});
   // Mirror for apply(): the picker emits many values in a row while dragging,
@@ -201,6 +211,27 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   // Which token each colour edit came from, when it came from one
   const editTokens = useRef<Record<string, string>>({});
   const originalInline = useRef<Record<string, string>>({});
+  // What each edited CSS property previews as (a value or a token's var()),
+  // replayed on the component's other instances when the scope is "all"
+  const previews = useRef<Record<string, string>>({});
+  const twinOriginals = useRef(new Map<HTMLElement, Record<string, string>>());
+  const mirrorAllRef = useRef(!!mirrorAll);
+  mirrorAllRef.current = !!mirrorAll;
+  function unpaintTwins() {
+    for (const [tw, orig] of twinOriginals.current) for (const [p, v] of Object.entries(orig).reverse()) tw.style.setProperty(p, v || null);
+    twinOriginals.current.clear();
+  }
+  function syncTwins() {
+    unpaintTwins();
+    const e = getElement();
+    if (!mirrorAllRef.current || !e || Object.keys(previews.current).length === 0) return;
+    for (const tw of scopeTwins(e)) {
+      const orig: Record<string, string> = {};
+      for (const [p, v] of Object.entries(previews.current)) { orig[p] = tw.style.getPropertyValue(p); tw.style.setProperty(p, v); }
+      twinOriginals.current.set(tw, orig);
+    }
+  }
+  useEffect(() => { syncTwins(); /* scope switched */ }, [mirrorAll]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Text: retyped in place. The preview writes into the element's own text
   // nodes — React keeps pointing at them, so its next render simply wins. ──
@@ -286,8 +317,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   }
 
   function getElement(): HTMLElement | null {
+    if (targetEl.current?.isConnected) return targetEl.current;
     if (!targetId) return null;
-    return document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${targetId}"]`);
+    targetEl.current = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${targetId}"]`);
+    return targetEl.current;
   }
 
   // Revert every preview on unmount — unless the annotation was sent, in which
@@ -296,9 +329,12 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     return () => {
       if (committedRef?.current) return;
       revertText();
+      unpaintTwins();
       const el = getElement();
       if (!el) return;
-      for (const [prop, original] of Object.entries(originalInline.current)) {
+      // Newest first: `padding` then `padding-top` were saved in that order, and
+      // the second original was read after the first edit — undo it first
+      for (const [prop, original] of Object.entries(originalInline.current).reverse()) {
         el.style.setProperty(prop.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`), original || null);
       }
     };
@@ -322,6 +358,8 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
       const preview = picked?.cssVar ? `var(${picked.cssVar})` : value;
       if (value) el.style.setProperty(cssProp, preview);
       else el.style.setProperty(cssProp, originalInline.current[spec.key] || null);
+      if (value) previews.current[cssProp] = preview; else delete previews.current[cssProp];
+      syncTwins();
     }
 
     const next = { ...editsRef.current };
@@ -342,7 +380,8 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
         from: base[key] ?? '',
         to,
         token: token?.name,
-        offToken: family.length > 0 && !token && !onScale(to, family) && !(COLOR_PROPS.has(key) && isTransparent(to)),
+        offToken: family.length > 0 && !token && !onScale(to, family) && !(COLOR_PROPS.has(key) && isTransparent(to))
+          && !(NONE_KEYS.test(key) && isZero(to)),
       };
     });
   }
@@ -365,7 +404,12 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     sizeModes[axis] ?? readSize(axis, el ? Array.from(el.classList) : [], parentFlow, styles.display ?? '');
   const textFill = isText && (!styles.backgroundColor || isTransparent(styles.backgroundColor));
   // Stroke: read with the zero widths / `none` filled in, edits on top
-  const stroke = readStroke({ ...base, ...edits });
+  // (adding a stroke writes one `border-width`; the per-side computed zeros must not hide it)
+  const strokeInput: Record<string, string> = { ...base, ...edits };
+  if (edits.borderWidth) for (const k of ['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth']) {
+    if (!(k in edits)) strokeInput[k] = edits.borderWidth;
+  }
+  const stroke = readStroke(strokeInput);
   const shown = (p: PropSpec) => {
     if (p.control) return false;
     if (textFill && p.key === 'backgroundColor') return false;
@@ -403,9 +447,12 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   function detachPreview() {
     const styles = { ...originalInline.current };
     const texts = [...(textNodes.current ?? [])];
+    const twins = [...twinOriginals.current];
+    const target = getElement();
     return () => {
-      const e = getElement();
-      if (e) for (const [prop, original] of Object.entries(styles)) {
+      for (const [tw, orig] of twins) for (const [p, v] of Object.entries(orig).reverse()) tw.style.setProperty(p, v || null);
+      const e = target;
+      if (e) for (const [prop, original] of Object.entries(styles).reverse()) {
         e.style.setProperty(prop.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`), original || null);
       }
       texts.forEach(n => { n.node.data = n.data; });
@@ -845,7 +892,7 @@ function PropertyRow({ spec, current, edited, tokens, preferredToken, pickerOpen
   const matched = matchToken(value, tokens, isColor, preferredToken);
   // `transparent` is a keyword every system has (bg-transparent), not a stray value.
   const clear = isColor && !matched && isTransparent(value);
-  const isOffToken = tokens.length > 0 && !matched && !clear && !onScale(value, tokens);
+  const isOffToken = tokens.length > 0 && !matched && !clear && !onScale(value, tokens) && !(NONE_KEYS.test(spec.key) && isZero(value));
   const controlStyle = {
     flex: 1, minWidth: 0, fontSize: 11, fontFamily: font.sans,
     padding: '3px 4px', borderRadius: radius.sm,
@@ -914,12 +961,16 @@ function ScaleControl({ spec, value, tokens, preferredToken, onApply, prefix, co
   prefix?: React.ReactNode;
   compact?: boolean;
 }) {
-  const matched = matchToken(value, tokens, false, preferredToken);
-  const isOffToken = tokens.length > 0 && !matched && !onScale(value, tokens);
+  const none = NONE_KEYS.test(spec.key);
+  const isNone = none && isZero(value);
+  const matched = isNone ? undefined : matchToken(value, tokens, false, preferredToken);
+  const isOffToken = tokens.length > 0 && !matched && !isNone && !onScale(value, tokens);
   const [custom, setCustom] = useState(false);
-  const options = tokens.length > 0
+  const listed = tokens.length > 0
     ? tokens.map(t => ({ label: t.label ?? t.name, value: t.value, hint: t.value }))
     : (spec.options ?? []).map(o => ({ label: o, value: o }));
+  // "None" first, where zero means something (no padding, square corners, no stroke)
+  const options = none ? [{ label: 'None', value: '0px', hint: '0' }, ...listed.filter(o => !isZero(o.value))] : listed;
 
   const inputStyle = {
     flex: 1, minWidth: 0, fontSize: 11, fontFamily: font.mono,
@@ -944,11 +995,11 @@ function ScaleControl({ spec, value, tokens, preferredToken, onApply, prefix, co
       />
     );
   }
-  const shown = matched ? (matched.label ?? tokenLabel(matched)) : shortValue(value);
+  const shown = isNone ? 'None' : matched ? (matched.label ?? tokenLabel(matched)) : shortValue(value);
   return (
     <ValueSelect
       options={options}
-      current={matched?.value}
+      current={isNone ? '0px' : matched?.value}
       display={isOffToken && !compact ? `${shown} · fora do padrão` : shown}
       offToken={isOffToken}
       prefix={prefix}
