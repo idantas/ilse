@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import type { Node, JSXElement } from '@babel/types';
 import type { Annotation, StyleChange } from '../types.js';
 import { parseCode } from '../design-context/ast.js';
+import { t } from '../i18n/index.js';
 
 export interface SwapEdit { property: string; removed: string[]; added: string }
 export interface SwapPlan { file: string; line: number; before: string; after: string; edits: SwapEdit[] }
@@ -426,7 +427,7 @@ export function applyTokenSwap(plan: SwapPlan, cwd: string): void {
 
 export function describeSwap(plan: SwapPlan): string {
   const parts = plan.edits.map(e => `${e.removed.length ? e.removed.join(' ') : '∅'} → ${e.added}`);
-  return `${parts.join(', ')} em ${plan.file}:${plan.line} (sem IA)`;
+  return t('swap.summary', { edits: parts.join(', '), file: plan.file, line: plan.line });
 }
 
 // ── Text: the panel's retyped text, written where the JSX has it ────────────

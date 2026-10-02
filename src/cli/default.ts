@@ -15,7 +15,7 @@ import { t, detectLocale, setLocale } from '../i18n/index.js';
 import type { Annotation } from '../types.js';
 import { checkForUpdate } from './update-check.js';
 import { startProxy } from '../proxy/server.js';
-import { waitForDevServer } from '../proxy/find-dev-server.js';
+import { findDevServer, waitForDevServer } from '../proxy/find-dev-server.js';
 import { spawn } from 'node:child_process';
 import { planTokenSwap, planTextSwap, applyTokenSwap, describeSwap, type SwapPlan } from '../context/token-swap.js';
 import {
@@ -182,7 +182,8 @@ function openBrowser(url: string): void {
  */
 async function startToolbarProxy(options: DefaultOptions): Promise<void> {
   const target = options.target
-    ? { host: '127.0.0.1', port: options.target }
+    // Probe both stacks: Vite on recent Node binds `localhost` to ::1 only
+    ? (await findDevServer(process.cwd(), [options.target])) ?? { host: '127.0.0.1', port: options.target }
     : await waitForDevServer(process.cwd(), {
         onWaiting: () => console.log(chalk.dim(`  ${t('proxy.waiting')}`)),
       });

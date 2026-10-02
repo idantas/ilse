@@ -21,6 +21,7 @@ import {
   type ColorFormat, type HSVA, type RGBA,
 } from './color.js';
 import { familyRows, colorSections, byBaseness, type ColorToken, type Swatch } from './color-tokens.js';
+import { t } from '../i18n/index.js';
 
 const WIDTH = 248;
 const PAD = 12;
@@ -28,7 +29,7 @@ const FORMATS: ColorFormat[] = ['hex', 'rgb', 'hsl', 'oklch'];
 const FORMAT_KEY = 'ilse-color-format';
 const ORDER_KEY = 'ilse-color-order';
 type Order = 'color' | 'group';
-const SECTION_LABELS = { neutral: 'Neutros', color: 'Cores', translucent: 'Transparentes' } as const;
+const SECTION_LABELS = { neutral: 'color.section.neutral', color: 'color.section.color', translucent: 'color.section.translucent' } as const;
 
 const CHECKER: React.CSSProperties = {
   backgroundImage:
@@ -235,7 +236,7 @@ export function ColorPicker({ value, tokens, tokenName, anchor, anchorEl, onPick
             {order === 'color' ? (
               colorSections(tokens).map(sec => (
                 <div key={sec.name} style={{ marginBottom: 10 }}>
-                  <div style={groupLabel}>{SECTION_LABELS[sec.name]}</div>
+                  <div style={groupLabel}>{t(SECTION_LABELS[sec.name])}</div>
                   <SwatchGrid
                     swatches={sec.swatches}
                     selected={matched}
@@ -418,8 +419,8 @@ function Picker({ hsv, format, display, onHsv, onFormat, onTyped }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         {Dropper && (
           <button
-            title="Conta-gotas"
-            aria-label="Conta-gotas"
+            title={t('color.eyedropper')}
+            aria-label={t('color.eyedropper')}
             onClick={async () => {
               try {
                 const { sRGBHex } = await new Dropper().open();
@@ -475,7 +476,7 @@ function Picker({ hsv, format, display, onHsv, onFormat, onTyped }: {
           <input
             value={draft}
             spellCheck={false}
-            aria-label="Valor da cor"
+            aria-label={t('color.value')}
             onFocus={() => { typing.current = true; }}
             onChange={(e) => { setDraft(e.target.value); setInvalid(false); }}
             onBlur={commit}
@@ -485,7 +486,7 @@ function Picker({ hsv, format, display, onHsv, onFormat, onTyped }: {
           <span style={{ alignSelf: 'stretch', width: 1, backgroundColor: color.border }} />
           <input
             value={Math.round(hsv.a * 100)}
-            aria-label="Opacidade"
+            aria-label={t('color.opacity')}
             inputMode="numeric"
             onChange={(e) => {
               const n = Number(e.target.value.replace(/[^\d]/g, ''));

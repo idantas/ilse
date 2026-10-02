@@ -11,10 +11,11 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { color, radius, shadow, font, ilse } from './tokens.js';
 import type { Point, Stroke } from './sketch.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 export const PEN_COLORS = ['#FF6C03', '#EF4444', '#3B82F6', '#22C55E', '#111111'] as const;
-const PEN_NAMES: Record<string, string> = {
-  '#FF6C03': 'Laranja', '#EF4444': 'Vermelho', '#3B82F6': 'Azul', '#22C55E': 'Verde', '#111111': 'Preto',
+const PEN_NAMES: Record<string, MessageKey> = {
+  '#FF6C03': 'sketch.pen.orange', '#EF4444': 'sketch.pen.red', '#3B82F6': 'sketch.pen.blue', '#22C55E': 'sketch.pen.green', '#111111': 'sketch.pen.black',
 };
 
 function useScroll(): Point {
@@ -129,8 +130,8 @@ export function PencilControl(props: {
     <>
       <button
         data-ilse-toolbar
-        title="Cor do lápis"
-        aria-label="Cor do lápis"
+        title={t('sketch.penColor')}
+        aria-label={t('sketch.penColor')}
         aria-expanded={open}
         onMouseDown={(e) => e.stopPropagation()}
         onMouseEnter={() => props.onHover?.(true)}
@@ -181,8 +182,8 @@ export function PencilBar({ penColor, strokeCount, onColor, onUndo, onClear, onD
       {PEN_COLORS.map(c => (
         <button
           key={c}
-          title={PEN_NAMES[c]}
-          aria-label={PEN_NAMES[c]}
+          title={t(PEN_NAMES[c])}
+          aria-label={t(PEN_NAMES[c])}
           aria-pressed={penColor === c}
           onClick={() => onColor(c)}
           style={{
@@ -193,10 +194,10 @@ export function PencilBar({ penColor, strokeCount, onColor, onUndo, onClear, onD
         />
       ))}
       <span style={{ width: 1, height: 18, backgroundColor: color.border, margin: '0 2px' }} />
-      <button onClick={onUndo} disabled={strokeCount === 0} title="Desfazer traço" style={barButton(strokeCount === 0)}>
+      <button onClick={onUndo} disabled={strokeCount === 0} title={t('sketch.undo')} style={barButton(strokeCount === 0)}>
         Desfazer
       </button>
-      <button onClick={onClear} disabled={strokeCount === 0} title="Apagar desenho" style={barButton(strokeCount === 0)}>
+      <button onClick={onClear} disabled={strokeCount === 0} title={t('sketch.clear')} style={barButton(strokeCount === 0)}>
         Limpar
       </button>
       <button

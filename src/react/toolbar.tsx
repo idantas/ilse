@@ -161,11 +161,11 @@ function autoSummary(auto?: AutoContext): AutoLine[] {
   if (auto.resize) push('resize', `${auto.resize.replace(/\.$/, '')}`);
   if (auto.style) {
     const n = count(auto.style, /^- /gm);
-    push('style', `${n} ${n === 1 ? 'ajuste' : 'ajustes'} do painel`);
+    push('style', n === 1 ? t('toolbar.chip.panelOne') : t('toolbar.chip.panelMany', { n }));
   }
   if (auto.sketch) {
     const n = count(auto.sketch, /^\d+\. /gm);
-    push('sketch', `Desenho · ${n} ${n === 1 ? 'traço lido' : 'traços lidos'}`);
+    push('sketch', n === 1 ? t('toolbar.chip.sketchOne') : t('toolbar.chip.sketchMany', { n }));
   }
   if (auto.area) push('area', `${auto.area.split(':')[0]}`);
   return out;
@@ -188,9 +188,9 @@ const hasAuto = (auto?: AutoContext) => !!auto && Object.values(auto).some(Boole
 
 function moveText(dx: number, dy: number): string {
   const parts: string[] = [];
-  if (Math.abs(dy) > 2) parts.push(`${Math.abs(Math.round(dy))}px para ${dy < 0 ? 'cima' : 'baixo'}`);
-  if (Math.abs(dx) > 2) parts.push(`${Math.abs(Math.round(dx))}px para ${dx < 0 ? 'esquerda' : 'direita'}`);
-  return parts.length > 0 ? `Arrastado ${parts.join(' e ')}.` : '';
+  if (Math.abs(dy) > 2) parts.push(t(dy < 0 ? 'toolbar.chip.up' : 'toolbar.chip.down', { px: Math.abs(Math.round(dy)) }));
+  if (Math.abs(dx) > 2) parts.push(t(dx < 0 ? 'toolbar.chip.left' : 'toolbar.chip.right', { px: Math.abs(Math.round(dx)) }));
+  return parts.length > 0 ? t('toolbar.chip.dragged', { parts: parts.join(t('toolbar.chip.and')) }) : '';
 }
 
 const INTENT_LABELS: Record<DraftIntent, string> = {
@@ -566,13 +566,13 @@ function AnnotationPopover({
       {/* Repeated component: the edit goes to this one, or to every one of them */}
       {scope && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 11, color: color.mutedForeground, flexShrink: 0 }}>Aplicar em</span>
-          <div role="radiogroup" aria-label="Aplicar em" style={{
+          <span style={{ fontSize: 11, color: color.mutedForeground, flexShrink: 0 }}>{t('toolbar.scope.label')}</span>
+          <div role="radiogroup" aria-label={t('toolbar.scope.label')} style={{
             flex: 1, minWidth: 0, display: 'flex', gap: 2, padding: 2, borderRadius: radius.sm, backgroundColor: color.muted,
           }}>
             {([
-              { choice: 'one', label: `Só neste`, title: `Só este ${scope.component} muda` },
-              { choice: 'all', label: `Todos · ${scope.count}`, title: `Todos os ${scope.count} ${scope.component} desta tela (e onde mais ele for usado) mudam` },
+              { choice: 'one', label: t('toolbar.scope.one'), title: t('toolbar.scope.oneTitle', { component: scope.component }) },
+              { choice: 'all', label: t('toolbar.scope.all', { count: scope.count }), title: t('toolbar.scope.allTitle', { count: scope.count, component: scope.component }) },
             ] as const).map(o => {
               const on = scope.choice === o.choice;
               return (
@@ -595,7 +595,7 @@ function AnnotationPopover({
               );
             })}
           </div>
-          <span title={`Componente ${scope.component}`} style={{
+          <span title={t('toolbar.scope.component', { component: scope.component })} style={{
             fontSize: 10, fontFamily: font.mono, color: color.mutedForeground, flexShrink: 1, minWidth: 0,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 70,
           }}>
@@ -612,7 +612,7 @@ function AnnotationPopover({
         {/* What Ilse understood — command tokens at the head of the input.
             Read-only: the note typed after them stays the designer's. */}
         {summary && summary.length > 0 && (
-          <div title="O que a Ilse vai mandar para o agente" style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '8px 8px 0' }}>
+          <div title={t('toolbar.summaryTitle')} style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '8px 8px 0' }}>
             {summary.map(line => (
               <span key={line.key} title={line.text} contentEditable={false} style={{
                 display: 'inline-flex', alignItems: 'center', gap: 2, maxWidth: '100%', boxSizing: 'border-box',
@@ -632,8 +632,8 @@ function AnnotationPopover({
                 {onRemoveSummary && (
                   <button
                     onClick={() => onRemoveSummary(line.key)}
-                    title="Remover comando"
-                    aria-label="Remover comando"
+                    title={t('toolbar.removeChip')}
+                    aria-label={t('toolbar.removeChip')}
                     style={{
                       width: 16, height: 16, flexShrink: 0, padding: 0, border: 'none', borderRadius: 4,
                       background: 'none', cursor: 'pointer', color: color.mutedForeground,
@@ -1676,7 +1676,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           ));
         }
         // Show error in toast
-        const errorMsg = typeof msg.message === 'string' ? msg.message : 'Erro ao executar';
+        const errorMsg = typeof msg.message === 'string' ? msg.message : t('toolbar.runFailed');
         setClipboardToast(errorMsg);
         setTimeout(() => setClipboardToast(null), 6000);
       }
@@ -2202,7 +2202,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   ...moved, originalRect: rect,
                   auto: {
                     ...prev.auto, reorder: formatReorder(result), move: undefined,
-                    reorderLabel: `Reordenar "${result.item}" → posição ${result.to + 1} de ${result.after.length}${owner ? ` em <${owner}>` : ''}`,
+                    reorderLabel: t(owner ? 'toolbar.chip.reorderIn' : 'toolbar.chip.reorder', { item: result.item, to: result.to + 1, count: result.after.length, owner: owner ?? '' }),
                   },
                 };
               }
@@ -2213,7 +2213,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   auto: {
                     ...prev.auto, move: undefined,
                     reorder: formatReparent(result, captureElement(result.target).grepPattern),
-                    reorderLabel: `${result.out ? 'Tirar' : 'Mover'} "${result.item}" para dentro de "${result.intoLabel}"`,
+                    reorderLabel: t(result.out ? 'toolbar.chip.moveOut' : 'toolbar.chip.moveInto', { item: result.item, into: result.intoLabel }),
                   },
                 };
               }
@@ -3235,7 +3235,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                         const nw2 = pc.rect.width;
                         const nh2 = pc.rect.height;
                         if (Math.abs(nw2 - ow) > 3 || Math.abs(nh2 - oh) > 3) {
-                          const desc = `Redimensionado de ${Math.round(ow)}×${Math.round(oh)} para ${Math.round(nw2)}×${Math.round(nh2)}.`;
+                          const desc = t('toolbar.chip.resized', { from: `${Math.round(ow)}×${Math.round(oh)}`, to: `${Math.round(nw2)}×${Math.round(nh2)}` });
                           setPendingCapture(prev => prev ? { ...prev, auto: { ...prev.auto, resize: desc } } : null);
                           pushDraftStep({ kind: 'gesture', key: 'resize', label: t('undo.resize') });
                         }
@@ -3389,7 +3389,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             <div
               key={originalIndex}
               data-ilse-toolbar
-              title="Clique para abrir · arraste para mover"
+              title={t('toolbar.markerTitle')}
               onMouseEnter={() => setMoveHoverIndex(originalIndex)}
               onMouseLeave={() => setMoveHoverIndex(null)}
               onMouseDown={(e) => startMarkerDrag(originalIndex, e)}

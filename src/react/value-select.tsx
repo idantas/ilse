@@ -11,6 +11,7 @@
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { radius, color, shadow, font } from './tokens.js';
+import { t } from '../i18n/index.js';
 
 export interface ValueOption { label: string; value: string; hint?: string }
 
@@ -79,7 +80,7 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
       <button
         ref={triggerRef}
         onClick={() => setOpen(v => !v)}
-        title={offToken ? 'Valor fora da escala do projeto — escolha um da lista ou mantenha como exceção' : display}
+        title={offToken ? t('select.offScale') : display}
         style={{
           flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4,
           fontSize: 11, fontFamily: font.sans, textAlign: 'left', cursor: 'pointer',
@@ -117,7 +118,7 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
             <>
               <Item onClick={() => { close(); onCustom(); }}>
                 <span style={{ width: 12, flexShrink: 0, color: color.mutedForeground }}>+</span>
-                Outro valor…
+                {t('select.other')}
               </Item>
               <div style={{ height: 1, backgroundColor: color.border, margin: '3px 2px' }} />
             </>
@@ -139,7 +140,7 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
           {folded && (
             <Item onClick={() => setExpanded(v => !v)} muted>
               <span style={{ width: 12, flexShrink: 0 }} />
-              {expanded ? 'Ver menos' : `Ver mais (${options.length - shown.length})`}
+              {expanded ? t('select.less') : t('select.more', { n: options.length - shown.length })}
             </Item>
           )}
         </div>,

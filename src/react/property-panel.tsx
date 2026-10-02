@@ -19,6 +19,9 @@ import { radius, color, shadow, font, ilse } from './tokens.js';
 import { scopeTwins } from './live-layout.js';
 import { useFrontLayer } from './front-layer.js';
 import { t } from '../i18n/index.js';
+
+// For components that name a side `t` (top, right, bottom, left)
+const translate = t;
 import { getDSTokens, type DSToken } from './analyze.js';
 import { readColor, canonicalColor, toHex, isTransparent } from './color.js';
 import { collectColorTokens, withStaticTokens, byBaseness, type ColorToken } from './color-tokens.js';
@@ -561,7 +564,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
               {GROUP_LABELS[group]}
               {group === 'stroke' && (
                 <IconButton
-                  title={stroke.has ? 'Remover stroke' : 'Adicionar stroke'}
+                  title={stroke.has ? t('panel.stroke.remove') : t('panel.stroke.add')}
                   onClick={() => applyMany(stroke.has
                     ? strokeWidths([false, false, false, false], '0px')
                     : { borderStyle: 'solid', ...strokeWidths([true, true, true, true], '1px') })}
@@ -690,17 +693,17 @@ function countByType(tokens: DSToken[]): string {
 
 // ── Layout — flow + alignment, Figma auto layout as the reference ─────────
 
-const FLOWS: Array<{ flow: Flow; title: string; icon: React.ReactNode }> = [
-  { flow: 'block', title: 'Block — sem flow', icon: (
+const FLOWS: Array<{ flow: Flow; title: () => string; icon: React.ReactNode }> = [
+  { flow: 'block', title: () => t('panel.flow.block'), icon: (
     <><rect x="2" y="2" width="5" height="5" rx="1.2" /><rect x="9" y="4" width="5" height="5" rx="1.2" /><rect x="4" y="9" width="5" height="5" rx="1.2" /></>
   ) },
-  { flow: 'vertical', title: 'Vertical — flex-col', icon: (
+  { flow: 'vertical', title: () => 'Vertical — flex-col', icon: (
     <><rect x="2" y="2" width="7" height="5" rx="1.2" /><rect x="2" y="9" width="7" height="5" rx="1.2" /><path d="M13 3v9m-2-2 2 2 2-2" /></>
   ) },
-  { flow: 'horizontal', title: 'Horizontal — flex-row', icon: (
+  { flow: 'horizontal', title: () => 'Horizontal — flex-row', icon: (
     <><rect x="2" y="2" width="5" height="7" rx="1.2" /><rect x="9" y="2" width="5" height="7" rx="1.2" /><path d="M3 13h9m-2-2 2 2-2 2" /></>
   ) },
-  { flow: 'grid', title: 'Grid', icon: (
+  { flow: 'grid', title: () => 'Grid', icon: (
     <><rect x="2" y="2" width="5" height="5" rx="1.2" /><rect x="9" y="2" width="5" height="5" rx="1.2" /><rect x="2" y="9" width="5" height="5" rx="1.2" /><rect x="9" y="9" width="5" height="5" rx="1.2" /></>
   ) },
 ];
@@ -717,9 +720,9 @@ interface SizeControl {
 }
 
 const SIZE_MODES: Array<{ mode: SizeMode; label: string; hint: (axis: Axis, fill: string) => string }> = [
-  { mode: 'fixed', label: 'Fixed', hint: (a) => `${a === 'width' ? 'w' : 'h'}-[px] ou %` },
-  { mode: 'hug',   label: 'Hug',   hint: (a) => `${a === 'width' ? 'w' : 'h'}-fit — abraça o conteúdo` },
-  { mode: 'fill',  label: 'Fill',  hint: (a, fill) => `${fill === 'flex-1' ? 'flex-1' : a === 'width' ? 'w-full' : 'h-full'} — ocupa o espaço do pai` },
+  { mode: 'fixed', label: 'Fixed', hint: (a) => t('panel.size.fixedHint', { cls: a === 'width' ? 'w' : 'h' }) },
+  { mode: 'hug',   label: 'Hug',   hint: (a) => t('panel.size.hugHint', { cls: `${a === 'width' ? 'w' : 'h'}-fit` }) },
+  { mode: 'fill',  label: 'Fill',  hint: (a, fill) => t('panel.size.fillHint', { cls: fill === 'flex-1' ? 'flex-1' : a === 'width' ? 'w-full' : 'h-full' }) },
 ];
 
 function SizeRow({ axis, size }: { axis: Axis; size: SizeControl }) {
@@ -743,8 +746,8 @@ function SizeRow({ axis, size }: { axis: Axis; size: SizeControl }) {
       <input
         key={`${mode}-${value}`}
         defaultValue={shortValue(value)}
-        placeholder="px ou %"
-        title="Número = px · aceita 50%, 20rem…"
+        placeholder={t('panel.size.placeholder')}
+        title={t('panel.size.title')}
         onBlur={(e) => { if (e.target.value.trim() && e.target.value.trim() !== shortValue(value)) size.onValue(axis, e.target.value); }}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         style={{
@@ -794,7 +797,7 @@ function LayoutControls({ layout, edited, onFlow, onAlign, onBetween, onWrap, si
             return (
               <button
                 key={f.flow}
-                title={f.title}
+                title={f.title()}
                 onClick={() => { if (!on) onFlow(f.flow); }}
                 style={{
                   flex: 1, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -811,7 +814,7 @@ function LayoutControls({ layout, edited, onFlow, onAlign, onBetween, onWrap, si
             );
           })}
         </div>
-        {edited && <span title="alterado" style={{ width: 5, height: 5, flexShrink: 0, borderRadius: '50%', backgroundColor: '#E8A33D' }} />}
+        {edited && <span title={t('panel.edited')} style={{ width: 5, height: 5, flexShrink: 0, borderRadius: '50%', backgroundColor: '#E8A33D' }} />}
       </div>
 
       {/* Alignment — a 3×3 grid in screen terms, plus distribute and wrap */}
@@ -827,7 +830,7 @@ function LayoutControls({ layout, edited, onFlow, onAlign, onBetween, onWrap, si
               return (
                 <button
                   key={`${x}-${y}`}
-                  title={`${x === 'start' ? 'esquerda' : x === 'center' ? 'centro' : 'direita'} · ${y === 'start' ? 'topo' : y === 'center' ? 'meio' : 'base'}`}
+                  title={`${t(x === 'start' ? 'panel.align.left' : x === 'center' ? 'panel.align.center' : 'panel.align.right')} · ${t(y === 'start' ? 'panel.align.top' : y === 'center' ? 'panel.align.middle' : 'panel.align.bottom')}`}
                   onClick={() => onAlign(x, y)}
                   style={{
                     width: 18, height: 18, padding: 0, border: 'none', background: 'none', cursor: 'pointer',
@@ -939,7 +942,7 @@ function PropertyRow({ spec, current, edited, tokens, preferredToken, pickerOpen
       )}
 
       {edited && (
-        <span title="alterado" style={{
+        <span title={t('panel.edited')} style={{
           width: 5, height: 5, flexShrink: 0, borderRadius: '50%', backgroundColor: '#E8A33D',
         }} />
       )}
@@ -1000,11 +1003,11 @@ function ScaleControl({ spec, value, tokens, preferredToken, onApply, prefix, co
     <ValueSelect
       options={options}
       current={isNone ? '0px' : matched?.value}
-      display={isOffToken && !compact ? `${shown} · fora do padrão` : shown}
+      display={isOffToken && !compact ? `${shown} · ${t('panel.offScale')}` : shown}
       offToken={isOffToken}
       prefix={prefix}
       compact={compact}
-      groupLabel={tokens.length > 0 ? 'No padrão do projeto' : 'Valores comuns'}
+      groupLabel={tokens.length > 0 ? t('panel.group.project') : t('panel.group.common')}
       onPick={onApply}
       onCustom={() => setCustom(true)}
     />
@@ -1035,12 +1038,15 @@ function IconButton({ children, title, onClick, active }: { children: React.Reac
 }
 
 const STROKE_WEIGHTS = ['1px', '2px', '4px', '8px'];
-const STROKE_STYLES: Array<{ value: string; title: string; dash?: string }> = [
-  { value: 'solid', title: 'Sólido — border-solid' },
-  { value: 'dashed', title: 'Tracejado — border-dashed', dash: '3 2' },
-  { value: 'dotted', title: 'Pontilhado — border-dotted', dash: '0.1 2.4' },
+const STROKE_STYLES: Array<{ value: string; title: () => string; dash?: string }> = [
+  { value: 'solid', title: () => `${t('panel.stroke.solid')} — border-solid` },
+  { value: 'dashed', title: () => `${t('panel.stroke.dashed')} — border-dashed`, dash: '3 2' },
+  { value: 'dotted', title: () => `${t('panel.stroke.dotted')} — border-dotted`, dash: '0.1 2.4' },
 ];
-const SIDE_TITLES = ['Em cima — border-t', 'Direita — border-r', 'Embaixo — border-b', 'Esquerda — border-l'];
+const SIDE_TITLES = () => [
+  `${t('panel.side.top')} — border-t`, `${t('panel.side.right')} — border-r`,
+  `${t('panel.side.bottom')} — border-b`, `${t('panel.side.left')} — border-l`,
+];
 const SIDE_PATHS = ['M4 2.5h8', 'M13.5 4v8', 'M4 13.5h8', 'M2.5 4v8'];
 
 function StrokeControls({ stroke, onWeight, onStyle, onSides }: {
@@ -1066,7 +1072,7 @@ function StrokeControls({ stroke, onWeight, onStyle, onSides }: {
             return (
               <button
                 key={st.value}
-                title={st.title}
+                title={st.title()}
                 aria-pressed={on}
                 onClick={() => { if (!on) onStyle(st.value); }}
                 style={{
@@ -1087,7 +1093,7 @@ function StrokeControls({ stroke, onWeight, onStyle, onSides }: {
           {stroke.on.map((on, i) => (
             <IconButton
               key={i}
-              title={SIDE_TITLES[i]}
+              title={SIDE_TITLES()[i]}
               active={on}
               onClick={() => { const next = [...stroke.on] as SidesOn; next[i] = !on; onSides(next); }}
             >
@@ -1099,7 +1105,7 @@ function StrokeControls({ stroke, onWeight, onStyle, onSides }: {
           ))}
           <span style={{ flex: 1 }} />
           <IconButton
-            title="Todos os lados — border"
+            title={`${t('panel.sides.all')} — border`}
             active={stroke.on.every(Boolean)}
             onClick={() => onSides([true, true, true, true])}
           >
@@ -1113,10 +1119,10 @@ function StrokeControls({ stroke, onWeight, onStyle, onSides }: {
 
 // ── Padding / margin — all sides, per axis, or per side ────────────────────
 
-const BOX_MODES: Array<{ mode: BoxMode; title: string; icon: React.ReactNode }> = [
-  { mode: 'all',   title: 'Todos os lados — p-4',             icon: <rect x="3" y="3" width="10" height="10" rx="1.5" /> },
-  { mode: 'axis',  title: 'Horizontal e vertical — px-4 py-2', icon: <><path d="M2 8h12M4 6 2 8l2 2M12 6l2 2-2 2" /></> },
-  { mode: 'sides', title: 'Cada lado — pt pr pb pl',          icon: <><path d="M3 3h10M3 13h10M3 3v10M13 3v10" strokeDasharray="2 2" /></> },
+const BOX_MODES: Array<{ mode: BoxMode; title: () => string; icon: React.ReactNode }> = [
+  { mode: 'all',   title: () => `${t('panel.sides.all')} — p-4`,          icon: <rect x="3" y="3" width="10" height="10" rx="1.5" /> },
+  { mode: 'axis',  title: () => `${t('panel.sides.axis')} — px-4 py-2`, icon: <><path d="M2 8h12M4 6 2 8l2 2M12 6l2 2-2 2" /></> },
+  { mode: 'sides', title: () => `${t('panel.sides.each')} — pt pr pb pl`, icon: <><path d="M3 3h10M3 13h10M3 3v10M13 3v10" strokeDasharray="2 2" /></> },
 ];
 
 /** Side markers — the stroke shows which edge the value is for */
@@ -1169,7 +1175,7 @@ function BoxSpacing({ prop, sides, mode, tokens, fallback, edited, onMode, onSid
       </div>
       <button
         onClick={() => onMode(next.mode)}
-        title={`${current.title}\nClique: ${next.title}`}
+        title={`${current.title()}\n${translate('panel.clickFor', { next: next.title() })}`}
         style={{
           width: 22, height: 22, flexShrink: 0, padding: 0, borderRadius: radius.sm, cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1182,7 +1188,7 @@ function BoxSpacing({ prop, sides, mode, tokens, fallback, edited, onMode, onSid
           {current.icon}
         </svg>
       </button>
-      {edited && <span title="alterado" style={{ width: 5, height: 5, flexShrink: 0, marginTop: 9, borderRadius: '50%', backgroundColor: '#E8A33D' }} />}
+      {edited && <span title={translate('panel.edited')} style={{ width: 5, height: 5, flexShrink: 0, marginTop: 9, borderRadius: '50%', backgroundColor: '#E8A33D' }} />}
     </div>
   );
 }

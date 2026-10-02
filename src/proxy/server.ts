@@ -14,6 +14,7 @@ import net from 'node:net';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { t } from '../i18n/index.js';
 
 export const TOOLBAR_PATH = '/__ilse/toolbar.js';
 const TOOLBAR_TAG = `<script src="${TOOLBAR_PATH}" defer></script>`;
@@ -110,7 +111,7 @@ export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
     upstream.on('error', (err) => {
       if (res.headersSent) { res.destroy(); return; }
       res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end(`Ilse: não consegui falar com o dev server em ${target.host}:${target.port} (${err.message}).`);
+      res.end(t('proxy.unreachable', { host: target.host, port: target.port, error: err.message }));
     });
     req.pipe(upstream);
   });
