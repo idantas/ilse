@@ -27,19 +27,33 @@ The first run asks how Ilse should hand annotations to your agent:
 
 ## The toolbar
 
+### Point and adjust
+
 - **3 ways to point:** click an element, select text, or draw an area.
 - **Property panel:** text, layout (width/height as Fixed · Hug · Fill, flow, alignment, gap, padding and margin per side), typography, colors, stroke, radius and opacity — with your project's scale and tokens.
+- **None:** spacing, radius and stroke-weight lists start with *None* (zero) — no padding, square corners, no stroke.
+- **Stroke:** *+* adds one and shows its color, weight, style and sides; *−* takes it away.
+- **Apply to — only this one or all:** when the element belongs to a component repeated on the page. With *All · N*, panel edits preview on every instance at once.
 - **Edit text:** text elements get a *Text* field at the top of the panel. Text that comes from a variable, prop or translation goes to the agent, which changes it at the source.
 - **Remove an element:** *Remove element* at the bottom of the panel, or the Delete key (fn+⌫ on a Mac) while the note is empty — ⌫ works once focus is out of the note. From a `.map` list, only that item goes unless *Apply to* says all.
 - **Move for real:** drag to reorder, or into and out of containers; the page re-flows live.
 - **Resize:** drag the handles, with snap-to-grid.
 - **Pencil:** sketch on the page; the strokes are read and sent along.
 - **Reference images:** paste or upload a screenshot or SVG.
-- **Pause animations:** freeze tooltips, toasts and dropdowns to annotate them.
-- **Batch send:** annotate several elements and send them together.
-- **Stop:** interrupt the agent at any time; annotations go back to pending.
+
+### Review the page
+
+- **Scan:** checks the whole page and lists design issues by category — contrast, typography, spacing, accessibility, components. Hover an issue to see where it is.
+- **Suggestions for one element:** the glasses button on the card shows that element's issues. *Fix all suggestions* sends them as one request; *Review with AI* runs your agent to review reuse, consistency and tokens (uses your account).
+
+### Toolbar and settings
+
+- **Run:** sends the pending annotations together. **Stop:** interrupts the agent; annotations go back to pending.
 - **Live progress:** see each fix land as the agent works.
-- **English / Portuguese:** detected automatically.
+- **Pause animations:** freeze tooltips, toasts and dropdowns to annotate them.
+- **Hide markers:** hide the annotation dots on the page.
+- **Clear annotations:** removes them all (click twice to confirm).
+- **Settings:** connection and annotation status, the Claude account in use, **Design System** (paste a W3C `tokens.json` when Ilse doesn't find your tokens), **Snap to grid**, **Language** (English / Portuguese, detected automatically), **Connect agent** (MCP) and **Logs**.
 
 Every prompt carries `ilse · annotation <id> · <Component> · <file>`, so past fixes are searchable in your agent's history.
 

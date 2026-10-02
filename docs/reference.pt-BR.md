@@ -27,19 +27,33 @@ Na primeira vez, a Ilse pergunta como entregar as anotações ao seu agente:
 
 ## A barra
 
+### Apontar e ajustar
+
 - **3 jeitos de apontar:** clicar num elemento, selecionar texto ou desenhar uma área.
 - **Painel de propriedades:** texto, layout (largura/altura como Fixed · Hug · Fill, fluxo, alinhamento, gap, padding e margin por lado), tipografia, cores, borda, arredondamento e opacidade — com a escala e os tokens do seu projeto.
+- **None:** as listas de espaçamento, arredondamento e espessura da borda começam com *None* (zero) — sem padding, cantos retos, sem borda.
+- **Borda:** o *+* adiciona e já mostra cor, espessura, estilo e lados; o *−* tira.
+- **Aplicar em — só neste ou todos:** quando o elemento faz parte de um componente repetido na página. Com *Todos · N*, os ajustes do painel aparecem em todas as instâncias de uma vez.
 - **Editar texto:** elementos de texto ganham um campo *Text* no topo do painel. Texto que vem de variável, prop ou tradução vai para o agente, que muda na origem.
 - **Remover um elemento:** *Remove element* no fim do painel, ou a tecla Delete (fn+⌫ no Mac) com a nota vazia — o ⌫ funciona com o foco fora da nota. Numa lista feita com `.map`, só aquele item sai, a não ser que *Aplicar em* diga todos.
 - **Mover de verdade:** arraste para reordenar, ou para dentro e para fora de containers; a página se reorganiza ao vivo.
 - **Redimensionar:** arraste as alças, com encaixe na grade.
 - **Lápis:** rabisque na página; os traços são lidos e vão junto.
 - **Imagens de referência:** cole ou envie um print ou SVG.
-- **Pausar animações:** congele tooltips, toasts e dropdowns para anotá-los.
-- **Envio em lote:** anote vários elementos e envie juntos.
-- **Parar:** interrompa o agente quando quiser; as anotações voltam para pendentes.
+
+### Revisar a página
+
+- **Scan:** analisa a página inteira e lista problemas de design por categoria — contraste, tipografia, espaçamento, acessibilidade, componentes. Passe o mouse num problema para ver onde ele está.
+- **Sugestões de um elemento:** o botão dos óculos no card mostra os problemas daquele elemento. *Corrigir todas as sugestões* envia tudo como um pedido; *Analisar com IA* roda o seu agente para revisar reuso, consistência e tokens (usa a sua conta).
+
+### Barra e configurações
+
+- **Executar:** envia as anotações pendentes juntas. **Parar:** interrompe o agente; as anotações voltam para pendentes.
 - **Progresso ao vivo:** veja cada correção chegar enquanto o agente trabalha.
-- **Inglês / português:** detectado automaticamente.
+- **Pausar animações:** congele tooltips, toasts e dropdowns para anotá-los.
+- **Ocultar marcadores:** esconde os pontos das anotações na página.
+- **Limpar anotações:** apaga todas (clique duas vezes para confirmar).
+- **Configurações:** estado da conexão e das anotações, a conta do Claude em uso, **Design System** (cole um `tokens.json` do W3C quando a Ilse não acha seus tokens), **Snap to grid**, **Idioma** (inglês / português, detectado automaticamente), **Conectar agente** (MCP) e **Logs**.
 
 Todo prompt leva `ilse · annotation <id> · <Componente> · <arquivo>`, então correções antigas são fáceis de achar no histórico do seu agente.
 

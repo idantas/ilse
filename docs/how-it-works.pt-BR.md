@@ -38,7 +38,7 @@ Antes de chamar o seu agente, a Ilse faz a busca por ele:
 
 `ILSE_MODEL=<modelo>` força um modelo para tudo.
 
-**Só este ou todos.** Quando o elemento faz parte de um componente repetido na página, o card pergunta: *só este* (um ajuste onde ele é usado) ou *todos* (a definição do componente).
+**Só este ou todos.** Quando o elemento faz parte de um componente repetido na página, o card pergunta: *só este* (um ajuste onde ele é usado) ou *todos* (a definição do componente). Com *todos*, a prévia já mostra a mudança em todas as instâncias.
 
 ## Mantendo seu projeto seguro
 

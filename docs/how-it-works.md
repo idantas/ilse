@@ -38,7 +38,7 @@ Before your agent is called, Ilse does the searching for it:
 
 `ILSE_MODEL=<model>` forces one model for everything.
 
-**This one or all of them.** When the element belongs to a component repeated on the page, the card asks: *only this one* (an override where it is used) or *all of them* (the component's definition).
+**This one or all of them.** When the element belongs to a component repeated on the page, the card asks: *only this one* (an override where it is used) or *all of them* (the component's definition). With *all*, the preview already shows the change on every instance.
 
 ## Keeping your project safe
 
