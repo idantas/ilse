@@ -45,9 +45,9 @@ Not comfortable with the terminal? Ask your agent: *"Install and run Ilse in thi
 
 Ilse runs on your agent's plan, so it uses that plan's limits. It always picks the cheapest way that works:
 
-- **Panel adjustments** that map to a class in your code are made by Ilse itself — no AI, instant.
-- **Small requests** go to a fast model: a few seconds, about $0.01.
-- **Bigger ones** (new screens, structure) go to the full agent.
+- **Panel adjustments** that map to a class in your code are made by Ilse itself — no AI, instant, nothing from your plan.
+- **Small requests** go to a fast, cheaper model: a few seconds.
+- **Bigger ones** (new screens, structure) go to the full agent — the most expensive step, so it's used only when needed.
 
 ## Go deeper
 

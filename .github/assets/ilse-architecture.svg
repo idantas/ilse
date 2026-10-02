@@ -147,8 +147,8 @@
 <text x="433.5" y="1115" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Class swap</text>
 <rect x="416" y="1126" width="43.2" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
 <text x="422" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">no AI</text>
-<rect x="464.25" y="1126" width="87.0" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="470.25" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">$0 · instant</text>
+<rect x="464.25" y="1126" width="55.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="470.25" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">instant</text>
 <rect x="740" y="1090" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="756" y="1115" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">1</text>
 <text x="773.5" y="1115" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Quick</text>
@@ -156,8 +156,8 @@
 <text x="762" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">fast model</text>
 <rect x="835.5" y="1126" width="105.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
 <text x="841.5" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">classes as JSON</text>
-<rect x="946.25" y="1126" width="49.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="952.25" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">~$0.01</text>
+<rect x="946.25" y="1126" width="55.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="952.25" y="1139" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">cheaper</text>
 <rect x="740" y="1220" width="300" height="136" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="756" y="1245" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">2</text>
 <text x="773.5" y="1245" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Agent</text>
@@ -234,8 +234,8 @@
 <text x="28" y="827.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="middle" transform="rotate(-90 28 827.0)">next tweak</text>
 <path d="M 1380 1122.0 L 1420 1122.0" stroke="#FA6900" stroke-width="1.1" stroke-dasharray="3 4" fill="none"/>
 <text x="1428" y="1116.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">the cheapest step</text>
-<text x="1428" y="1138.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">that works: $0 → ~$0.01</text>
-<text x="1428" y="1160.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">→ full agent</text>
+<text x="1428" y="1138.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">that works: no AI →</text>
+<text x="1428" y="1160.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">quick → full agent</text>
 <path d="M 1380 1264.0 L 1420 1264.0" stroke="#FA6900" stroke-width="1.1" stroke-dasharray="3 4" fill="none"/>
 <text x="1428" y="1258.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">everything undoable,</text>
 <text x="1428" y="1280.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">everything measured</text>

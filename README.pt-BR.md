@@ -45,9 +45,9 @@ Não se sente à vontade com o terminal? Peça ao seu agente: *"Instale e rode a
 
 A Ilse roda no plano do seu agente, então usa os limites dele. Ela sempre escolhe o caminho mais barato que resolve:
 
-- **Ajustes do painel** que viram uma classe no seu código são feitos pela própria Ilse — sem IA, na hora.
-- **Pedidos pequenos** vão para um modelo rápido: alguns segundos, cerca de US$ 0,01.
-- **Os maiores** (telas novas, estrutura) vão para o agente completo.
+- **Ajustes do painel** que viram uma classe no seu código são feitos pela própria Ilse — sem IA, na hora, sem gastar nada do seu plano.
+- **Pedidos pequenos** vão para um modelo rápido e mais barato: alguns segundos.
+- **Os maiores** (telas novas, estrutura) vão para o agente completo — o degrau mais caro, por isso só quando precisa.
 
 ## Para ir mais fundo
 

@@ -40,8 +40,8 @@ EN = {
     'mudou e quem mais usa': 'changed before, who else uses it',
     'Monta o contexto': 'Builds the context', 'ficha do componente': 'component card', 'histórico': 'history', 'escopo': 'scope',
     'Escolhe o degrau': 'Picks the step', 'o mais barato que resolve': 'the cheapest that works',
-    'Troca de classe': 'Class swap', 'sem IA': 'no AI', '$0 · instantâneo': '$0 · instant',
-    'Rápido': 'Quick', 'modelo fast': 'fast model', 'JSON de classes': 'classes as JSON', '~$0,01': '~$0.01',
+    'Troca de classe': 'Class swap', 'sem IA': 'no AI', 'instantâneo': 'instant',
+    'Rápido': 'Quick', 'modelo fast': 'fast model', 'JSON de classes': 'classes as JSON', 'mais barato': 'cheaper',
     'Agente': 'Agent', 'sem Bash': 'no Bash', 'Ou o agente puxa': 'Or the agent pulls',
     'ajuste do painel': 'panel tweak', 'classes de 1 elemento': 'classes of 1 element',
     'precisa de mais → agente': 'needs more → agent', 'estrutura · criar': 'structure · create',
@@ -52,7 +52,7 @@ EN = {
     'Vê na hora': 'Sees it live', 'na própria tela': 'on the real screen',
     'a página muda sozinha': 'the page updates itself', 'não gostou → ⌘Z desfaz': "don't like it → ⌘Z undoes",
     'próximo ajuste': 'next tweak',
-    'o degrau mais barato': 'the cheapest step', 'que resolve: $0 → ~$0,01': 'that works: $0 → ~$0.01', '→ agente completo': '→ full agent',
+    'o degrau mais barato': 'the cheapest step', 'que resolve: sem IA →': 'that works: no AI →', 'rápido → agente completo': 'quick → full agent',
     'tudo desfazível,': 'everything undoable,', 'tudo medido': 'everything measured', '(tempo, tokens, custo)': '(time, tokens, cost)',
     'a IA é sempre': 'the AI is always', 'a do usuário — sem chave,': "the user's own — no key,", 'sem conta da Ilse': 'no Ilse account',
 }
@@ -170,8 +170,8 @@ arrow([(u5['cx'], u5['b']), (u6['cx'], u6['y'])])
 connector(u5['r'], u5['cy'] - 8, 760, u5['cy'] - 8)
 note(768, u5['cy'] - 14, ['o agente não procura', 'chega sabendo onde, o que já', 'mudou e quem mais usa'])
 
-d0 = box('d0', 2, 1090, '0', 'Troca de classe', [['sem IA', '$0 · instantâneo']])
-d1 = box('d1', 3, 1090, '1', 'Rápido', [['modelo fast', 'JSON de classes', '~$0,01']])
+d0 = box('d0', 2, 1090, '0', 'Troca de classe', [['sem IA', 'instantâneo']])
+d1 = box('d1', 3, 1090, '1', 'Rápido', [['modelo fast', 'JSON de classes', 'mais barato']])
 d3 = box('d3', 3, 1220, '2', 'Agente', [['claude -p · codex · cursor', 'sessão nova'], ['sem Bash', 'fast / strong', 'lê só o trecho'], ['limite da conta → fila → retoma'], ['quebrou a sintaxe → corrige ou desfaz']])
 mcp = box('mcp', 3, 1452, '·', 'Ou o agente puxa', [['MCP', 'ilse_watch']], dashed=True)
 arrow([(u6['cx'], u6['b']), (d0['cx'], d0['y'])], label='ajuste do painel', lx=u6['cx'] + 8, ly=u6['b'] + 20, lanchor='start')
@@ -202,7 +202,7 @@ arrow([(u7['cx'], u7['b']), (u7['cx'], 1410), (c2['cx'] + 60, 1410), (c2['cx'] +
 arrow([(u7['x'], u7['cy']), (36, u7['cy']), (36, u1['cy']), (u1['x'], u1['cy'])], color=BRAND, label='próximo ajuste', lx=28, ly=(u1['cy'] + u7['cy']) / 2, lrot=-90, hand=True)
 
 connector(c1['r'], c1['cy'], 1420, c1['cy'])
-note(1428, c1['cy'] - 6, ['o degrau mais barato', 'que resolve: $0 → ~$0,01', '→ agente completo'])
+note(1428, c1['cy'] - 6, ['o degrau mais barato', 'que resolve: sem IA →', 'rápido → agente completo'])
 connector(c2['r'], c2['cy'], 1420, c2['cy'])
 note(1428, c2['cy'] - 6, ['tudo desfazível,', 'tudo medido', '(tempo, tokens, custo)'])
 note(1428, c3['cy'] + 6, ['a IA é sempre', 'a do usuário — sem chave,', 'sem conta da Ilse'])
