@@ -15,6 +15,7 @@ import {
   IconX,
   IconArrowUp,
   IconChevronRight,
+  IconCornerLeftUp,
   IconMessage,
 
   IconRefresh,
@@ -29,7 +30,7 @@ import { PropertyPanel, type PanelHistory, type TextEdit } from './property-pane
 import { useFrontLayer } from './front-layer.js';
 import { SketchLayer, PencilControl, PEN_COLORS } from './sketch-layer.js';
 import { analyzeSketch, renderSketchImage, formatSketchNote, type Stroke } from './sketch.js';
-import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, type LiveDrag } from './live-layout.js';
+import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, scopeTwins, type LiveDrag, selectionTarget, selectableParent } from './live-layout.js';
 import type { StyleChange, StyleData } from '../types.js';
 import { toggleFreeze, isFrozen } from './freeze.js';
 import { TooltipLayer } from './tooltip-layer.js';
@@ -437,7 +438,7 @@ function computePopoverPos(rect: PopoverRect, height = 168, width = 322): { top:
 
 function AnnotationPopover({
   context, contextLabel, rect, note, styles, grepPattern, hasElement, suggestions, imageRefs, hasContext, summary, onRemoveSummary, scope, onScope,
-  onNoteChange, onApplySuggestion, onRequestAnalysis, onAddImage, onRemoveImage, onAdd, onCancel,
+  onSelectParent, onNoteChange, onApplySuggestion, onRequestAnalysis, onAddImage, onRemoveImage, onAdd, onCancel,
 }: {
   context: string;
   contextLabel: string;
@@ -455,6 +456,8 @@ function AnnotationPopover({
   /** Element of a repeated component: apply here or everywhere */
   scope?: Scope;
   onScope?: (choice: Scope['choice']) => void;
+  /** Move the selection up to the containing element; absent when there is none or the draft has changes */
+  onSelectParent?: () => void;
   /** The designer took a command back — it no longer goes to the agent */
   onRemoveSummary?: (key: AutoKey) => void;
   onApplySuggestion?: (text: string) => void;
@@ -535,6 +538,20 @@ function AnnotationPopover({
           <IconChevronRight size={12} stroke={2} style={{ flexShrink: 0, transform: cssOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contextLabel}</span>
         </button>
+        {onSelectParent && (
+          <button
+            onClick={onSelectParent}
+            title={t('toolbar.selectParent')}
+            aria-label={t('toolbar.selectParent')}
+            style={{
+              width: 24, height: 24, flexShrink: 0, padding: 0, border: 'none', borderRadius: radius.sm,
+              background: 'none', cursor: 'pointer', color: color.mutedForeground,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <IconCornerLeftUp size={14} stroke={1.75} />
+          </button>
+        )}
         <SuggestionsToggle active={suggestionsOpen} onClick={() => setSuggestionsOpen(v => !v)} />
       </div>
 
@@ -1865,7 +1882,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // ── Unified annotation mode handlers ──────────────────────────────────────
 
   /** Put the selection (card + property panel) on this element */
-  const selectElement = useCallback((target: Element) => {
+  const selectElement = useCallback((clicked: Element) => {
+    const target = selectionTarget(clicked);
     const capture = captureElement(target);
     const domRect = target.getBoundingClientRect();
     // Tag the exact clicked element with a unique attribute so the PixelOverlay
@@ -1952,16 +1970,18 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     }
 
     if (!target.closest('[data-ilse-toolbar]')) {
-      const rect = target.getBoundingClientRect();
+      // Highlight what a click would select (a whole <svg>, not one of its paths)
+      const hovered = selectionTarget(target);
+      const rect = hovered.getBoundingClientRect();
       const r: PopoverRect = { top: rect.top, left: rect.left, width: rect.width, height: rect.height };
       // Only update if rect actually changed — avoids re-render loops
       setHighlight(prev => {
         if (prev && prev.top === r.top && prev.left === r.left && prev.width === r.width && prev.height === r.height) return prev;
         return r;
       });
-      const tag = target.tagName.toLowerCase();
-      const id = target.id ? `#${target.id}` : '';
-      const cls = !id && target.classList.length > 0 ? `.${target.classList[0]}` : '';
+      const tag = hovered.tagName.toLowerCase();
+      const id = hovered.id ? `#${hovered.id}` : '';
+      const cls = !id && hovered.classList.length > 0 ? `.${hovered.classList[0]}` : '';
       setHoverLabel(`${tag}${id}${cls}`);
       setHoverLabelRect(r);
     } else {
@@ -3306,6 +3326,16 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           scope={pendingCapture.scope}
           onScope={(choice) => setPendingCapture(prev => prev?.scope ? { ...prev, scope: { ...prev.scope, choice } } : prev)}
           onRemoveSummary={takeBack}
+          onSelectParent={(() => {
+            // Same rule as clicking another element: only while nothing has been changed yet
+            const pc = pendingCapture;
+            if (pc.markerType !== 'element' || !pc.pixelTargetId) return undefined;
+            if (pc.note.trim() || hasAuto(pc.auto) || pc.styleChanges?.length || pc.imageRefs?.length || pc.sketch) return undefined;
+            const el = document.querySelector(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`);
+            const parent = el ? selectableParent(el) : null;
+            if (!el || !parent) return undefined;
+            return () => { settleElement(el); selectElement(parent); };
+          })()}
           styles={pendingCapture.capture.styles}
           grepPattern={pendingCapture.capture.grepPattern}
           hasElement={pendingCapture.markerType === 'area' ? (pendingCapture.areaElementCount ?? 0) > 0 : !!pendingCapture.capture.element}
@@ -3357,19 +3387,35 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         if (ann.status !== 'sent' && ann.status !== 'resolved') return null;
         const scrollX = ann.capture._scrollX ?? 0;
         const scrollY = ann.capture._scrollY ?? 0;
+        const fallbackRect = {
+          top: ann.capture.rect.top + scrollY,
+          left: ann.capture.rect.left + scrollX,
+          width: ann.capture.rect.width,
+          height: ann.capture.rect.height,
+        };
+        // "Apply to: all" changes every instance — show the edit landing on each of them
+        const selected = ann.scope?.choice === 'all' && ann.pixelTargetId
+          ? document.querySelector(`[data-ilse-pixel-target="${ann.pixelTargetId}"]`)
+          : null;
+        const twins = selected ? scopeTwins(selected) : [];
         return (
-          <PixelOverlay
-            key={`editing-${i}`}
-            targetId={ann.pixelTargetId}
-            selector={ann.capture.element}
-            fallbackRect={{
-              top: ann.capture.rect.top + scrollY,
-              left: ann.capture.rect.left + scrollX,
-              width: ann.capture.rect.width,
-              height: ann.capture.rect.height,
-            }}
-            fadeOut={ann.status === 'resolved'}
-          />
+          <Fragment key={`editing-${i}`}>
+            <PixelOverlay
+              targetId={ann.pixelTargetId}
+              selector={ann.capture.element}
+              fallbackRect={fallbackRect}
+              fadeOut={ann.status === 'resolved'}
+            />
+            {twins.map((twin, j) => (
+              <PixelOverlay
+                key={j}
+                element={twin}
+                selector={ann.capture.element}
+                fallbackRect={fallbackRect}
+                fadeOut={ann.status === 'resolved'}
+              />
+            ))}
+          </Fragment>
         );
       })}
 
@@ -4965,15 +5011,23 @@ type PixelCell = {
 
 type PageRect = { top: number; left: number; width: number; height: number };
 
-function PixelOverlay({ targetId, selector, fallbackRect, fadeOut }: { targetId?: string; selector: string; fallbackRect: PageRect; fadeOut?: boolean }) {
+// A change applied without AI lands in milliseconds: hold the flicker this long
+// first, so the designer sees where it landed before it dissolves.
+const MIN_EDIT_FLICKER_MS = 1600;
+
+function PixelOverlay({ targetId, element, selector, fallbackRect, fadeOut }: { targetId?: string; element?: Element; selector: string; fallbackRect: PageRect; fadeOut?: boolean }) {
   const [cells, setCells] = useState<PixelCell[] | null>(null);
   const [visible, setVisible] = useState(true);
+  const [dissolving, setDissolving] = useState(false);
+  const mountedAt = useRef(Date.now());
 
-  // When fadeOut triggers, start dissolve then unmount
+  // When fadeOut triggers (after the minimum flicker), start dissolve then unmount
   useEffect(() => {
     if (!fadeOut) return;
-    const timer = setTimeout(() => setVisible(false), 2000);
-    return () => clearTimeout(timer);
+    const hold = Math.max(0, MIN_EDIT_FLICKER_MS - (Date.now() - mountedAt.current));
+    const dissolve = setTimeout(() => setDissolving(true), hold);
+    const unmount = setTimeout(() => setVisible(false), hold + 2000);
+    return () => { clearTimeout(dissolve); clearTimeout(unmount); };
   }, [fadeOut]);
 
   useEffect(() => {
@@ -4986,7 +5040,8 @@ function PixelOverlay({ targetId, selector, fallbackRect, fadeOut }: { targetId?
         // Prefer the unique data-attribute tag (always resolves to the exact
         // clicked element). Fall back to the generated selector if the tag
         // was lost (e.g. element re-rendered after HMR).
-        const el = (targetId && document.querySelector(`[data-ilse-pixel-target="${targetId}"]`))
+        const el = (element?.isConnected ? element : null)
+          || (targetId && document.querySelector(`[data-ilse-pixel-target="${targetId}"]`))
           || document.querySelector(selector);
         if (el) {
           const range = document.createRange();
@@ -5086,7 +5141,7 @@ function PixelOverlay({ targetId, selector, fallbackRect, fadeOut }: { targetId?
       window.removeEventListener('resize', onResize);
       if (resizeTimer) clearTimeout(resizeTimer);
     };
-  }, [targetId, selector, fallbackRect]);
+  }, [targetId, element, selector, fallbackRect]);
 
   if (!cells || cells.length === 0 || typeof document === 'undefined') return null;
   if (!visible) return null;
@@ -5096,7 +5151,7 @@ function PixelOverlay({ targetId, selector, fallbackRect, fadeOut }: { targetId?
       data-ilse-pixel-overlay
       style={{
         position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 99995,
-        ...(fadeOut ? { animation: 'ilse-pixel-dissolve 2s ease-out forwards' } : {}),
+        ...(dissolving ? { animation: 'ilse-pixel-dissolve 2s ease-out forwards' } : {}),
       }}
     >
       {cells.map((c) => (
@@ -5109,7 +5164,7 @@ function PixelOverlay({ targetId, selector, fallbackRect, fadeOut }: { targetId?
             width: c.size,
             height: c.size,
             backgroundColor: c.color,
-            animation: fadeOut
+            animation: dissolving
               ? `ilse-pixel-flicker ${c.duration.toFixed(2)}s ease-in-out ${c.delay.toFixed(2)}s infinite, ilse-pixel-dissolve ${(1 + Math.random() * 1.5).toFixed(2)}s ease-out forwards`
               : `ilse-pixel-flicker ${c.duration.toFixed(2)}s ease-in-out ${c.delay.toFixed(2)}s infinite`,
             boxShadow: c.glow ? '0 0 6px rgba(255,108,3,0.7), 0 0 2px rgba(255,108,3,0.9)' : undefined,

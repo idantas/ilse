@@ -157,6 +157,23 @@ function getParentContext(el: Element): string | undefined {
   return parts.join(', ');
 }
 
+type DebugFiber = { _debugStack?: { stack?: string }; return?: DebugFiber | null };
+
+/**
+ * The app component that wrote this element's JSX: walk up the fibers to the first
+ * one React created from app code, and name the component whose render created it.
+ * Inside a library (a chart's <path>, a <Provider>), that is the app component that
+ * used the library — RevenueChart, not Recharts' Provider. Undefined without a dev
+ * stack (React 18 and older), so the caller falls back to the nearest component.
+ */
+export function appOwnerName(fiber: DebugFiber | null | undefined): string | undefined {
+  for (let current = fiber, depth = 0; current && depth < 200; current = current.return, depth++) {
+    const frame = firstAppFrame(current._debugStack?.stack);
+    if (frame) return frame.fn;
+  }
+  return undefined;
+}
+
 function getComponentName(el: Element): string | undefined {
   // Check data-component attribute (common pattern)
   const dataComponent = el.getAttribute('data-component')
@@ -168,6 +185,8 @@ function getComponentName(el: Element): string | undefined {
   const fiberKey = Object.keys(el).find(k => k.startsWith('__reactFiber$'));
   if (fiberKey) {
     const fiber = (el as unknown as Record<string, unknown>)[fiberKey] as Record<string, unknown> | undefined;
+    const owner = appOwnerName(fiber as DebugFiber | undefined);
+    if (owner) return owner;
     if (fiber) {
       let current: Record<string, unknown> | undefined = fiber;
       while (current) {

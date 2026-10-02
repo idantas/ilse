@@ -118,6 +118,43 @@ export function reactView(el: Element): ReactView {
  * Card is written — the designer should get to choose. Counts instances (owner
  * fibers), not DOM nodes. Dev builds only (React keeps _debugOwner there).
  */
+/**
+ * What a click on this element selects. Inside an SVG it is the whole <svg>: a chart's
+ * <path> or an icon's stroke is never what a designer means, and the generated
+ * internals can't be found in the code.
+ */
+export function selectionTarget(el: Element): Element {
+  let target = el;
+  while (target instanceof SVGElement && target.ownerSVGElement) target = target.ownerSVGElement;
+  return target;
+}
+
+type Box = { width: number; height: number };
+
+/** Two boxes the designer can't tell apart (a wrapper hugging its only child) */
+export function sameBox(a: Box, b: Box, tolerance = 2): boolean {
+  return Math.abs(a.width - b.width) <= tolerance && Math.abs(a.height - b.height) <= tolerance;
+}
+
+/**
+ * The parent a designer means by "select the parent": the first ancestor the
+ * app's own code wrote, or that looks different on the page. Same-size wrappers
+ * a library adds (a chart's responsive container) are skipped; a same-size div
+ * from the app (the chart's `h-80` box) is not — resizing it is the point.
+ * Without a dev stack, every same-size wrapper is skipped. Null at <body>.
+ */
+export function selectableParent(el: Element): Element | null {
+  const box = el.getBoundingClientRect();
+  for (let parent = el.parentElement; parent && parent !== document.body && parent !== document.documentElement; parent = parent.parentElement) {
+    if (parent.closest('[data-ilse-toolbar]')) return null;
+    const r = parent.getBoundingClientRect();
+    // A shell smaller than its child (a 0×0 positioning div in a chart) isn't something to select
+    if (r.width < box.width - 2 || r.height < box.height - 2) continue;
+    if (jsxSite(parent) || !sameBox(r, box)) return parent;
+  }
+  return null;
+}
+
 export function componentScope(el: Element): { component: string; count: number } | null {
   const owner = fiberOf(el)?._debugOwner;
   const component = nameOf(owner);

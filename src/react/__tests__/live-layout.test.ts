@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { targetIndex, moveItem, formatReorder, type Slot } from '../live-layout.js';
+import { targetIndex, moveItem, formatReorder, sameBox, type Slot } from '../live-layout.js';
 
 const col: Slot[] = [0, 40, 80, 120].map(top => ({ left: 0, top, width: 200, height: 32 }));
 const row: Slot[] = [0, 110, 220].map(left => ({ left, top: 0, width: 100, height: 40 }));
@@ -88,5 +88,14 @@ describe('into / out of a container', () => {
     expect(text).toContain('no início, antes de "gpt-4o"');
     expect(text).toContain('localizar por: data-slot="card"');
     expect(text).toContain('Não use CSS');
+  });
+});
+
+describe('sameBox', () => {
+  it('treats a wrapper hugging its child as the same box', () => {
+    expect(sameBox({ width: 580, height: 320 }, { width: 580, height: 321.5 })).toBe(true);
+  });
+  it('tells a real container apart', () => {
+    expect(sameBox({ width: 580, height: 320 }, { width: 628, height: 430 })).toBe(false);
   });
 });
