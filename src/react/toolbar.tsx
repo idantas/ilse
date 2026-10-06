@@ -36,6 +36,7 @@ import { toggleFreeze, isFrozen } from './freeze.js';
 import { TooltipLayer } from './tooltip-layer.js';
 import { radius, color, shadow, ilse, font } from './tokens.js';
 import { t, detectLocale, setLocale, getLocale, type Locale } from '../i18n/index.js';
+import { withShortcut, isTyping, doublePress, mod, SHORTCUT_GROUPS } from './shortcuts.js';
 
 // ── Clipboard fallback: format annotations as markdown ──────────────────────
 
@@ -726,6 +727,8 @@ function AnnotationPopover({
           />
           <button
             onClick={onAdd}
+            title={withShortcut(t('toolbar.send'), 'Mod+Enter')}
+            aria-label={t('toolbar.send')}
             style={{
               width: 30, height: 30, borderRadius: '50%',
               backgroundColor: note.trim() || hasContext || (imageRefs?.length ?? 0) > 0 ? color.primary : color.border,
@@ -805,6 +808,12 @@ function getInitialToolbarPos(): { x: number; y: number } {
     const saved = sessionStorage.getItem(getStorageKey('ilse-toolbar-pos'));
     if (saved) return clampToViewport(JSON.parse(saved) as { x: number; y: number });
   } catch { /* ignore */ }
+  return defaultToolbarPos();
+}
+
+/** Where the toolbar lives until the designer drags it — and where "ii" brings it back */
+function defaultToolbarPos(): { x: number; y: number } {
+  if (typeof window === 'undefined') return { x: 0, y: 0 };
   // Default: bottom-right corner, ~150px from each edge.
   // PILL_W=52, PILL_H=44 — hardcoded here to avoid forward-reference order.
   const MARGIN = 150;
@@ -1273,6 +1282,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [activeMarker, setActiveMarker] = useState<number | null>(null);
   const [markersVisible, setMarkersVisible] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Shortcut groups folded in the modal — the first one starts open
+  const [shortcutGroupsOpen, setShortcutGroupsOpen] = useState<Set<string>>(() => new Set([SHORTCUT_GROUPS[0].title]));
   // "Conectar agente": MCP endpoint + token of the running ilse (like Hilo's connection settings)
   const [mcpInfo, setMcpInfo] = useState<{ url: string; token: string } | null>(null);
   // The account the agent runs on ("me@company.com · Team (Acme)") — which limit applies
@@ -2110,10 +2122,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const pendingCaptureForEsc = useRef(pendingCapture);
   const activeMarkerForEsc = useRef(activeMarker);
   const showSettingsForEsc = useRef(showSettings);
+  const shortcutsOpenForEsc = useRef(false);
   const chatOpenForEsc = useRef(chatOpen);
   useEffect(() => { pendingCaptureForEsc.current = pendingCapture; }, [pendingCapture]);
   useEffect(() => { activeMarkerForEsc.current = activeMarker; }, [activeMarker]);
   useEffect(() => { showSettingsForEsc.current = showSettings; }, [showSettings]);
+  useEffect(() => { shortcutsOpenForEsc.current = shortcutsOpen; }, [shortcutsOpen]);
   useEffect(() => { chatOpenForEsc.current = chatOpen; }, [chatOpen]);
 
   useEffect(() => {
@@ -2136,6 +2150,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       }
       if (activeMarkerForEsc.current !== null) {
         setActiveMarker(null);
+        return;
+      }
+      if (shortcutsOpenForEsc.current) {
+        setShortcutsOpen(false);
         return;
       }
       if (showSettingsForEsc.current) {
@@ -2908,6 +2926,23 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, drawMode, exitDrawMode]);
+
+  // I I — the toolbar back to its default corner, for when it was dragged out of
+  // sight. Works open or minimized; never while typing.
+  useEffect(() => {
+    const pressedTwice = doublePress('i');
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat || isTyping(e.target)) return;
+      if (!pressedTwice(e.key)) return;
+      const pos = defaultToolbarPos();
+      setToolbarPos(pos);
+      try { sessionStorage.removeItem(getStorageKey('ilse-toolbar-pos')); } catch { /* ignore */ }
+      setClipboardToast(t('shortcuts.recentered'));
+      setTimeout(() => setClipboardToast(null), 1800);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const closeToolbar = () => {
     setIsOpen(false);
@@ -4222,6 +4257,17 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   </div>
                 )}
 
+                {/* Keyboard shortcuts */}
+                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
+                  <button
+                    onClick={() => setShortcutsOpen(true)}
+                    style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0 }}
+                  >
+                    <span style={{ whiteSpace: 'nowrap' }}>{t('shortcuts.title')}</span>
+                    <span aria-hidden>›</span>
+                  </button>
+                </div>
+
                 {/* Language */}
                 <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -4662,7 +4708,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
               {/* Annotate / Select toggle */}
               <PillBtn
-                title={annotating ? t('toolbar.selectMode') : t('toolbar.annotateMode')}
+                title={withShortcut(annotating ? t('toolbar.selectMode') : t('toolbar.annotateMode'), 'V')}
                 active={annotating}
                 onClick={() => { if (drawMode) exitDrawMode(); setAnnotating(v => !v); }}
               >
@@ -4769,7 +4815,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               </PillBtn>
 
               {/* Close */}
-              <PillBtn title={t('toolbar.close')} onClick={closeToolbar}>
+              <PillBtn title={withShortcut(t('toolbar.close'), 'Esc')} onClick={closeToolbar}>
                 <IconX size={18} stroke={1.75} />
               </PillBtn>
             </div>
@@ -4782,6 +4828,75 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         <TooltipLayer />
 
         {/* ── Toast — Sonner-like, in the toolbar's own look, just above the toolbar ── */}
+        {shortcutsOpen && (
+          <div
+            data-ilse-toolbar
+            role="dialog"
+            aria-modal="true"
+            aria-label={t('shortcuts.title')}
+            onMouseDown={(e) => { if (e.target === e.currentTarget) setShortcutsOpen(false); }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 100001, backgroundColor: 'rgba(0,0,0,0.28)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+              fontFamily: font.sans,
+            }}
+          >
+            <div data-ilse-toolbar style={{
+              width: 'min(420px, 100%)', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto',
+              backgroundColor: color.background, color: color.foreground, borderRadius: radius.xl,
+              border: `1px solid ${color.border}`, boxShadow: shadow.lg, padding: '18px 20px 16px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{t('shortcuts.title')}</span>
+                <button
+                  onClick={() => setShortcutsOpen(false)}
+                  title={withShortcut(t('toolbar.close'), 'Esc')}
+                  aria-label={t('toolbar.close')}
+                  style={{ width: 24, height: 24, border: 'none', borderRadius: radius.sm, background: 'none', cursor: 'pointer', color: color.mutedForeground, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <IconX size={14} stroke={1.75} />
+                </button>
+              </div>
+              {SHORTCUT_GROUPS.map((group, gi) => {
+                const open = shortcutGroupsOpen.has(group.title);
+                return (
+                <div key={group.title} style={{ marginTop: gi === 0 ? 4 : 0, borderTop: gi === 0 ? 'none' : `1px solid ${color.border}` }}>
+                  <button
+                    onClick={() => setShortcutGroupsOpen(prev => {
+                      const next = new Set(prev);
+                      if (next.has(group.title)) next.delete(group.title); else next.add(group.title);
+                      return next;
+                    })}
+                    aria-expanded={open}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      background: 'none', border: 'none', cursor: 'pointer', padding: '14px 0',
+                      fontSize: 10, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: color.mutedForeground,
+                      fontFamily: font.sans,
+                    }}
+                  >
+                    <span>{t(group.title)} <span style={{ fontWeight: 400, letterSpacing: 0 }}>· {group.items.length}</span></span>
+                    <IconChevronRight size={12} stroke={2} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+                  </button>
+                  {open && <div style={{ paddingBottom: 12 }}>{group.items.map(item => (
+                    <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '5px 0', fontSize: 12 }}>
+                      <span>{t(item.label)}</span>
+                      <kbd style={{
+                        flexShrink: 0, fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace', fontSize: 11,
+                        padding: '2px 6px', borderRadius: 5, border: `1px solid ${color.border}`,
+                        backgroundColor: color.muted, color: color.foreground, whiteSpace: 'nowrap',
+                      }}>
+                        {mod(item.keys)}
+                      </kbd>
+                    </div>
+                  ))}</div>}
+                </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {clipboardToast && (() => {
           // Above the toolbar, aligned with the edge it grows from (it opens left or
           // right of the pill); centred at the bottom when the toolbar is closed

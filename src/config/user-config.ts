@@ -17,6 +17,11 @@ export interface UserConfig {
   latestKnownVersion?: string;
   /** Claude account per project: project path → CLAUDE_CONFIG_DIR ('' = the default one) */
   claudeAccounts?: Record<string, string>;
+  /**
+   * Where the toolbar opens: on the app's usual address (Ilse starts the dev
+   * server behind it) or on a separate one (:4700). Unset = 'same'.
+   */
+  address?: 'same' | 'separate';
 }
 
 const DEFAULT_CONFIG: UserConfig = {

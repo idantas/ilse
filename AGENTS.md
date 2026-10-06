@@ -31,6 +31,7 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/cli/default.ts` | The `ilse` command: setup, proxy, WS server, batching, the cost ladder, undo/redo, usage-limit pause |
 | `src/cli/index.ts` | CLI flags and subcommands (commander) |
 | `src/proxy/` | Proxy that injects the toolbar into the dev server's HTML; finds the dev server; `toolbar.ts` serves the bundle (proxy and WS port) |
+| `src/proxy/same-port.ts` | Default: runs the project's dev script on a hidden port and puts the proxy on the app's own port (same origin, nothing in the project) |
 | `src/vite/` | `ilse-design/vite`: Vite plugin that loads the toolbar on the dev server's own port, no proxy |
 | `src/proxy/bookmarklet.ts` | Bookmarklet, its install page and the loader that hands it the toolbar (served on the WS port) |
 | `extension/` | Chrome extension (MV3, plain JS, loaded unpacked): toolbar per site, no proxy. Strings in `extension/_locales/`; logic tested in `src/extension/__tests__/` |
@@ -48,6 +49,7 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/mcp/` | MCP tools served by the running `ilse` at `/mcp`; stdio bridge `ilse-mcp` |
 | `src/telemetry/journal.ts` | Session journal (toolbar → Settings → Logs) |
 | `src/react/toolbar.tsx` | The toolbar: capture, card, gestures, draft history, settings |
+| `src/react/shortcuts.ts` | Keyboard shortcuts: the list behind Settings → Keyboard shortcuts and the tooltips, `I I`, typing guard |
 | `src/react/property-panel.tsx` | Property panel (`PROPS` lists the controls) |
 | `src/react/live-layout.ts` | Live drag/reorder/resize/move-into-container previews (DOM is never moved under React) |
 | `src/i18n/messages.ts` | Every user-facing string, English and Portuguese |

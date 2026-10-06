@@ -18,6 +18,7 @@ import { startProxy } from '../proxy/server.js';
 import { serveToolbar } from '../proxy/toolbar.js';
 import { serveBookmarklet } from '../proxy/bookmarklet.js';
 import { findDevServer, waitForDevServer, pageHasToolbar } from '../proxy/find-dev-server.js';
+import { planSamePort, readPlanInput, portIsFree, startHiddenDevServer } from '../proxy/same-port.js';
 import { spawn } from 'node:child_process';
 import { planTokenSwap, planTextSwap, applyTokenSwap, describeSwap, type SwapPlan } from '../context/token-swap.js';
 import {
@@ -84,7 +85,19 @@ async function firstRunSetup(agent: AgentDetection): Promise<IlseMode> {
     mode = modeChoice as IlseMode;
   }
 
-  saveUserConfig({ mode, agent: agent.kind, setupDone: true });
+  const addressChoice = await p.select({
+    message: t('cli.addressQuestion'),
+    options: [
+      { value: 'same', label: t('cli.addressSame'), hint: t('cli.addressSameHint') },
+      { value: 'separate', label: t('cli.addressSeparate'), hint: t('cli.addressSeparateHint') },
+    ],
+  });
+  if (p.isCancel(addressChoice)) {
+    p.cancel(t('cli.cancelled'));
+    process.exit(0);
+  }
+
+  saveUserConfig({ mode, agent: agent.kind, setupDone: true, address: addressChoice as 'same' | 'separate' });
   return mode;
 }
 
@@ -165,6 +178,10 @@ export interface DefaultOptions {
   open?: boolean;
   /** Ask again which Claude account to use (--account) */
   chooseAccount?: boolean;
+  /** Start the dev server behind Ilse, on the app's own port (--same-port) */
+  samePort?: boolean;
+  /** Use the separate address (:4700) for this run (--separate) */
+  separate?: boolean;
 }
 
 function openBrowser(url: string): void {
@@ -175,6 +192,47 @@ function openBrowser(url: string): void {
     child.on('error', () => { /* no browser opener — the URL is printed anyway */ });
     child.unref();
   } catch { /* same */ }
+}
+
+/**
+ * Same port: Ilse starts the dev script on a hidden port and takes the app's
+ * own port with its proxy, so the app keeps its address (login, SSO, OAuth).
+ * 'failed' leaves the caller to fall back to the separate address.
+ */
+async function startSamePort(options: DefaultOptions, bridgePort: number): Promise<'same-port' | 'failed'> {
+  const input = readPlanInput(process.cwd());
+  const plan = input ? planSamePort(input) : null;
+  if (!plan) {
+    console.log(chalk.yellow(`  ${t('samePort.noScript')}`));
+    return 'failed';
+  }
+  if (options.target) plan.appPort = options.target;
+  if (!(await portIsFree(plan.appPort))) {
+    console.log(chalk.yellow(`  ${t('samePort.busy', { port: plan.appPort })}`));
+    return 'failed';
+  }
+  console.log(chalk.dim(`  ${t('samePort.starting', { script: `npm run ${plan.script}` })}`));
+  let dev;
+  try {
+    dev = await startHiddenDevServer(process.cwd(), plan, (line) => console.log(chalk.dim('  │ ') + line));
+  } catch (err) {
+    console.log(chalk.red(`  ✗ ${t('samePort.failed')}: ${(err as Error).message}`));
+    return 'failed';
+  }
+  try {
+    const target = (await findDevServer(process.cwd(), [dev.hiddenPort])) ?? { host: '127.0.0.1', port: dev.hiddenPort };
+    await startProxy({ target, port: plan.appPort, maxPort: plan.appPort, bridgePort, dualStack: true });
+  } catch (err) {
+    dev.stop();
+    console.log(chalk.red(`  ✗ ${t('proxy.failed')}: ${(err as Error).message}`));
+    return 'failed';
+  }
+  const url = `http://localhost:${plan.appPort}`;
+  console.log('');
+  console.log(chalk.dim(`  ${t('samePort.open')} `) + chalk.bold.cyan(url));
+  console.log('');
+  if (options.open !== false) openBrowser(url);
+  return 'same-port';
 }
 
 /**
@@ -890,11 +948,23 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     process.exit(1);
   }
 
-  console.log(chalk.dim('  ws://localhost:' + getPort()));
-  console.log(chalk.dim(`  MCP: http://localhost:${getPort()}${MCP_PATH}  (${t('cli.mcpHint')})`));
+  // The bridge port is plumbing (toolbar ↔ CLI): only worth showing when debugging.
+  // The MCP endpoint only matters when the agent pulls annotations over MCP.
+  if (process.env.ILSE_DEBUG) console.log(chalk.dim('  ws://localhost:' + getPort()));
+  if (config.mode === 'mcp' || process.env.ILSE_DEBUG) {
+    console.log(chalk.dim(`  MCP: http://localhost:${getPort()}${MCP_PATH}  (${t('cli.mcpHint')})`));
+  }
   writeServerInfo(getPort()!);
 
-  if (useProxy) {
+  // Same port unless the setup chose the separate address, or a flag says otherwise for this run
+  const samePort = options.separate ? false : options.samePort || (loadUserConfig().address ?? 'same') === 'same';
+  if (useProxy && samePort) {
+    void startSamePort(options, getPort()!).then((how) => {
+      if (how === 'same-port') { journal.session.toolbar = 'same-port'; return; }
+      // Couldn't take the app's port: the separate address still works
+      void startToolbarProxy(options, getPort()!).then((h) => { if (h === 'plugin') journal.session.toolbar = 'plugin'; });
+    });
+  } else if (useProxy) {
     void startToolbarProxy(options, getPort()!).then((how) => {
       if (how === 'plugin') journal.session.toolbar = 'plugin';
     });

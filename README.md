@@ -31,15 +31,17 @@ Ilse uses *your* agent and *your* account. It has no account, key or server of i
 
 ## Try it
 
-In your project's folder, with the app running (`npm run dev`), open a second terminal and run:
+In your project's folder — no need to start the app first — run:
 
 ```bash
-npx github:idantas/ilse
+npx --allow-git=root github:idantas/ilse
 ```
 
-Ilse opens your app at **http://localhost:4700** with its toolbar on top. Work there instead of your usual address. The first run asks a couple of questions and takes about a minute.
+Ilse starts your dev server (`npm run dev`) behind itself and opens your app at its usual address — `http://localhost:3000`, or whatever port it uses — with the toolbar on top. Logins, SSO and callbacks keep working. The first run asks a few questions and takes about a minute. Next time, just `ilse` if you [installed it](docs/reference.md#install).
 
-Rather stay on your usual address (logins and callbacks tied to it)? In Vite projects, use the [Vite plugin](docs/reference.md#on-your-apps-own-port-vite-plugin); in any project, the [bookmarklet or Chrome extension](docs/reference.md#any-local-page-bookmarklet-or-chrome-extension).
+`--allow-git=root` is needed on npm 12, which refuses installs from git by default; older npm ignores it.
+
+Prefer to run the dev server yourself? `--separate` opens Ilse on its own address, `localhost:4700`. More ways: the [Vite plugin](docs/reference.md#on-your-apps-own-port-vite-plugin), the [bookmarklet or Chrome extension](docs/reference.md#any-local-page-bookmarklet-or-chrome-extension).
 
 Not comfortable with the terminal? Ask your agent: *"Install and run Ilse in this project — see https://github.com/idantas/ilse"*.
 

@@ -22,6 +22,8 @@ EN = {
     'Combina o commit': 'Agrees on commits',
     'se for git · pergunta 1 vez': 'if it is git · asks once', 'abre o browser': 'opens the browser',
     'nada da Ilse vai pro repo': 'nothing of Ilse goes in the repo', 'é um proxy local — o projeto': "it's a local proxy — the project",
+    'mesma porta': 'same port', 'sobe seu dev server por trás': 'starts your dev server behind it',
+    'e fica com a porta de sempre —': 'and keeps its usual port —',
     'não ganha dependência': 'gets no dependency',
     'quem commita': 'whoever commits', 'sabe o porquê de cada': 'knows the why of every', 'mudança da Ilse': 'change Ilse made',
     '↑ MONTAGEM · UMA VEZ': '↑ SETUP · ONCE', '↓ USO · A CADA AJUSTE': '↓ USE · EVERY TWEAK',
@@ -134,14 +136,14 @@ for lane, label in {1: 'DESIGNER · APONTA', 2: 'ILSE · ENTENDE E ROTEIA', 3: '
 # ── Setup, once ─────────────────────────────────────────────────────────────
 s1 = box('s1', 1, 200, '0', 'Roda npx ilse', [['terminal', 'na pasta do projeto']])
 s2 = box('s2', 2, 200, '·', 'Detecta sozinho', [['agente', 'conta', 'dev server', 'tokens']])
-s3 = box('s3', 2, 310, '·', 'Injeta a toolbar', [['proxy :4700', 'plugin Vite', 'extensão']])
+s3 = box('s3', 2, 310, '·', 'Injeta a toolbar', [['mesma porta', ':4700', 'plugin Vite', 'extensão']])
 s4 = box('s4', 4, 310, '·', 'Combina o commit', [['AGENTS.md', 'CLAUDE.md']])
 arrow([(s1['r'], s1['cy']), (s2['x'], s2['cy'])])
 arrow([(s2['cx'], s2['b']), (s3['cx'], s3['y'])])
 arrow([(s2['r'], s2['cy']), (s4['cx'], s2['cy']), (s4['cx'], s4['y'])], label='se for git · pergunta 1 vez', lx=s4['cx'] + 8, ly=s2['cy'] - 8, lanchor='start')
 arrow([(s3['x'], s3['cy'] + 12), (s1['r'] - 50, s3['cy'] + 12), (s1['r'] - 50, 500)], label='abre o browser', lx=s1['r'] - 42, ly=s3['cy'] + 40, lanchor='start')
 connector(s3['r'], s3['cy'] - 8, 760, s3['cy'] - 8)
-note(768, s3['cy'] - 14, ['nada da Ilse vai pro repo', 'é um proxy local — o projeto', 'não ganha dependência'])
+note(768, s3['cy'] - 14, ['sobe seu dev server por trás', 'e fica com a porta de sempre —', 'nada da Ilse vai pro repo'])
 connector(s2['r'], s2['b'] - 8, 760, s2['b'] - 8)
 note(768, s2['b'] - 2, ['mais de uma conta do Claude?', 'pergunta qual, uma vez por projeto'])
 connector(s4['r'], s4['cy'], 1420, s4['cy'])
@@ -207,9 +209,9 @@ connector(c2['r'], c2['cy'], 1420, c2['cy'])
 note(1428, c2['cy'] - 6, ['tudo desfazível,', 'tudo medido', '(tempo, tokens, custo)'])
 note(1428, c3['cy'] + 6, ['a IA é sempre', 'a do usuário — sem chave,', 'sem conta da Ilse'])
 
-DESC = ('Ilse flow: setup (npx ilse, detection, proxy, Vite plugin or extension) and every tweak (point, adjust live, send, locate, build context, pick the step — class swap, quick, agent — file changes, designer sees it, records and commits).'
+DESC = ('Ilse flow: setup (npx ilse, detection, same port or proxy, Vite plugin or extension) and every tweak (point, adjust live, send, locate, build context, pick the step — class swap, quick, agent — file changes, designer sees it, records and commits).'
         if LANG == 'en' else
-        'Fluxo da Ilse: montagem (npx ilse, detecção, proxy, plugin Vite ou extensão) e uso a cada ajuste (apontar, ajustar ao vivo, enviar, localizar, montar contexto, escolher o degrau — troca de classe, rápido, agente — arquivo muda, designer vê, registra e commita).')
+        'Fluxo da Ilse: montagem (npx ilse, detecção, mesma porta ou proxy, plugin Vite ou extensão) e uso a cada ajuste (apontar, ajustar ao vivo, enviar, localizar, montar contexto, escolher o degrau — troca de classe, rápido, agente — arquivo muda, designer vê, registra e commita).')
 svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-labelledby="t d">
 <title id="t">{'Ilse — how it works' if LANG == 'en' else 'Ilse — como funciona'}</title>
 <desc id="d">{DESC}</desc>

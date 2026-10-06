@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom';
 import { color, radius, shadow, font, ilse } from './tokens.js';
 import type { Point, Stroke } from './sketch.js';
 import { t, type MessageKey } from '../i18n/index.js';
+import { withShortcut } from './shortcuts.js';
 
 export const PEN_COLORS = ['#FF6C03', '#EF4444', '#3B82F6', '#22C55E', '#111111'] as const;
 const PEN_NAMES: Record<string, MessageKey> = {
@@ -194,22 +195,23 @@ export function PencilBar({ penColor, strokeCount, onColor, onUndo, onClear, onD
         />
       ))}
       <span style={{ width: 1, height: 18, backgroundColor: color.border, margin: '0 2px' }} />
-      <button onClick={onUndo} disabled={strokeCount === 0} title={t('sketch.undo')} style={barButton(strokeCount === 0)}>
+      <button onClick={onUndo} disabled={strokeCount === 0} title={withShortcut(t('sketch.undo'), 'Mod+Z')} style={barButton(strokeCount === 0)}>
         Desfazer
       </button>
       <button onClick={onClear} disabled={strokeCount === 0} title={t('sketch.clear')} style={barButton(strokeCount === 0)}>
-        Limpar
+        {t('sketch.clearShort')}
       </button>
       <button
         onClick={onDone}
         disabled={strokeCount === 0}
+        title={withShortcut(t('sketch.done'), 'Enter')}
         style={{
           ...barButton(strokeCount === 0),
           backgroundColor: strokeCount === 0 ? color.muted : ilse.orange,
           color: strokeCount === 0 ? color.mutedForeground : '#fff', fontWeight: 500,
         }}
       >
-        Pronto
+        {t('sketch.done')}
       </button>
     </div>
   );
