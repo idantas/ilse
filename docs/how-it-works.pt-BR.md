@@ -6,7 +6,7 @@
 
 <sub>Fonte do diagrama: `scripts/architecture-svg.py` (`python3 scripts/architecture-svg.py en` / `pt`).</sub>
 
-1. Seu servidor de desenvolvimento roda como sempre. A Ilse o encontra e serve o mesmo app em `localhost:4700`, com a barra por cima. O hot reload continua funcionando; seu projeto não precisa de nenhum import.
+1. Seu servidor de desenvolvimento roda como sempre. A Ilse o encontra e serve o mesmo app em `localhost:4700`, com a barra por cima. O hot reload continua funcionando; seu projeto não precisa de nenhum import. Com o [plugin Vite](reference.pt-BR.md#na-porta-do-seu-app-plugin-vite), o próprio servidor de dev carrega a barra; com o [bookmarklet ou a extensão do Chrome](reference.pt-BR.md#qualquer-página-local-bookmarklet-ou-extensão-do-chrome), o navegador. Nos dois casos, sem proxy.
 2. Você aponta algo e envia. A Ilse localiza o lugar exato no seu código e monta um pedido curto e preciso.
 3. O degrau mais barato que resolve aplica: a própria Ilse, um modelo rápido ou o seu agente completo.
 4. O arquivo muda, a página atualiza, e a mudança fica registrada para poder ser desfeita e explicada na hora do commit.

@@ -94,6 +94,21 @@ program
   });
 
 program
+  .command('bookmarklet')
+  .description(t('cmd.bookmarklet'))
+  .option('--port <port>', 'Ilse port (default: the running one, else 4747)')
+  .action(async (options: { port?: string }) => {
+    const { bookmarkletCode, BOOKMARKLET_PATH } = await import('../proxy/bookmarklet.js');
+    const { readServerInfo } = await import('../config/local-token.js');
+    const running = readServerInfo();
+    const alive = (() => { try { return !!running && process.kill(running.pid, 0); } catch { return false; } })();
+    const port = options.port ? parseInt(options.port, 10) : alive ? running!.port : 4747;
+    console.log(`\n  ${t('bookmarklet.cliPage')} http://localhost:${port}${BOOKMARKLET_PATH}`);
+    console.log(`  ${t('bookmarklet.cliOr')}\n`);
+    console.log(bookmarkletCode(port, t('bookmarklet.notRunning', { port })) + '\n');
+  });
+
+program
   .command('changes')
   .description(t('cmd.changes'))
   .option('--json', 'Raw ledger entries')

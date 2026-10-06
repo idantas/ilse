@@ -592,6 +592,42 @@ const messages = {
     pt: 'Não consegui subir o proxy da Ilse',
     en: 'Could not start the Ilse proxy',
   },
+  'proxy.direct': {
+    pt: 'Seu dev server já carrega a Ilse (plugin) — sem proxy, abra:',
+    en: 'Your dev server already loads Ilse (plugin) — no proxy, open:',
+  },
+  'bookmarklet.notRunning': {
+    pt: 'A Ilse não está rodando na porta {port}. Suba com npx ilse-design e clique de novo.',
+    en: "Ilse isn't running on port {port}. Start it with npx ilse-design, then click again.",
+  },
+  'bookmarklet.pageTitle': {
+    pt: 'Ilse em qualquer página local',
+    en: 'Ilse on any local page',
+  },
+  'bookmarklet.pageDrag': {
+    pt: 'Arraste o botão abaixo para a barra de favoritos.',
+    en: 'Drag the button below to your bookmarks bar.',
+  },
+  'bookmarklet.pageUse': {
+    pt: 'Na página do seu app (localhost), clique no favorito e a barra aparece, no endereço de sempre. Ela fala com a Ilse em execução; nada entra no seu projeto.',
+    en: "On your app's page (localhost), click the bookmark and the toolbar shows up, on your usual address. It talks to the running Ilse; nothing goes into your project.",
+  },
+  'bookmarklet.cliPage': {
+    pt: 'Arraste o botão desta página para a barra de favoritos:',
+    en: 'Drag the button on this page to your bookmarks bar:',
+  },
+  'bookmarklet.cliOr': {
+    pt: 'Ou crie um favorito com este endereço:',
+    en: 'Or create a bookmark with this address:',
+  },
+  'cmd.bookmarklet': {
+    pt: 'Mostra o bookmarklet que põe a barra em qualquer página local',
+    en: 'Print the bookmarklet that puts the toolbar on any local page',
+  },
+  'vite.notRunning': {
+    pt: 'Ilse: a barra aparece quando o `ilse` estiver rodando (npx ilse-design) — depois, recarregue a página.',
+    en: 'Ilse: the toolbar shows up once `ilse` is running (npx ilse-design) — then reload the page.',
+  },
   'cmd.target': {
     pt: 'Porta do dev server (padrão: detecta sozinho)',
     en: 'Dev server port (default: auto-detect)',

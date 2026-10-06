@@ -39,6 +39,8 @@ npx github:idantas/ilse
 
 Ilse opens your app at **http://localhost:4700** with its toolbar on top. Work there instead of your usual address. The first run asks a couple of questions and takes about a minute.
 
+Rather stay on your usual address (logins and callbacks tied to it)? In Vite projects, use the [Vite plugin](docs/reference.md#on-your-apps-own-port-vite-plugin); in any project, the [bookmarklet or Chrome extension](docs/reference.md#any-local-page-bookmarklet-or-chrome-extension).
+
 Not comfortable with the terminal? Ask your agent: *"Install and run Ilse in this project — see https://github.com/idantas/ilse"*.
 
 ## What it costs

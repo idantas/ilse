@@ -8,8 +8,10 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import http from 'node:http';
 import net from 'node:net';
 import type { DevTarget } from './server.js';
+import { TOOLBAR_PATH } from './toolbar.js';
 
 const COMMON_PORTS = [3000, 5173, 3001, 4321, 8080, 5174, 8000, 4200];
 
@@ -56,6 +58,29 @@ export async function findDevServer(cwd: string, ports = candidatePorts(cwd), ex
     }
   }
   return null;
+}
+
+/**
+ * True when the dev server's own HTML already loads the toolbar (the Vite
+ * plugin): then the app keeps its URL and no proxy is needed. Redirects and
+ * errors count as "no" — the proxy is the safe default.
+ */
+export function pageHasToolbar(target: DevTarget, timeoutMs = 2000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get(
+      { host: target.host, port: target.port, path: '/', headers: { accept: 'text/html' }, timeout: timeoutMs },
+      (res) => {
+        if (res.statusCode !== 200) { res.resume(); resolve(false); return; }
+        let html = '';
+        res.setEncoding('utf8');
+        res.on('data', (c: string) => { html += c; });
+        res.on('end', () => resolve(html.includes(TOOLBAR_PATH)));
+        res.on('error', () => resolve(false));
+      },
+    );
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+  });
 }
 
 /** Polls until a dev server shows up — the user may start it after `ilse`. */

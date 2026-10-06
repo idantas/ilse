@@ -61,7 +61,7 @@ Every prompt carries `ilse · annotation <id> · <Component> · <file>`, so past
 ## CLI
 
 ```bash
-ilse-design                 # find the dev server, open the proxy, listen
+ilse-design                 # find the dev server, open the proxy (skipped with the Vite plugin), listen
 ilse-design --target 3000   # dev server port, if auto-detection misses it
 ilse-design --proxy-port 4800
 ilse-design --no-open       # don't open the browser
@@ -70,6 +70,7 @@ ilse-design --inject        # put <Ilse /> in your layout instead of using the p
 ilse-design --reset         # choose the mode again
 ilse-design --account       # choose again which Claude account this project uses
 ilse-design changes         # what Ilse changed that isn't committed yet
+ilse-design bookmarklet     # the bookmarklet that puts the toolbar on any local page
 ```
 
 These assume a global install. Without it, use `npx github:idantas/ilse` instead of `ilse-design`. The command is also available as `ilse`.
@@ -118,9 +119,62 @@ Which Claude account should Ilse use in this project?
 
 The choice is saved per project in `~/.ilse/config.json` (never in the repo) and shown in the startup line and the toolbar settings. `ilse-design --account` asks again. To add an account, log in once with its own directory: `CLAUDE_CONFIG_DIR=~/.claude-work claude`.
 
+## On your app's own port: Vite plugin
+
+The proxy gives your app a second address, `localhost:4700`, and whatever is tied to the original one stays there: the login session saved in the browser, OAuth callbacks, links in emails. With the Vite plugin the toolbar comes from your dev server itself, so you keep working on your usual address.
+
+```bash
+npm install -D github:idantas/ilse
+```
+
+```ts
+// vite.config.ts
+import { ilse } from "ilse-design/vite";
+
+export default defineConfig({
+  plugins: [react(), ilse()],
+});
+```
+
+Run `ilse-design` as usual: it sees the toolbar is already on the page, skips the proxy and gives you your dev server's address.
+
+- Only in `vite dev` — a production build never includes it.
+- The toolbar is fetched from the running `ilse`, so it always matches the CLI. While `ilse` isn't running, the page loads an empty script and Vite says so once; start `ilse` and reload.
+- `ilse({ port: 4748 })` if Ilse runs on another port (the startup line shows `ws://localhost:<port>`).
+- To have it only when you ask for it, guard it: `plugins: [react(), ...(process.env.ILSE ? [ilse()] : [])]`.
+
+**Without adding the package** — a monorepo, or a project that shouldn't depend on Ilse — the same takes a few lines in `vite.config.ts`, pointing at the running `ilse` (port 4747):
+
+```ts
+import type { Plugin } from "vite";
+
+const ilseToolbar: Plugin = {
+  name: "ilse-toolbar",
+  apply: "serve",
+  transformIndexHtml: () => [{ tag: "script", attrs: { src: "/__ilse/toolbar.js", defer: true }, injectTo: "body" }],
+};
+
+export default defineConfig({
+  plugins: [react(), ilseToolbar],
+  server: { proxy: { "/__ilse": "http://127.0.0.1:4747" } },
+});
+```
+
+Keep the script on your app's own address, as above, rather than loading `http://localhost:4747/__ilse/toolbar.js` directly: a service worker (MSW, PWAs) can drop requests to another local port.
+
+## Any local page: bookmarklet or Chrome extension
+
+No proxy and nothing in the project, not even a dev dependency: your browser puts the toolbar on the page, on your usual address. Any framework.
+
+**Bookmarklet.** With `ilse-design` running, open `http://localhost:4747/__ilse/bookmarklet` and drag the button to your bookmarks bar (`ilse-design bookmarklet` prints the link and the code). On your app's page, click the bookmark. A full reload takes the toolbar away; click again.
+
+**Chrome extension.** Turns the toolbar on per site and brings it back on every reload. Load it once: `chrome://extensions` → *Developer mode* → *Load unpacked* → the `extension/` folder of this repo. Then, on your app's page, click the Ilse icon — the badge says **ON**. Click again to turn it off.
+
+Both only work on `localhost` pages. They fetch the toolbar from the running `ilse` and run it in the page without a network request, so a service worker (MSW, PWAs) can't drop it. A page with a strict Content-Security-Policy can still block them; use the proxy there, which removes that header.
+
 ## Without the proxy: `<Ilse />` in your layout
 
-If the proxy gets in the way — for example, auth callbacks bound to your dev port:
+If the proxy gets in the way and your app isn't on Vite — for example, auth callbacks bound to your dev port in Next.js:
 
 ```bash
 npm install -D github:idantas/ilse

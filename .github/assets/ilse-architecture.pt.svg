@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1600" viewBox="0 0 1680 1600" role="img" aria-labelledby="t d">
 <title id="t">Ilse — como funciona</title>
-<desc id="d">Fluxo da Ilse: montagem (npx ilse, detecção, proxy) e uso a cada ajuste (apontar, ajustar ao vivo, enviar, localizar, montar contexto, escolher o degrau — troca de classe, rápido, agente — arquivo muda, designer vê, registra e commita).</desc>
+<desc id="d">Fluxo da Ilse: montagem (npx ilse, detecção, proxy, plugin Vite ou extensão) e uso a cada ajuste (apontar, ajustar ao vivo, enviar, localizar, montar contexto, escolher o degrau — troca de classe, rápido, agente — arquivo muda, designer vê, registra e commita).</desc>
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="#9b9b9b"/></marker>
 <marker id="arrow-brand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="#FA6900"/></marker>
@@ -39,11 +39,13 @@
 <text x="604.25" y="249" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">tokens</text>
 <rect x="400" y="310" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="416" y="335" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">·</text>
-<text x="433.5" y="335" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Sobe o proxy</text>
-<rect x="416" y="346" width="99.5" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="422" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">localhost:4700</text>
-<rect x="520.5" y="346" width="112.0" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="526.5" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">injeta a toolbar</text>
+<text x="433.5" y="335" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Injeta a toolbar</text>
+<rect x="416" y="346" width="80.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="422" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">proxy :4700</text>
+<rect x="501.75" y="346" width="80.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="507.75" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">plugin Vite</text>
+<rect x="587.5" y="346" width="62.0" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="593.5" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">extensão</text>
 <rect x="1080" y="310" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="1096" y="335" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">·</text>
 <text x="1113.5" y="335" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Combina o commit</text>

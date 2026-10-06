@@ -11,13 +11,10 @@
 
 import http from 'node:http';
 import net from 'node:net';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { t } from '../i18n/index.js';
+import { TOOLBAR_PATH, injectToolbar, serveToolbar } from './toolbar.js';
 
-export const TOOLBAR_PATH = '/__ilse/toolbar.js';
-const TOOLBAR_TAG = `<script src="${TOOLBAR_PATH}" defer></script>`;
+export { TOOLBAR_PATH, injectToolbar };
 
 export interface DevTarget { host: string; port: number }
 
@@ -27,21 +24,11 @@ export interface ProxyOptions {
   maxPort?: number;
   /** Override the bundle location (tests) */
   toolbarFile?: string;
+  /** Port of the `ilse` WebSocket bridge, handed to the toolbar */
+  bridgePort?: number;
 }
 
 export interface RunningProxy { port: number; close: () => Promise<void> }
-
-function defaultToolbarFile(): string {
-  // dist/proxy/server.js → dist/standalone/toolbar.js
-  return join(dirname(fileURLToPath(import.meta.url)), '..', 'standalone', 'toolbar.js');
-}
-
-/** Inserts the toolbar script before </body>, or at the end if there is none. */
-export function injectToolbar(html: string): string {
-  if (html.includes(TOOLBAR_PATH)) return html;
-  const idx = html.lastIndexOf('</body>');
-  return idx === -1 ? html + TOOLBAR_TAG : html.slice(0, idx) + TOOLBAR_TAG + html.slice(idx);
-}
 
 /** Absolute redirects to the dev server must come back through the proxy. */
 function rewriteLocation(location: string, target: DevTarget, proxyPort: number): string {
@@ -52,23 +39,11 @@ function rewriteLocation(location: string, target: DevTarget, proxyPort: number)
 }
 
 export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
-  const toolbarFile = opts.toolbarFile ?? defaultToolbarFile();
   const target = opts.target;
   let proxyPort = 0;
 
   const server = http.createServer((req, res) => {
-    if (req.url === TOOLBAR_PATH) {
-      try {
-        // Read per request: rebuilding the bundle needs no proxy restart
-        const js = readFileSync(toolbarFile);
-        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
-        res.end(js);
-      } catch {
-        res.writeHead(500, { 'content-type': 'text/plain' });
-        res.end(`Ilse toolbar bundle not found at ${toolbarFile}. Run "npm run build".`);
-      }
-      return;
-    }
+    if (serveToolbar(req, res, { file: opts.toolbarFile, bridgePort: opts.bridgePort })) return;
 
     const headers = { ...req.headers };
     // Compressed HTML can't be edited — ask the dev server for plain bytes

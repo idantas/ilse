@@ -12,11 +12,25 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let shouldReconnect = true;
 let confirmedPort: number | null = null; // port that accepted our origin
 
+declare global {
+  interface Window { __ilseBridgePort?: number }
+}
+
 function emitStatus(connected: boolean) {
   for (const l of statusListeners) l(connected);
 }
 
-export function connect(startPort = BASE_PORT) {
+/**
+ * The `ilse` that served this bundle says its port in the first line
+ * (proxy/toolbar.ts). Starting there keeps a page loaded through the Vite
+ * plugin, bookmarklet or extension off another project's server on 4747.
+ */
+function firstPort(): number {
+  const hint = typeof window !== 'undefined' ? window.__ilseBridgePort : undefined;
+  return typeof hint === 'number' && hint >= BASE_PORT && hint <= MAX_PORT ? hint : BASE_PORT;
+}
+
+export function connect(startPort = firstPort()) {
   // Revive auto-reconnect in case a previous disconnect disabled it
   // (React Strict Mode double-mount runs cleanup then effect again).
   shouldReconnect = true;
@@ -28,7 +42,7 @@ function tryPort(port: number) {
   if (!shouldReconnect) return;
   if (port > MAX_PORT) {
     // All ports tried — wait and retry from the beginning
-    scheduleReconnect(BASE_PORT);
+    scheduleReconnect(firstPort());
     return;
   }
 
@@ -47,12 +61,25 @@ function tryPort(port: number) {
   let helloTimer: ReturnType<typeof setTimeout> | null = null;
   let handshakeDone = false;
 
+  // Each socket moves the scan on at most once. An attempt can fail on several
+  // paths for the same socket — open then error (some proxies accept the TCP
+  // connection first), open then a 4003 close, and the handshake timer after
+  // either — and moving on from each one doubled the sockets at every port:
+  // thousands of them by 4757.
+  let movedOn = false;
+  const moveOn = () => {
+    if (movedOn) return;
+    movedOn = true;
+    if (helloTimer) { clearTimeout(helloTimer); helloTimer = null; }
+    tryPort(port + 1);
+  };
+
   sock.onopen = () => {
     helloTimer = setTimeout(() => {
       if (!handshakeDone) {
         sock.close();
         if (ws === sock) ws = null;
-        tryPort(port + 1);
+        moveOn();
       }
     }, 1500);
   };
@@ -72,10 +99,9 @@ function tryPort(port: number) {
           emitStatus(true);
         } else {
           // Wrong server — skip to next port
-          if (helloTimer) { clearTimeout(helloTimer); helloTimer = null; }
           sock.close();
           if (ws === sock) ws = null;
-          tryPort(port + 1);
+          moveOn();
           return;
         }
       }
@@ -87,7 +113,7 @@ function tryPort(port: number) {
   sock.onclose = (e) => {
     if (e.code === 4003) {
       // Server rejected us — wrong project. Try next port immediately.
-      tryPort(port + 1);
+      moveOn();
       return;
     }
     // Only clear module-level ws if it still points at THIS instance.
@@ -96,15 +122,16 @@ function tryPort(port: number) {
     if (ws === sock) {
       ws = null;
       emitStatus(false);
-      if (shouldReconnect) scheduleReconnect(confirmedPort ?? BASE_PORT);
+      if (shouldReconnect) scheduleReconnect(confirmedPort ?? firstPort());
     }
   };
 
   sock.onerror = () => {
+    // A live connection that fails reconnects through onclose, which follows
+    if (handshakeDone) return;
     // Connection refused or error — try next port without waiting
     sock.close();
-    if (ws === sock) ws = null;
-    tryPort(port + 1);
+    moveOn();
   };
 }
 

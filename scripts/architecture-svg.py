@@ -18,7 +18,7 @@ EN = {
     'AGENTE · EXECUTA': 'AGENT · EXECUTES', 'CÓDIGO · MOSTRA E REGISTRA': 'CODE · SHOWS & RECORDS',
     'Roda npx ilse': 'Run npx ilse', 'terminal': 'terminal', 'na pasta do projeto': 'in the project folder',
     'Detecta sozinho': 'Detects on its own', 'agente': 'agent', 'dev server': 'dev server', 'tokens': 'tokens',
-    'Sobe o proxy': 'Starts the proxy', 'injeta a toolbar': 'injects the toolbar',
+    'Injeta a toolbar': 'Injects the toolbar', 'plugin Vite': 'Vite plugin', 'extensão': 'extension',
     'Combina o commit': 'Agrees on commits',
     'se for git · pergunta 1 vez': 'if it is git · asks once', 'abre o browser': 'opens the browser',
     'nada da Ilse vai pro repo': 'nothing of Ilse goes in the repo', 'é um proxy local — o projeto': "it's a local proxy — the project",
@@ -134,7 +134,7 @@ for lane, label in {1: 'DESIGNER · APONTA', 2: 'ILSE · ENTENDE E ROTEIA', 3: '
 # ── Setup, once ─────────────────────────────────────────────────────────────
 s1 = box('s1', 1, 200, '0', 'Roda npx ilse', [['terminal', 'na pasta do projeto']])
 s2 = box('s2', 2, 200, '·', 'Detecta sozinho', [['agente', 'conta', 'dev server', 'tokens']])
-s3 = box('s3', 2, 310, '·', 'Sobe o proxy', [['localhost:4700', 'injeta a toolbar']])
+s3 = box('s3', 2, 310, '·', 'Injeta a toolbar', [['proxy :4700', 'plugin Vite', 'extensão']])
 s4 = box('s4', 4, 310, '·', 'Combina o commit', [['AGENTS.md', 'CLAUDE.md']])
 arrow([(s1['r'], s1['cy']), (s2['x'], s2['cy'])])
 arrow([(s2['cx'], s2['b']), (s3['cx'], s3['y'])])
@@ -207,9 +207,9 @@ connector(c2['r'], c2['cy'], 1420, c2['cy'])
 note(1428, c2['cy'] - 6, ['tudo desfazível,', 'tudo medido', '(tempo, tokens, custo)'])
 note(1428, c3['cy'] + 6, ['a IA é sempre', 'a do usuário — sem chave,', 'sem conta da Ilse'])
 
-DESC = ('Ilse flow: setup (npx ilse, detection, proxy) and every tweak (point, adjust live, send, locate, build context, pick the step — class swap, quick, agent — file changes, designer sees it, records and commits).'
+DESC = ('Ilse flow: setup (npx ilse, detection, proxy, Vite plugin or extension) and every tweak (point, adjust live, send, locate, build context, pick the step — class swap, quick, agent — file changes, designer sees it, records and commits).'
         if LANG == 'en' else
-        'Fluxo da Ilse: montagem (npx ilse, detecção, proxy) e uso a cada ajuste (apontar, ajustar ao vivo, enviar, localizar, montar contexto, escolher o degrau — troca de classe, rápido, agente — arquivo muda, designer vê, registra e commita).')
+        'Fluxo da Ilse: montagem (npx ilse, detecção, proxy, plugin Vite ou extensão) e uso a cada ajuste (apontar, ajustar ao vivo, enviar, localizar, montar contexto, escolher o degrau — troca de classe, rápido, agente — arquivo muda, designer vê, registra e commita).')
 svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" aria-labelledby="t d">
 <title id="t">{'Ilse — how it works' if LANG == 'en' else 'Ilse — como funciona'}</title>
 <desc id="d">{DESC}</desc>

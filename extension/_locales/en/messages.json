@@ -1,0 +1,8 @@
+{
+  "name": { "message": "Ilse" },
+  "description": { "message": "Puts the Ilse toolbar on your local dev pages — your usual address, no proxy, nothing in the project." },
+  "actionOff": { "message": "Ilse — click to show the toolbar on this site" },
+  "actionOn": { "message": "Ilse is on for this site — click to turn it off" },
+  "notRunning": { "message": "Ilse isn't running — start it with npx ilse-design, then reload" },
+  "onlyLocal": { "message": "Ilse works on localhost pages" }
+}

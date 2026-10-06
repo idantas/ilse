@@ -6,7 +6,7 @@
 
 <sub>Diagram source: `scripts/architecture-svg.py` (`python3 scripts/architecture-svg.py en` / `pt`).</sub>
 
-1. Your dev server runs as usual. Ilse finds it and serves the same app at `localhost:4700`, with the toolbar injected. Hot reload keeps working; your project needs no import.
+1. Your dev server runs as usual. Ilse finds it and serves the same app at `localhost:4700`, with the toolbar injected. Hot reload keeps working; your project needs no import. With the [Vite plugin](reference.md#on-your-apps-own-port-vite-plugin), the dev server loads the toolbar itself; with the [bookmarklet or Chrome extension](reference.md#any-local-page-bookmarklet-or-chrome-extension), the browser does. Either way there is no proxy.
 2. You point at something and send. Ilse resolves it to the exact place in your code and builds a short, precise request.
 3. The cheapest step that can apply it does: Ilse itself, a fast model, or your full agent.
 4. The file changes, the page updates, and the change is recorded so it can be undone and explained at commit time.

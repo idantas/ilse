@@ -80,7 +80,7 @@ export interface SessionInfo {
   framework?: string;
   mode?: string;
   agent?: string;
-  toolbar?: 'proxy' | 'component';
+  toolbar?: 'proxy' | 'component' | 'plugin';
 }
 
 export class Journal {

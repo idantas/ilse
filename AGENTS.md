@@ -30,7 +30,10 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 |---|---|
 | `src/cli/default.ts` | The `ilse` command: setup, proxy, WS server, batching, the cost ladder, undo/redo, usage-limit pause |
 | `src/cli/index.ts` | CLI flags and subcommands (commander) |
-| `src/proxy/` | Proxy that injects the toolbar into the dev server's HTML; finds the dev server |
+| `src/proxy/` | Proxy that injects the toolbar into the dev server's HTML; finds the dev server; `toolbar.ts` serves the bundle (proxy and WS port) |
+| `src/vite/` | `ilse-design/vite`: Vite plugin that loads the toolbar on the dev server's own port, no proxy |
+| `src/proxy/bookmarklet.ts` | Bookmarklet, its install page and the loader that hands it the toolbar (served on the WS port) |
+| `extension/` | Chrome extension (MV3, plain JS, loaded unpacked): toolbar per site, no proxy. Strings in `extension/_locales/`; logic tested in `src/extension/__tests__/` |
 | `src/bridge/ws-server.ts` | WebSocket server (loopback, origin check), toolbar ↔ CLI messages |
 | `src/bridge/augment.ts` | What the agent reads: source block, read hint, component card, Ilse history, scope |
 | `src/context/locate.ts` | Browser element → `file:line` (AST + React dev stack); component card |

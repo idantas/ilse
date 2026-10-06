@@ -1,0 +1,8 @@
+{
+  "name": { "message": "Ilse" },
+  "description": { "message": "Põe a barra da Ilse nas suas páginas locais de dev — no endereço de sempre, sem proxy, nada no projeto." },
+  "actionOff": { "message": "Ilse — clique para mostrar a barra neste site" },
+  "actionOn": { "message": "A Ilse está ligada neste site — clique para desligar" },
+  "notRunning": { "message": "A Ilse não está rodando — suba com npx ilse-design e recarregue" },
+  "onlyLocal": { "message": "A Ilse funciona em páginas localhost" }
+}

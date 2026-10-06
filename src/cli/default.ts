@@ -15,7 +15,9 @@ import { t, detectLocale, setLocale } from '../i18n/index.js';
 import type { Annotation } from '../types.js';
 import { checkForUpdate } from './update-check.js';
 import { startProxy } from '../proxy/server.js';
-import { findDevServer, waitForDevServer } from '../proxy/find-dev-server.js';
+import { serveToolbar } from '../proxy/toolbar.js';
+import { serveBookmarklet } from '../proxy/bookmarklet.js';
+import { findDevServer, waitForDevServer, pageHasToolbar } from '../proxy/find-dev-server.js';
 import { spawn } from 'node:child_process';
 import { planTokenSwap, planTextSwap, applyTokenSwap, describeSwap, type SwapPlan } from '../context/token-swap.js';
 import {
@@ -178,24 +180,35 @@ function openBrowser(url: string): void {
 /**
  * Default activation: a local proxy injects the toolbar, so the project's
  * files stay untouched. Runs in the background — the WS server is already up
- * and the dev server may start after `ilse`.
+ * and the dev server may start after `ilse`. When the dev server already loads
+ * the toolbar itself (Vite plugin), there is no proxy: the app keeps its URL.
  */
-async function startToolbarProxy(options: DefaultOptions): Promise<void> {
+async function startToolbarProxy(options: DefaultOptions, bridgePort: number): Promise<'proxy' | 'plugin' | 'failed'> {
   const target = options.target
     // Probe both stacks: Vite on recent Node binds `localhost` to ::1 only
     ? (await findDevServer(process.cwd(), [options.target])) ?? { host: '127.0.0.1', port: options.target }
     : await waitForDevServer(process.cwd(), {
         onWaiting: () => console.log(chalk.dim(`  ${t('proxy.waiting')}`)),
       });
+  if (await pageHasToolbar(target)) {
+    const url = `http://localhost:${target.port}`;
+    console.log('');
+    console.log(chalk.dim(`  ${t('proxy.direct')} `) + chalk.bold.cyan(url));
+    console.log('');
+    if (options.open !== false) openBrowser(url);
+    return 'plugin';
+  }
   try {
-    const proxy = await startProxy({ target, port: options.proxyPort });
+    const proxy = await startProxy({ target, port: options.proxyPort, bridgePort });
     const url = `http://localhost:${proxy.port}`;
     console.log('');
     console.log(chalk.dim(`  ${t('proxy.open')} `) + chalk.bold.cyan(url) + chalk.dim(`  (${t('proxy.target')} :${target.port})`));
     console.log('');
     if (options.open !== false) openBrowser(url);
+    return 'proxy';
   } catch (err) {
     console.log(chalk.red(`  ✗ ${t('proxy.failed')}: ${(err as Error).message}`));
+    return 'failed';
   }
 }
 
@@ -852,7 +865,11 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   });
 
   const server = await startServer({
-    httpHandler: mcpHandler,
+    // The toolbar for pages that load it from this port rather than the proxy:
+    // the Vite plugin's middleware, the bookmarklet, the browser extension
+    httpHandler: (req, res) => serveToolbar(req, res, { bridgePort: getPort() ?? undefined })
+      || serveBookmarklet(req, res, getPort()!)
+      || mcpHandler(req, res),
     onAnnotation: scheduleBatch,
     onBatch: handleBatchInternal,
     onStop: handleStop,
@@ -878,7 +895,9 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   writeServerInfo(getPort()!);
 
   if (useProxy) {
-    void startToolbarProxy(options);
+    void startToolbarProxy(options, getPort()!).then((how) => {
+      if (how === 'plugin') journal.session.toolbar = 'plugin';
+    });
   } else if (framework.alreadyInstalled) {
     console.log(chalk.dim(`  ${t('proxy.componentInstalled')}`));
   }

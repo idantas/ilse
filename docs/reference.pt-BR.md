@@ -61,7 +61,7 @@ Todo prompt leva `ilse · annotation <id> · <Componente> · <arquivo>`, então 
 ## CLI
 
 ```bash
-ilse-design                 # acha o servidor de dev, abre o proxy, escuta
+ilse-design                 # acha o servidor de dev, abre o proxy (pulado com o plugin Vite), escuta
 ilse-design --target 3000   # porta do servidor de dev, se a detecção falhar
 ilse-design --proxy-port 4800
 ilse-design --no-open       # não abre o navegador
@@ -70,6 +70,7 @@ ilse-design --inject        # põe <Ilse /> no seu layout em vez de usar o proxy
 ilse-design --reset         # escolhe o modo de novo
 ilse-design --account       # escolhe de novo a conta do Claude deste projeto
 ilse-design changes         # o que a Ilse mudou e ainda não foi commitado
+ilse-design bookmarklet     # o bookmarklet que põe a barra em qualquer página local
 ```
 
 Isso supõe a instalação global. Sem ela, use `npx github:idantas/ilse` no lugar de `ilse-design`. O comando também existe como `ilse`.
@@ -118,9 +119,62 @@ Which Claude account should Ilse use in this project?
 
 A escolha fica salva por projeto em `~/.ilse/config.json` (nunca no repositório) e aparece na linha de início e nas configurações da barra. `ilse-design --account` pergunta de novo. Para adicionar uma conta, faça login uma vez com um diretório próprio: `CLAUDE_CONFIG_DIR=~/.claude-trabalho claude`.
 
+## Na porta do seu app: plugin Vite
+
+O proxy dá ao seu app um segundo endereço, `localhost:4700`, e o que está preso ao original fica lá: a sessão de login salva no navegador, callbacks de OAuth, links em e-mails. Com o plugin Vite a barra vem do próprio servidor de dev, e você continua no endereço de sempre.
+
+```bash
+npm install -D github:idantas/ilse
+```
+
+```ts
+// vite.config.ts
+import { ilse } from "ilse-design/vite";
+
+export default defineConfig({
+  plugins: [react(), ilse()],
+});
+```
+
+Rode `ilse-design` como sempre: ele vê que a barra já está na página, pula o proxy e mostra o endereço do seu servidor de dev.
+
+- Só no `vite dev` — o build de produção nunca o inclui.
+- A barra vem da Ilse em execução, então sempre bate com a versão do CLI. Enquanto a Ilse não está rodando, a página carrega um script vazio e o Vite avisa uma vez; suba a Ilse e recarregue.
+- `ilse({ port: 4748 })` se a Ilse estiver em outra porta (a linha de início mostra `ws://localhost:<porta>`).
+- Para ligar só quando quiser, condicione: `plugins: [react(), ...(process.env.ILSE ? [ilse()] : [])]`.
+
+**Sem instalar o pacote** — um monorepo, ou um projeto que não deve depender da Ilse — o mesmo cabe em poucas linhas no `vite.config.ts`, apontando para a Ilse em execução (porta 4747):
+
+```ts
+import type { Plugin } from "vite";
+
+const ilseToolbar: Plugin = {
+  name: "ilse-toolbar",
+  apply: "serve",
+  transformIndexHtml: () => [{ tag: "script", attrs: { src: "/__ilse/toolbar.js", defer: true }, injectTo: "body" }],
+};
+
+export default defineConfig({
+  plugins: [react(), ilseToolbar],
+  server: { proxy: { "/__ilse": "http://127.0.0.1:4747" } },
+});
+```
+
+Mantenha o script no endereço do próprio app, como acima, em vez de carregar `http://localhost:4747/__ilse/toolbar.js` direto: um service worker (MSW, PWAs) pode derrubar requisições para outra porta local.
+
+## Qualquer página local: bookmarklet ou extensão do Chrome
+
+Sem proxy e nada no projeto, nem dependência de dev: o próprio navegador põe a barra na página, no endereço de sempre. Qualquer framework.
+
+**Bookmarklet.** Com o `ilse-design` rodando, abra `http://localhost:4747/__ilse/bookmarklet` e arraste o botão para a barra de favoritos (`ilse-design bookmarklet` mostra o link e o código). Na página do seu app, clique no favorito. Um recarregamento completo tira a barra; clique de novo.
+
+**Extensão do Chrome.** Liga a barra por site e a traz de volta a cada recarregamento. Carregue uma vez: `chrome://extensions` → *Modo do desenvolvedor* → *Carregar sem compactação* → a pasta `extension/` deste repositório. Depois, na página do seu app, clique no ícone da Ilse — o selo mostra **ON**. Clique de novo para desligar.
+
+Os dois só funcionam em páginas `localhost`. Eles buscam a barra na Ilse em execução e a rodam na página sem nenhuma requisição de rede, então um service worker (MSW, PWAs) não consegue derrubá-la. Uma página com Content-Security-Policy restrita ainda pode bloqueá-los; nesse caso use o proxy, que remove esse cabeçalho.
+
 ## Sem o proxy: `<Ilse />` no seu layout
 
-Se o proxy atrapalhar — por exemplo, callbacks de login presos à porta de dev:
+Se o proxy atrapalhar e seu app não usa Vite — por exemplo, callbacks de login presos à porta de dev no Next.js:
 
 ```bash
 npm install -D github:idantas/ilse
