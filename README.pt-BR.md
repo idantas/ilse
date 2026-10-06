@@ -34,12 +34,10 @@ A Ilse usa o *seu* agente e a *sua* conta. Ela não tem conta, chave nem servido
 Na pasta do seu projeto — sem precisar subir o app antes — rode:
 
 ```bash
-npx --allow-git=root github:idantas/ilse
+npx ilse-design@next
 ```
 
 A Ilse sobe o seu servidor de dev (`npm run dev`) por trás e abre o app no endereço de sempre — `http://localhost:3000`, ou a porta que ele usa — com a barra por cima. Login, SSO e callbacks continuam funcionando. Na primeira vez ela faz algumas perguntas e leva cerca de um minuto. Nas próximas, é só `ilse` se você a [instalou](docs/reference.pt-BR.md#instalar).
-
-O `--allow-git=root` é necessário no npm 12, que recusa instalar direto do git; versões anteriores ignoram.
 
 Prefere rodar o servidor de dev você mesmo? `--separate` abre a Ilse num endereço próprio, `localhost:4700`. Outros jeitos: o [plugin Vite](docs/reference.pt-BR.md#na-porta-do-seu-app-plugin-vite), o [bookmarklet ou a extensão do Chrome](docs/reference.pt-BR.md#qualquer-página-local-bookmarklet-ou-extensão-do-chrome).
 

@@ -4,7 +4,7 @@
 
 ## Use it
 
-- Install and run, in a React project with its dev server running: `npx github:idantas/ilse` (opens the app at http://localhost:4700 with the toolbar)
+- Install and run, in a React project's folder: `npx ilse-design@next` (starts the dev server behind Ilse and opens the app at its usual address with the toolbar)
 - [README](README.md): what it does, requirements, how to run it (Portuguese: README.pt-BR.md)
 - [How it works](docs/how-it-works.md): locating code, the cost ladder, models, safety checks, undo, usage limits, commits
 - [Reference](docs/reference.md): install, modes, toolbar, CLI, environment switches, logs, MCP, Claude accounts, compatibility

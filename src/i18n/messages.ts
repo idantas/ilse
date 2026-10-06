@@ -702,6 +702,7 @@ const messages = {
   'toolbar.scope.allTitle': { pt: 'Todos os {count} {component} desta tela (e onde mais ele for usado) mudam', en: 'All {count} {component} on this screen (and wherever else it is used) change' },
   'toolbar.scope.component': { pt: 'Componente {component}', en: 'Component {component}' },
   'toolbar.summaryTitle': { pt: 'O que a Ilse vai mandar para o agente', en: 'What Ilse will send to the agent' },
+  'cli.updateAvailable': { pt: 'ilse-design {version} disponível', en: 'ilse-design {version} available' },
   'cmd.separate': { pt: 'Abrir a Ilse num endereço separado (localhost:4700) nesta execução', en: 'Open Ilse on a separate address (localhost:4700) for this run' },
   'cli.addressQuestion': { pt: 'Onde abrir a Ilse?', en: 'Where should Ilse open?' },
   'cli.addressSame': { pt: 'No endereço de sempre do app (recomendado)', en: "On your app's usual address (recommended)" },
