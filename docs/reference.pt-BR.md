@@ -4,18 +4,34 @@
 
 ## Instalar
 
-Rode sem instalar:
+Rode sem instalar, na pasta do seu projeto:
 
 ```bash
-npx github:idantas/ilse
+npx --allow-git=root github:idantas/ilse
 ```
 
-A Ilse ainda não está no npm, então isso instala direto do GitHub e faz o build na primeira vez. Para deixar o comando disponível, instale uma vez — em dois passos, porque o npm não consegue fazer o build de um pacote numa instalação global direto do git:
+A Ilse ainda não está no npm, então isso instala direto do GitHub e faz o build na primeira vez. O `--allow-git=root` é necessário no npm 12, que recusa instalar direto do git; versões anteriores ignoram. Para deixar o comando disponível, instale uma vez — em dois passos, porque o npm não consegue fazer o build de um pacote numa instalação global direto do git:
 
 ```bash
 npm pack git+https://github.com/idantas/ilse.git   # gera o pacote a partir do GitHub
 npm install -g ./ilse-design-*.tgz                  # instala como `ilse` / `ilse-design`
 ```
+
+## Onde a Ilse abre
+
+Por padrão a Ilse **sobe o seu servidor de dev por trás e fica com a porta de sempre**. Ela roda o seu script `dev` (ou `start`) numa porta escondida — a porta do app + 10000 — e põe o proxy dela na porta do próprio app:
+
+```
+localhost:3000  →  Ilse (proxy + barra)  →  localhost:13000  (seu servidor de dev)
+```
+
+O navegador continua no mesmo endereço, então o que está preso a ele continua funcionando: o login salvo no navegador, cookies, callbacks de SSO e OAuth, links em e-mails. Nada é escrito no projeto, e funciona em qualquer navegador. Ctrl+C para a Ilse e o servidor de dev juntos; o log do servidor aparece no terminal da Ilse.
+
+- **A porta:** um `--port` / `-p` no script, senão `server.port` no `vite.config`, senão o padrão do framework (Next 3000, Vite 5173). `--target <porta>` define na mão.
+- **A porta escondida:** `PORT` para todos, mais `--port` no Next e no Vite (uma flag depois da do script vale mais).
+- **Porta já em uso** (você subiu o servidor de dev): a Ilse avisa e, nesta execução, abre no endereço separado.
+- **Endereço separado:** `--separate` numa execução, ou escolha isso na primeira vez. Você roda o servidor de dev e a Ilse abre `localhost:4700`; o que está preso ao endereço original (login, callbacks) fica lá.
+- **Ainda não coberto:** um script de dev que sobe vários servidores juntos (todos recebem a mesma `PORT`) e frameworks que não leem nem `PORT` nem `--port`. Use `--separate` nesses casos.
 
 ## Modos
 
@@ -54,26 +70,43 @@ Na primeira vez, a Ilse pergunta como entregar as anotações ao seu agente:
 - **Pausar animações:** congele tooltips, toasts e dropdowns para anotá-los.
 - **Ocultar marcadores:** esconde os pontos das anotações na página.
 - **Limpar anotações:** apaga todas (clique duas vezes para confirmar).
-- **Configurações:** estado da conexão e das anotações, a conta do Claude em uso, **Design System** (cole um `tokens.json` do W3C quando a Ilse não acha seus tokens), **Snap to grid**, **Idioma** (inglês / português, detectado automaticamente), **Conectar agente** (MCP) e **Logs**.
+- **Configurações:** estado da conexão e das anotações, a conta do Claude em uso, **Design System** (cole um `tokens.json` do W3C quando a Ilse não acha seus tokens), **Snap to grid**, **Conectar agente** (MCP), **Logs**, **Atalhos de teclado** e **Idioma** (inglês / português, detectado automaticamente).
+
+### Atalhos de teclado
+
+Também em Configurações → **Atalhos de teclado**, e no tooltip de cada controle que tem um. Teclas simples nunca disparam enquanto você digita num campo.
+
+| Teclas | O que faz |
+|---|---|
+| `V` | Alterna entre selecionar elementos e usar a página |
+| `I` `I` | Traz a barra de volta ao lugar padrão (depois de arrastá-la para fora da vista) |
+| `Esc` | Fecha o que estiver por cima (nota, scan, configurações) e, por fim, a barra |
+| `⌘`-clique (`Ctrl`-clique) | Seleciona o elemento exato dentro de um SVG |
+| `⌘↵` (`Ctrl+Enter`) | Envia a nota |
+| `Delete` (fn+⌫) | Remove o elemento selecionado, com a nota vazia |
+| `⌘Z` / `⇧⌘Z` | Desfazer / refazer: um passo do rascunho ou a última mudança aplicada |
+| Lápis: `↵` · `⌘Z` · `Esc` | Conclui o desenho · desfaz o último traço · descarta |
 
 Todo prompt leva `ilse · annotation <id> · <Componente> · <arquivo>`, então correções antigas são fáceis de achar no histórico do seu agente.
 
 ## CLI
 
 ```bash
-ilse-design                 # acha o servidor de dev, abre o proxy (pulado com o plugin Vite), escuta
+ilse-design                 # sobe seu servidor de dev por trás da Ilse, na porta de sempre, e escuta
+ilse-design --separate      # nesta execução: abre num endereço separado (localhost:4700); você roda o servidor de dev
+ilse-design --same-port     # nesta execução: o endereço de sempre, mesmo que o setup tenha escolhido o separado
 ilse-design --target 3000   # porta do servidor de dev, se a detecção falhar
 ilse-design --proxy-port 4800
 ilse-design --no-open       # não abre o navegador
 ilse-design --mode mcp      # modo MCP só nesta execução
 ilse-design --inject        # põe <Ilse /> no seu layout em vez de usar o proxy
-ilse-design --reset         # escolhe o modo de novo
+ilse-design --reset         # responde de novo as perguntas do setup (modo, onde a Ilse abre)
 ilse-design --account       # escolhe de novo a conta do Claude deste projeto
 ilse-design changes         # o que a Ilse mudou e ainda não foi commitado
 ilse-design bookmarklet     # o bookmarklet que põe a barra em qualquer página local
 ```
 
-Isso supõe a instalação global. Sem ela, use `npx github:idantas/ilse` no lugar de `ilse-design`. O comando também existe como `ilse`.
+Isso supõe a instalação global. Sem ela, use `npx --allow-git=root github:idantas/ilse` no lugar de `ilse-design`. O comando também existe como `ilse`.
 
 **Variáveis de ambiente**, principalmente para comparar execuções:
 
@@ -121,7 +154,7 @@ A escolha fica salva por projeto em `~/.ilse/config.json` (nunca no repositório
 
 ## Na porta do seu app: plugin Vite
 
-O proxy dá ao seu app um segundo endereço, `localhost:4700`, e o que está preso ao original fica lá: a sessão de login salva no navegador, callbacks de OAuth, links em e-mails. Com o plugin Vite a barra vem do próprio servidor de dev, e você continua no endereço de sempre.
+Com `--separate`, o proxy dá ao seu app um segundo endereço, `localhost:4700`, e o que está preso ao original fica lá: a sessão de login salva no navegador, callbacks de OAuth, links em e-mails. Com o plugin Vite a barra vem do próprio servidor de dev, e você continua no endereço de sempre.
 
 ```bash
 npm install -D github:idantas/ilse

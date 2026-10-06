@@ -4,18 +4,34 @@
 
 ## Install
 
-Run it without installing:
+Run it without installing, in your project's folder:
 
 ```bash
-npx github:idantas/ilse
+npx --allow-git=root github:idantas/ilse
 ```
 
-Ilse isn't on npm yet, so this installs straight from GitHub and builds on the first run. To keep the command around, install it once — in two steps, because npm can't build a package during a global install from git:
+Ilse isn't on npm yet, so this installs straight from GitHub and builds on the first run. `--allow-git=root` is needed on npm 12, which refuses git installs by default; older npm ignores it. To keep the command around, install it once — in two steps, because npm can't build a package during a global install from git:
 
 ```bash
 npm pack git+https://github.com/idantas/ilse.git   # builds the package from GitHub
 npm install -g ./ilse-design-*.tgz                  # installs it as `ilse` / `ilse-design`
 ```
+
+## Where Ilse opens
+
+By default Ilse **starts your dev server behind itself and takes its usual port**. It runs your `dev` script (or `start`) on a hidden port — the app's port + 10000 — and puts its proxy on the app's own port:
+
+```
+localhost:3000  →  Ilse (proxy + toolbar)  →  localhost:13000  (your dev server)
+```
+
+The browser keeps the same address, so what is tied to it keeps working: the login saved in the browser, cookies, SSO and OAuth callbacks, links in emails. Nothing is written to the project, and any browser works. Ctrl+C stops Ilse and the dev server together; the dev server's log shows up in Ilse's terminal.
+
+- **The port:** a `--port` / `-p` in the script, else `server.port` in `vite.config`, else the framework default (Next 3000, Vite 5173). `--target <port>` overrides it.
+- **The hidden port:** `PORT` for everyone, plus `--port` for Next and Vite (a flag after the script's own wins over it).
+- **Port already in use** (you started the dev server yourself): Ilse says so and opens on the separate address for this run.
+- **Separate address:** `--separate` for one run, or choose it in the first run. You run the dev server yourself and Ilse opens `localhost:4700`; anything tied to the original address (logins, callbacks) stays there.
+- **Not covered yet:** a dev script that starts several servers at once (they'd all get the same `PORT`), and frameworks that read neither `PORT` nor `--port`. Use `--separate` there.
 
 ## Modes
 
@@ -54,26 +70,43 @@ The first run asks how Ilse should hand annotations to your agent:
 - **Pause animations:** freeze tooltips, toasts and dropdowns to annotate them.
 - **Hide markers:** hide the annotation dots on the page.
 - **Clear annotations:** removes them all (click twice to confirm).
-- **Settings:** connection and annotation status, the Claude account in use, **Design System** (paste a W3C `tokens.json` when Ilse doesn't find your tokens), **Snap to grid**, **Language** (English / Portuguese, detected automatically), **Connect agent** (MCP) and **Logs**.
+- **Settings:** connection and annotation status, the Claude account in use, **Design System** (paste a W3C `tokens.json` when Ilse doesn't find your tokens), **Snap to grid**, **Connect agent** (MCP), **Logs**, **Keyboard shortcuts** and **Language** (English / Portuguese, detected automatically).
+
+### Keyboard shortcuts
+
+Also in Settings → **Keyboard shortcuts**, and in the tooltip of every control that has one. Single keys never fire while you type in a field.
+
+| Keys | What it does |
+|---|---|
+| `V` | Switch between selecting elements and using the page |
+| `I` `I` | Bring the toolbar back to its default place (after dragging it out of sight) |
+| `Esc` | Close what is on top (note, scan, settings), then the toolbar |
+| `⌘`-click (`Ctrl`-click) | Select the exact element inside an SVG |
+| `⌘↵` (`Ctrl+Enter`) | Send the note |
+| `Delete` (fn+⌫) | Remove the selected element, with the note empty |
+| `⌘Z` / `⇧⌘Z` | Undo / redo: a draft step, or the last applied change |
+| Pencil: `↵` · `⌘Z` · `Esc` | Finish the sketch · undo the last stroke · discard it |
 
 Every prompt carries `ilse · annotation <id> · <Component> · <file>`, so past fixes are searchable in your agent's history.
 
 ## CLI
 
 ```bash
-ilse-design                 # find the dev server, open the proxy (skipped with the Vite plugin), listen
+ilse-design                 # start your dev server behind Ilse on its usual port, listen
+ilse-design --separate      # this run: open on a separate address (localhost:4700); run the dev server yourself
+ilse-design --same-port     # this run: the usual address, even if the setup chose the separate one
 ilse-design --target 3000   # dev server port, if auto-detection misses it
 ilse-design --proxy-port 4800
 ilse-design --no-open       # don't open the browser
 ilse-design --mode mcp      # MCP mode for this run only
 ilse-design --inject        # put <Ilse /> in your layout instead of using the proxy
-ilse-design --reset         # choose the mode again
+ilse-design --reset         # answer the setup questions again (mode, where Ilse opens)
 ilse-design --account       # choose again which Claude account this project uses
 ilse-design changes         # what Ilse changed that isn't committed yet
 ilse-design bookmarklet     # the bookmarklet that puts the toolbar on any local page
 ```
 
-These assume a global install. Without it, use `npx github:idantas/ilse` instead of `ilse-design`. The command is also available as `ilse`.
+These assume a global install. Without it, use `npx --allow-git=root github:idantas/ilse` instead of `ilse-design`. The command is also available as `ilse`.
 
 **Environment switches**, mostly for comparing runs:
 
@@ -121,7 +154,7 @@ The choice is saved per project in `~/.ilse/config.json` (never in the repo) and
 
 ## On your app's own port: Vite plugin
 
-The proxy gives your app a second address, `localhost:4700`, and whatever is tied to the original one stays there: the login session saved in the browser, OAuth callbacks, links in emails. With the Vite plugin the toolbar comes from your dev server itself, so you keep working on your usual address.
+With `--separate`, the proxy gives your app a second address, `localhost:4700`, and whatever is tied to the original one stays there: the login session saved in the browser, OAuth callbacks, links in emails. With the Vite plugin the toolbar comes from your dev server itself, so you keep working on your usual address.
 
 ```bash
 npm install -D github:idantas/ilse

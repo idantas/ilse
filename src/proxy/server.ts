@@ -26,6 +26,11 @@ export interface ProxyOptions {
   toolbarFile?: string;
   /** Port of the `ilse` WebSocket bridge, handed to the toolbar */
   bridgePort?: number;
+  /**
+   * Also answer on ::1. On the app's own port (same-port mode) `localhost` must
+   * reach Ilse whichever stack resolves it — Node and some browsers try ::1 first.
+   */
+  dualStack?: boolean;
 }
 
 export interface RunningProxy { port: number; close: () => Promise<void> }
@@ -127,10 +132,24 @@ export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
   }
   if (!proxyPort) throw new Error(`Nenhuma porta livre entre ${first} e ${last}`);
 
+  // Same handlers on the IPv6 loopback, still loopback only
+  let v6: http.Server | null = null;
+  if (opts.dualStack) {
+    const s = http.createServer();
+    for (const l of server.listeners('request')) s.on('request', l as (...a: unknown[]) => void);
+    for (const l of server.listeners('upgrade')) s.on('upgrade', l as (...a: unknown[]) => void);
+    v6 = await new Promise<http.Server | null>((resolve) => {
+      s.once('error', () => resolve(null)); // no IPv6 on this machine: IPv4 is enough
+      s.listen(proxyPort, '::1', () => resolve(s));
+    });
+  }
+
   return {
     port: proxyPort,
     close: () => new Promise<void>((resolve) => {
       for (const s of tunnels) s.destroy();
+      v6?.closeAllConnections?.();
+      v6?.close();
       server.closeAllConnections?.();
       server.close(() => resolve());
     }),

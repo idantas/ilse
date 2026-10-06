@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1680" height="1600" viewBox="0 0 1680 1600" role="img" aria-labelledby="t d">
 <title id="t">Ilse — como funciona</title>
-<desc id="d">Fluxo da Ilse: montagem (npx ilse, detecção, proxy, plugin Vite ou extensão) e uso a cada ajuste (apontar, ajustar ao vivo, enviar, localizar, montar contexto, escolher o degrau — troca de classe, rápido, agente — arquivo muda, designer vê, registra e commita).</desc>
+<desc id="d">Fluxo da Ilse: montagem (npx ilse, detecção, mesma porta ou proxy, plugin Vite ou extensão) e uso a cada ajuste (apontar, ajustar ao vivo, enviar, localizar, montar contexto, escolher o degrau — troca de classe, rápido, agente — arquivo muda, designer vê, registra e commita).</desc>
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="#9b9b9b"/></marker>
 <marker id="arrow-brand" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="#FA6900"/></marker>
@@ -41,11 +41,13 @@
 <text x="416" y="335" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">·</text>
 <text x="433.5" y="335" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Injeta a toolbar</text>
 <rect x="416" y="346" width="80.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="422" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">proxy :4700</text>
-<rect x="501.75" y="346" width="80.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="507.75" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">plugin Vite</text>
-<rect x="587.5" y="346" width="62.0" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
-<text x="593.5" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">extensão</text>
+<text x="422" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">mesma porta</text>
+<rect x="501.75" y="346" width="43.2" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="507.75" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">:4700</text>
+<rect x="550.0" y="346" width="80.8" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="556.0" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">plugin Vite</text>
+<rect x="635.75" y="346" width="62.0" height="18" rx="3" fill="#ffffff" stroke="#dedede"/>
+<text x="641.75" y="359" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="400" fill="#6b6b6b" text-anchor="start">extensão</text>
 <rect x="1080" y="310" width="300" height="64" rx="6" fill="#ffffff" stroke="#c4c4c4" stroke-width="1.25"/>
 <text x="1096" y="335" font-family="'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#a1a1a1" text-anchor="start">·</text>
 <text x="1113.5" y="335" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0a0a0a" text-anchor="start">Combina o commit</text>
@@ -60,9 +62,9 @@
 <path d="M 400 354.0 L 310 354.0 L 310 500" fill="none" stroke="#9b9b9b" stroke-width="1.4" marker-end="url(#arrow)"/>
 <text x="318" y="382.0" font-family="Geist, 'Geist Sans', Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="400" fill="#6b6b6b" text-anchor="start">abre o browser</text>
 <path d="M 700 334.0 L 760 334.0" stroke="#FA6900" stroke-width="1.1" stroke-dasharray="3 4" fill="none"/>
-<text x="768" y="328.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">nada da Ilse vai pro repo</text>
-<text x="768" y="350.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">é um proxy local — o projeto</text>
-<text x="768" y="372.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">não ganha dependência</text>
+<text x="768" y="328.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">sobe seu dev server por trás</text>
+<text x="768" y="350.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">e fica com a porta de sempre —</text>
+<text x="768" y="372.0" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">nada da Ilse vai pro repo</text>
 <path d="M 700 256 L 760 256" stroke="#FA6900" stroke-width="1.1" stroke-dasharray="3 4" fill="none"/>
 <text x="768" y="262" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="21" font-weight="600" fill="#FA6900" text-anchor="start">mais de uma conta do Claude?</text>
 <text x="768" y="284" font-family="Caveat, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive" font-size="17" font-weight="400" fill="#FA6900" text-anchor="start">pergunta qual, uma vez por projeto</text>

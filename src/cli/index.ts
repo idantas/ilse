@@ -28,7 +28,9 @@ program
   .option('--no-open', t('cmd.noOpen'))
   .option('--mode <mode>', 'automatic | mcp | clipboard')
   .option('--account', t('cmd.account'))
-  .action(async (options: { reset?: boolean; target?: string; proxyPort?: string; inject?: boolean; open: boolean; mode?: string; account?: boolean }) => {
+  .option('--same-port', t('cmd.samePort'))
+  .option('--separate', t('cmd.separate'))
+  .action(async (options: { reset?: boolean; target?: string; proxyPort?: string; inject?: boolean; open: boolean; mode?: string; account?: boolean; samePort?: boolean; separate?: boolean }) => {
     if (options.reset) {
       const { saveUserConfig } = await import('../config/user-config.js');
       saveUserConfig({ setupDone: false });
@@ -41,6 +43,8 @@ program
       open: options.open,
       mode: options.mode === 'automatic' || options.mode === 'mcp' || options.mode === 'clipboard' ? options.mode : undefined,
       chooseAccount: options.account,
+      samePort: options.samePort,
+      separate: options.separate,
     });
   });
 
