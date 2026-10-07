@@ -18,7 +18,7 @@ import { startProxy } from '../proxy/server.js';
 import { serveToolbar } from '../proxy/toolbar.js';
 import { serveBookmarklet } from '../proxy/bookmarklet.js';
 import { findDevServer, waitForDevServer, pageHasToolbar } from '../proxy/find-dev-server.js';
-import { planSamePort, readPlanInput, portIsFree, startHiddenDevServer } from '../proxy/same-port.js';
+import { planProject, portIsFree, startHiddenDevServer, type SamePortPlan } from '../proxy/same-port.js';
 import { spawn } from 'node:child_process';
 import { planTokenSwap, planTextSwap, applyTokenSwap, describeSwap, type SwapPlan } from '../context/token-swap.js';
 import {
@@ -182,6 +182,8 @@ export interface DefaultOptions {
   samePort?: boolean;
   /** Use the separate address (:4700) for this run (--separate) */
   separate?: boolean;
+  /** The app's port in same-port mode, saved for this project (--port) */
+  port?: number;
 }
 
 function openBrowser(url: string): void {
@@ -199,14 +201,72 @@ function openBrowser(url: string): void {
  * own port with its proxy, so the app keeps its address (login, SSO, OAuth).
  * 'failed' leaves the caller to fall back to the separate address.
  */
+/** Prompts only when someone is at the terminal; scripts and CI take the defaults */
+const interactive = () => !!(process.stdin.isTTY && process.stdout.isTTY);
+
+/** Several apps in the workspace: the one saved for this project, else ask (once) */
+async function chooseApp(plans: SamePortPlan[], key: string): Promise<SamePortPlan> {
+  if (plans.length === 1) return plans[0];
+  const saved = loadUserConfig().projectApps?.[key];
+  const known = plans.find(p => p.dir === saved);
+  if (known) return known;
+  if (!interactive()) return plans[0];
+  const choice = await p.select({
+    message: t('samePort.appQuestion'),
+    options: plans.map(plan => ({ value: plan.dir, label: plan.app ?? plan.dir, hint: `${plan.framework} · :${plan.appPort}` })),
+  });
+  if (p.isCancel(choice)) { p.cancel(t('cli.cancelled')); process.exit(0); }
+  const projectApps = { ...loadUserConfig().projectApps, [key]: choice as string };
+  saveUserConfig({ projectApps });
+  return plans.find(plan => plan.dir === choice)!;
+}
+
+/**
+ * The app's port: --port (saved), --target (this run), the saved one, or the
+ * detected one — confirmed once per project: run on it, or pick another.
+ */
+async function choosePort(plan: SamePortPlan, options: DefaultOptions, key: string): Promise<number> {
+  const save = (port: number) => saveUserConfig({ appPorts: { ...loadUserConfig().appPorts, [key]: port } });
+  if (options.port) {
+    save(options.port);
+    console.log(chalk.dim(`  ${t('samePort.portSaved', { port: options.port })}`));
+    return options.port;
+  }
+  if (options.target) return options.target;
+  const saved = loadUserConfig().appPorts?.[key];
+  if (saved) return saved;
+  if (!interactive()) return plan.appPort;
+  const keep = await p.select({
+    message: t('samePort.portQuestion', { url: `localhost:${plan.appPort}` }),
+    options: [
+      { value: 'keep', label: t('samePort.portKeep') },
+      { value: 'change', label: t('samePort.portChange') },
+    ],
+  });
+  if (p.isCancel(keep)) { p.cancel(t('cli.cancelled')); process.exit(0); }
+  let port = plan.appPort;
+  if (keep === 'change') {
+    const answer = await p.text({
+      message: t('samePort.portAsk'),
+      placeholder: String(plan.appPort),
+      validate: (v) => (/^\d{2,5}$/.test(v ?? '') && Number(v) > 0 && Number(v) < 65536 ? undefined : t('samePort.portInvalid')),
+    });
+    if (p.isCancel(answer)) { p.cancel(t('cli.cancelled')); process.exit(0); }
+    port = Number(answer);
+  }
+  save(port);
+  return port;
+}
+
 async function startSamePort(options: DefaultOptions, bridgePort: number): Promise<'same-port' | 'plugin' | 'busy' | 'failed'> {
-  const input = readPlanInput(process.cwd());
-  const plan = input ? planSamePort(input) : null;
-  if (!plan) {
+  const key = process.cwd();
+  const plans = planProject(key);
+  if (plans.length === 0) {
     console.log(chalk.yellow(`  ${t('samePort.noScript')}`));
     return 'failed';
   }
-  if (options.target) plan.appPort = options.target;
+  const plan = await chooseApp(plans, key);
+  plan.appPort = await choosePort(plan, options, key);
   if (!(await portIsFree(plan.appPort))) {
     // Already serving the toolbar itself (Vite plugin): nothing to start, work right there
     const running = await findDevServer(process.cwd(), [plan.appPort]);
@@ -225,16 +285,17 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
     console.log('');
     return 'busy';
   }
-  console.log(chalk.dim(`  ${t('samePort.starting', { script: `npm run ${plan.script}` })}`));
+  const where = plan.app ? ` · ${plan.app}` : '';
+  console.log(chalk.dim(`  ${t('samePort.starting', { script: `npm run ${plan.script}${where}` })}`));
   let dev;
   try {
-    dev = await startHiddenDevServer(process.cwd(), plan, (line) => console.log(chalk.dim('  │ ') + line));
+    dev = await startHiddenDevServer(plan, (line) => console.log(chalk.dim('  │ ') + line));
   } catch (err) {
     console.log(chalk.red(`  ✗ ${t('samePort.failed')}: ${(err as Error).message}`));
     return 'failed';
   }
   try {
-    const target = (await findDevServer(process.cwd(), [dev.hiddenPort])) ?? { host: '127.0.0.1', port: dev.hiddenPort };
+    const target = (await findDevServer(plan.dir, [dev.hiddenPort])) ?? { host: '127.0.0.1', port: dev.hiddenPort };
     await startProxy({ target, port: plan.appPort, maxPort: plan.appPort, bridgePort, dualStack: true });
   } catch (err) {
     dev.stop();
@@ -244,6 +305,7 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
   const url = `http://localhost:${plan.appPort}`;
   console.log('');
   console.log(chalk.dim(`  ${t('samePort.open')} `) + chalk.bold.cyan(url));
+  console.log(chalk.dim(`  ${t('samePort.portHint')}`));
   console.log('');
   if (options.open !== false) openBrowser(url);
   return 'same-port';

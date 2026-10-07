@@ -30,7 +30,8 @@ program
   .option('--account', t('cmd.account'))
   .option('--same-port', t('cmd.samePort'))
   .option('--separate', t('cmd.separate'))
-  .action(async (options: { reset?: boolean; target?: string; proxyPort?: string; inject?: boolean; open: boolean; mode?: string; account?: boolean; samePort?: boolean; separate?: boolean }) => {
+  .option('--port <port>', t('cmd.port'))
+  .action(async (options: { reset?: boolean; target?: string; proxyPort?: string; inject?: boolean; open: boolean; mode?: string; account?: boolean; samePort?: boolean; separate?: boolean; port?: string }) => {
     if (options.reset) {
       const { saveUserConfig } = await import('../config/user-config.js');
       saveUserConfig({ setupDone: false });
@@ -45,6 +46,7 @@ program
       chooseAccount: options.account,
       samePort: options.samePort,
       separate: options.separate,
+      port: options.port ? parseInt(options.port, 10) : undefined,
     });
   });
 

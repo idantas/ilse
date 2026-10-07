@@ -1,11 +1,11 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-ilse-dark.svg">
-    <img src=".github/assets/logo-ilse.svg" alt="Ilse" width="220">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/idantas/ilse/main/.github/assets/logo-ilse-dark.svg">
+    <img src="https://raw.githubusercontent.com/idantas/ilse/main/.github/assets/logo-ilse.svg" alt="Ilse" width="220">
   </picture>
 </p>
 
-<p align="center"><b>English</b> · <a href="README.pt-BR.md">Português</a></p>
+<p align="center"><b>English</b> · <a href="https://github.com/idantas/ilse/blob/main/LEIAME.md">Português</a></p>
 
 **The designer's eye inside the code agent.**
 
@@ -37,9 +37,9 @@ In your project's folder — no need to start the app first — run:
 npx ilse-design
 ```
 
-Ilse starts your dev server (`npm run dev`) behind itself and opens your app at its usual address — `http://localhost:3000`, or whatever port it uses — with the toolbar on top. Logins, SSO and callbacks keep working. The first run asks a few questions and takes about a minute. Next time, just `ilse` if you [installed it](docs/reference.md#install).
+Ilse starts your dev server (`npm run dev`) behind itself and opens your app at its usual address — `http://localhost:3000`, or whatever port it uses — with the toolbar on top. Logins, SSO and callbacks keep working. The first run asks a few questions and takes about a minute. Next time, just `ilse` if you [installed it](https://github.com/idantas/ilse/blob/main/docs/reference.md#install).
 
-Prefer to run the dev server yourself? `--separate` opens Ilse on its own address, `localhost:4700`. More ways: the [Vite plugin](docs/reference.md#on-your-apps-own-port-vite-plugin), the [bookmarklet or Chrome extension](docs/reference.md#any-local-page-bookmarklet-or-chrome-extension).
+Prefer to run the dev server yourself? `--separate` opens Ilse on its own address, `localhost:4700`. More ways: the [Vite plugin](https://github.com/idantas/ilse/blob/main/docs/reference.md#on-your-apps-own-port-vite-plugin), the [bookmarklet or Chrome extension](https://github.com/idantas/ilse/blob/main/docs/reference.md#any-local-page-bookmarklet-or-chrome-extension).
 
 Not comfortable with the terminal? Ask your agent: *"Install and run Ilse in this project — see https://github.com/idantas/ilse"*.
 
@@ -53,9 +53,9 @@ Ilse runs on your agent's plan, so it uses that plan's limits. It always picks t
 
 ## Go deeper
 
-- [How it works](docs/how-it-works.md) — how Ilse finds the code, the cost ladder, models, safety checks, usage limits, undo and commits.
-- [Reference](docs/reference.md) — commands, settings, connecting your agent over MCP, logs, compatibility.
-- [AGENTS.md](AGENTS.md) — for contributors and their agents.
+- [How it works](https://github.com/idantas/ilse/blob/main/docs/how-it-works.md) — how Ilse finds the code, the cost ladder, models, safety checks, usage limits, undo and commits.
+- [Reference](https://github.com/idantas/ilse/blob/main/docs/reference.md) — commands, settings, connecting your agent over MCP, logs, compatibility.
+- [AGENTS.md](https://github.com/idantas/ilse/blob/main/AGENTS.md) — for contributors and their agents.
 
 ## Why "Ilse"
 
@@ -65,6 +65,6 @@ AI freed designers from the execution bottleneck, but craft still needs human ju
 
 ## Contributing
 
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Security problems go privately: [SECURITY.md](SECURITY.md).
+Issues and pull requests are welcome — see [CONTRIBUTING.md](https://github.com/idantas/ilse/blob/main/CONTRIBUTING.md). Security problems go privately: [SECURITY.md](https://github.com/idantas/ilse/blob/main/SECURITY.md).
 
-MIT license — see [LICENSE](LICENSE).
+MIT license — see [LICENSE](https://github.com/idantas/ilse/blob/main/LICENSE).

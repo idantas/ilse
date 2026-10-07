@@ -1,6 +1,6 @@
 # Referência
 
-[English](reference.md) · **Português** · [← README](../README.pt-BR.md)
+[English](reference.md) · **Português** · [← README](../LEIAME.md)
 
 ## Instalar
 
@@ -28,11 +28,12 @@ localhost:3000  →  Ilse (proxy + barra)  →  localhost:13000  (seu servidor d
 
 O navegador continua no mesmo endereço, então o que está preso a ele continua funcionando: o login salvo no navegador, cookies, callbacks de SSO e OAuth, links em e-mails. Nada é escrito no projeto, e funciona em qualquer navegador. Ctrl+C para a Ilse e o servidor de dev juntos; o log do servidor aparece no terminal da Ilse.
 
-- **A porta:** um `--port` / `-p` no script, senão `server.port` no `vite.config`, senão o padrão do framework (Next 3000, Vite 5173). `--target <porta>` define na mão.
+- **A porta:** detectada — um `--port` / `-p` no script, senão `server.port` no `vite.config`, senão o padrão do framework (Next 3000, Vite 5173). Na primeira vez em cada projeto a Ilse mostra — *Seu app vai rodar em localhost:5173* — e você escolhe **rodar nessa porta** ou **mudar a porta**. A escolha fica salva por projeto em `~/.ilse/config.json`; `ilse-design --port <n>` muda depois, `--target <n>` vale só para uma execução.
+- **Monorepos:** quando o script da raiz é um orquestrador (`turbo dev`, …), a Ilse acha os apps Vite e Next do workspace (`workspaces` no `package.json`, ou `pnpm-workspace.yaml`) e roda o `dev` do próprio app, na pasta dele — o orquestrador não repassaria a porta escondida. Com vários apps, ela pergunta uma vez qual abrir.
 - **A porta escondida:** `PORT` para todos, mais `--port` no Next e no Vite (uma flag depois da do script vale mais).
 - **Porta já em uso:** a Ilse avisa e para — ela nunca põe a barra em cima de um servidor que não subiu, que pode ser de outro projeto. Se for o seu servidor de dev, pare ele e rode `ilse` de novo, ou use ele como está com `--separate`. Um servidor que já carrega a barra (plugin Vite) é usado ali mesmo.
 - **Endereço separado:** `--separate` numa execução, ou escolha isso na primeira vez. Você roda o servidor de dev e a Ilse abre `localhost:4700`; o que está preso ao endereço original (login, callbacks) fica lá.
-- **Ainda não coberto:** um script de dev que sobe vários servidores juntos (todos recebem a mesma `PORT`) e frameworks que não leem nem `PORT` nem `--port`. Use `--separate` nesses casos.
+- **Ainda não coberto:** um script de dev que sobe vários servidores juntos (todos recebem a mesma `PORT`), apps que precisam de outros serviços do workspace rodando junto, e frameworks que não leem nem `PORT` nem `--port`. Use `--separate` nesses casos.
 
 ## Modos
 
@@ -96,6 +97,7 @@ Todo prompt leva `ilse · annotation <id> · <Componente> · <arquivo>`, então 
 ilse-design                 # sobe seu servidor de dev por trás da Ilse, na porta de sempre, e escuta
 ilse-design --separate      # nesta execução: abre num endereço separado (localhost:4700); você roda o servidor de dev
 ilse-design --same-port     # nesta execução: o endereço de sempre, mesmo que o setup tenha escolhido o separado
+ilse-design --port 5173     # a porta em que o seu app roda, salva para este projeto
 ilse-design --target 3000   # porta do servidor de dev, se a detecção falhar
 ilse-design --proxy-port 4800
 ilse-design --no-open       # não abre o navegador

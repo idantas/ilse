@@ -88,6 +88,6 @@ Add a key with `pt` and `en` to `src/i18n/messages.ts` and use `t('key')`. Don't
 - [ ] `npx tsc --noEmit -p .` clean, `npm test` passes, `npm run build` works.
 - [ ] New logic has tests; UI changes were tried in a browser — or the PR says they weren't.
 - [ ] New strings exist in English and Portuguese.
-- [ ] Docs updated if users see the change, **in English and Portuguese**: `README.md` / `README.pt-BR.md` stay short and plain for designers; details go in `docs/how-it-works*.md` (behavior) or `docs/reference*.md` (commands, settings).
+- [ ] Docs updated if users see the change, **in English and Portuguese**: `README.md` / `LEIAME.md` (Portuguese — not `README.*`, or npm may pick it for the package page) stay short and plain for designers; details go in `docs/how-it-works*.md` (behavior) or `docs/reference*.md` (commands, settings).
 - [ ] Flow changed (a new step, path, loop or setup question)? Update `scripts/architecture-svg.py` and regenerate both diagrams: `python3 scripts/architecture-svg.py en && python3 scripts/architecture-svg.py pt`.
 - [ ] The rules above still hold.

@@ -22,6 +22,10 @@ export interface UserConfig {
    * server behind it) or on a separate one (:4700). Unset = 'same'.
    */
   address?: 'same' | 'separate';
+  /** App port per project path, confirmed or chosen by the designer (same-port mode) */
+  appPorts?: Record<string, number>;
+  /** In a monorepo with several apps: the app folder per project path */
+  projectApps?: Record<string, string>;
 }
 
 const DEFAULT_CONFIG: UserConfig = {
