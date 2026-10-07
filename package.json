@@ -1,7 +1,7 @@
 {
   "name": "ilse-design",
   "version": "0.5.0",
-  "description": "Visual feedback for code agents. Show what to change. Your agent builds it.",
+  "description": "The designer's eye inside the code agent: point at what's wrong in your running app, or adjust it like in Figma — your own coding agent changes the code.",
   "keywords": [
     "design",
     "visual-feedback",
@@ -12,7 +12,12 @@
     "react",
     "tailwind",
     "ai-agent",
-    "devtools"
+    "devtools",
+    "figma",
+    "visual-editor",
+    "nextjs",
+    "vite",
+    "design-tools"
   ],
   "author": "Iverson Dantas",
   "homepage": "https://github.com/idantas/ilse#readme",

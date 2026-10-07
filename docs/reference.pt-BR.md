@@ -1,6 +1,6 @@
 # Referência
 
-[English](reference.md) · **Português** · [← README](../README.pt-BR.md)
+[English](reference.md) · **Português** · [← README](../LEIAME.md)
 
 ## Instalar
 

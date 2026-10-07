@@ -1,6 +1,6 @@
 # Como a Ilse funciona
 
-[English](how-it-works.md) · **Português** · [← README](../README.pt-BR.md)
+[English](how-it-works.md) · **Português** · [← README](../LEIAME.md)
 
 ![Como a Ilse funciona: monta uma vez, e cada ajuste vai de apontar no navegador ao degrau mais barato que resolve — troca de classe, modelo rápido ou agente completo — e volta para a página, com desfazer e registro para o commit](../.github/assets/ilse-architecture.pt.svg)
 
