@@ -7,13 +7,15 @@
 Rode sem instalar, na pasta do seu projeto:
 
 ```bash
-npx ilse-design
+npx ilse-design@latest
 ```
 
-Para deixar o comando disponível, instale uma vez:
+A Ilse está no npm como [`ilse-design`](https://www.npmjs.com/package/ilse-design); precisa do Node.js 18 ou mais novo. Mantenha o `@latest`: sem ele, o `npx` roda uma cópia que já esteja instalada na sua máquina, por mais antiga que seja.
+
+Para deixar o comando disponível, instale uma vez — o mesmo comando atualiza depois:
 
 ```bash
-npm install -g ilse-design   # instala como `ilse` / `ilse-design`
+npm install -g ilse-design@latest   # instala como `ilse` / `ilse-design`
 ```
 
 Quando sai uma versão nova, a Ilse avisa ao iniciar, com o comando para atualizar. Cada versão também vira uma [Release no GitHub](https://github.com/idantas/ilse/releases).
@@ -109,7 +111,7 @@ ilse-design changes         # o que a Ilse mudou e ainda não foi commitado
 ilse-design bookmarklet     # o bookmarklet que põe a barra em qualquer página local
 ```
 
-Isso supõe a instalação global. Sem ela, use `npx ilse-design` no lugar de `ilse-design`. O comando também existe como `ilse`.
+Isso supõe a instalação global. Sem ela, use `npx ilse-design@latest` no lugar de `ilse-design`. O comando também existe como `ilse`.
 
 **Variáveis de ambiente**, principalmente para comparar execuções:
 

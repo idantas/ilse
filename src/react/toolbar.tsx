@@ -4169,7 +4169,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                       const snippet = connectTarget === 'claude-code'
                         ? `claude mcp add --transport http ilse ${mcpInfo.url} --header "Authorization: Bearer ${mcpInfo.token}"`
                         : connectTarget === 'desktop'
-                          ? JSON.stringify({ mcpServers: { ilse: { command: 'npx', args: ['-y', '-p', 'ilse-design@next', 'ilse-mcp'] } } }, null, 2)
+                          ? JSON.stringify({ mcpServers: { ilse: { command: 'npx', args: ['-y', '-p', 'ilse-design@latest', 'ilse-mcp'] } } }, null, 2)
                           : JSON.stringify({ mcpServers: { ilse: { url: mcpInfo.url, headers: { Authorization: `Bearer ${mcpInfo.token}` } } } }, null, 2);
                       return (
                         <div style={{ marginTop: 8 }}>

@@ -8,7 +8,7 @@ const CLAUDE_MCP_FILE = join(CLAUDE_CONFIG_DIR, 'mcp_servers.json');
 
 const ILSE_MCP_ENTRY = {
   command: 'npx',
-  args: ['-y', '-p', 'ilse-design@next', 'ilse-mcp'],
+  args: ['-y', '-p', 'ilse-design@latest', 'ilse-mcp'],
   env: {},
 };
 

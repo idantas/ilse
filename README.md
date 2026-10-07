@@ -34,8 +34,10 @@ Ilse uses *your* agent and *your* account. It has no account, key or server of i
 In your project's folder — no need to start the app first — run:
 
 ```bash
-npx ilse-design
+npx ilse-design@latest
 ```
+
+Ilse is on npm as [`ilse-design`](https://www.npmjs.com/package/ilse-design) and needs Node.js 18 or newer. `@latest` makes sure you get the newest version, even if an older one is installed on your machine.
 
 Ilse starts your dev server (`npm run dev`) behind itself and opens your app at its usual address — `http://localhost:3000`, or whatever port it uses — with the toolbar on top. Logins, SSO and callbacks keep working. The first run asks a few questions and takes about a minute. Next time, just `ilse` if you [installed it](https://github.com/idantas/ilse/blob/main/docs/reference.md#install).
 
