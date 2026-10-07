@@ -7,13 +7,13 @@
 Rode sem instalar, na pasta do seu projeto:
 
 ```bash
-npx ilse-design@next
+npx ilse-design
 ```
 
-A beta 0.5 está publicada na tag `next` — sem o `@next`, o npm ainda entrega a 0.4 antiga. Para deixar o comando disponível, instale uma vez:
+Para deixar o comando disponível, instale uma vez:
 
 ```bash
-npm install -g ilse-design@next   # instala como `ilse` / `ilse-design`
+npm install -g ilse-design   # instala como `ilse` / `ilse-design`
 ```
 
 Quando sai uma versão nova, a Ilse avisa ao iniciar, com o comando para atualizar. Cada versão também vira uma [Release no GitHub](https://github.com/idantas/ilse/releases).
@@ -30,7 +30,7 @@ O navegador continua no mesmo endereço, então o que está preso a ele continua
 
 - **A porta:** um `--port` / `-p` no script, senão `server.port` no `vite.config`, senão o padrão do framework (Next 3000, Vite 5173). `--target <porta>` define na mão.
 - **A porta escondida:** `PORT` para todos, mais `--port` no Next e no Vite (uma flag depois da do script vale mais).
-- **Porta já em uso** (você subiu o servidor de dev): a Ilse avisa e, nesta execução, abre no endereço separado.
+- **Porta já em uso:** a Ilse avisa e para — ela nunca põe a barra em cima de um servidor que não subiu, que pode ser de outro projeto. Se for o seu servidor de dev, pare ele e rode `ilse` de novo, ou use ele como está com `--separate`. Um servidor que já carrega a barra (plugin Vite) é usado ali mesmo.
 - **Endereço separado:** `--separate` numa execução, ou escolha isso na primeira vez. Você roda o servidor de dev e a Ilse abre `localhost:4700`; o que está preso ao endereço original (login, callbacks) fica lá.
 - **Ainda não coberto:** um script de dev que sobe vários servidores juntos (todos recebem a mesma `PORT`) e frameworks que não leem nem `PORT` nem `--port`. Use `--separate` nesses casos.
 
@@ -107,7 +107,7 @@ ilse-design changes         # o que a Ilse mudou e ainda não foi commitado
 ilse-design bookmarklet     # o bookmarklet que põe a barra em qualquer página local
 ```
 
-Isso supõe a instalação global. Sem ela, use `npx ilse-design@next` no lugar de `ilse-design`. O comando também existe como `ilse`.
+Isso supõe a instalação global. Sem ela, use `npx ilse-design` no lugar de `ilse-design`. O comando também existe como `ilse`.
 
 **Variáveis de ambiente**, principalmente para comparar execuções:
 
@@ -158,7 +158,7 @@ A escolha fica salva por projeto em `~/.ilse/config.json` (nunca no repositório
 Com `--separate`, o proxy dá ao seu app um segundo endereço, `localhost:4700`, e o que está preso ao original fica lá: a sessão de login salva no navegador, callbacks de OAuth, links em e-mails. Com o plugin Vite a barra vem do próprio servidor de dev, e você continua no endereço de sempre.
 
 ```bash
-npm install -D ilse-design@next
+npm install -D ilse-design
 ```
 
 ```ts
@@ -211,7 +211,7 @@ Os dois só funcionam em páginas `localhost`. Eles buscam a barra na Ilse em ex
 Se o proxy atrapalhar e seu app não usa Vite — por exemplo, callbacks de login presos à porta de dev no Next.js:
 
 ```bash
-npm install -D ilse-design@next
+npm install -D ilse-design
 ```
 
 ```tsx

@@ -199,7 +199,7 @@ function openBrowser(url: string): void {
  * own port with its proxy, so the app keeps its address (login, SSO, OAuth).
  * 'failed' leaves the caller to fall back to the separate address.
  */
-async function startSamePort(options: DefaultOptions, bridgePort: number): Promise<'same-port' | 'failed'> {
+async function startSamePort(options: DefaultOptions, bridgePort: number): Promise<'same-port' | 'plugin' | 'busy' | 'failed'> {
   const input = readPlanInput(process.cwd());
   const plan = input ? planSamePort(input) : null;
   if (!plan) {
@@ -208,8 +208,22 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
   }
   if (options.target) plan.appPort = options.target;
   if (!(await portIsFree(plan.appPort))) {
+    // Already serving the toolbar itself (Vite plugin): nothing to start, work right there
+    const running = await findDevServer(process.cwd(), [plan.appPort]);
+    if (running && await pageHasToolbar(running)) {
+      const url = `http://localhost:${plan.appPort}`;
+      console.log('');
+      console.log(chalk.dim(`  ${t('proxy.direct')} `) + chalk.bold.cyan(url));
+      console.log('');
+      if (options.open !== false) openBrowser(url);
+      return 'plugin';
+    }
+    // Whatever holds the port may not even be this project — never put the toolbar over it
+    console.log('');
     console.log(chalk.yellow(`  ${t('samePort.busy', { port: plan.appPort })}`));
-    return 'failed';
+    console.log(chalk.dim(`  ${t('samePort.busyHint')}`));
+    console.log('');
+    return 'busy';
   }
   console.log(chalk.dim(`  ${t('samePort.starting', { script: `npm run ${plan.script}` })}`));
   let dev;
@@ -960,8 +974,10 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   const samePort = options.separate ? false : options.samePort || (loadUserConfig().address ?? 'same') === 'same';
   if (useProxy && samePort) {
     void startSamePort(options, getPort()!).then((how) => {
-      if (how === 'same-port') { journal.session.toolbar = 'same-port'; return; }
-      // Couldn't take the app's port: the separate address still works
+      if (how === 'same-port' || how === 'plugin') { journal.session.toolbar = how; return; }
+      // The port is taken by a server Ilse didn't start: say so and stop, rather than guess whose it is
+      if (how === 'busy') process.exit(1);
+      // No dev script, or it didn't come up: the separate address still works
       void startToolbarProxy(options, getPort()!).then((h) => { if (h === 'plugin') journal.session.toolbar = 'plugin'; });
     });
   } else if (useProxy) {

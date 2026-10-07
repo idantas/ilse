@@ -1,6 +1,6 @@
 {
   "name": "ilse-design",
-  "version": "0.5.0-beta.1",
+  "version": "0.5.0",
   "description": "Visual feedback for code agents. Show what to change. Your agent builds it.",
   "keywords": [
     "design",
