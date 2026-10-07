@@ -9,8 +9,8 @@
  *   localhost:3000   → Ilse (proxy + toolbar) → localhost:13000 (the dev server)
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { findDevServer } from './find-dev-server.js';
@@ -23,6 +23,10 @@ export interface SamePortPlan {
   framework: DevFramework;
   /** The port the app is used on — Ilse's proxy takes it */
   appPort: number;
+  /** Folder the script runs in: the project, or one app of a monorepo */
+  dir: string;
+  /** In a monorepo: the app's package name */
+  app?: string;
 }
 
 const DEFAULT_PORT: Record<DevFramework, number> = { next: 3000, vite: 5173, other: 3000 };
@@ -47,7 +51,7 @@ export interface PlanInput {
 }
 
 /** Which script to run and which port the app lives on. Null when there is no dev script. */
-export function planSamePort({ pkg, viteConfig }: PlanInput): SamePortPlan | null {
+export function planSamePort({ pkg, viteConfig }: PlanInput, dir = '.'): SamePortPlan | null {
   const script = pkg.scripts?.dev ? 'dev' : pkg.scripts?.start ? 'start' : null;
   if (!script) return null;
   const command = pkg.scripts![script];
@@ -57,7 +61,58 @@ export function planSamePort({ pkg, viteConfig }: PlanInput): SamePortPlan | nul
   const appPort = portFlag(command)
     ?? (framework === 'vite' && viteConfig ? vitePort(viteConfig) : undefined)
     ?? DEFAULT_PORT[framework];
-  return { script, framework, appPort };
+  return { script, framework, appPort, dir };
+}
+
+/** Workspace folders from package.json `workspaces` or pnpm-workspace.yaml — `dir/*` and plain paths */
+export function workspaceDirs(root: string): string[] {
+  const patterns: string[] = [];
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    const ws = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages;
+    if (Array.isArray(ws)) patterns.push(...ws);
+  } catch { /* no package.json */ }
+  const pnpm = join(root, 'pnpm-workspace.yaml');
+  if (existsSync(pnpm)) {
+    for (const m of readFileSync(pnpm, 'utf8').matchAll(/^\s*-\s*['"]?([^'"#\n]+?)['"]?\s*$/gm)) patterns.push(m[1]);
+  }
+  const dirs: string[] = [];
+  for (const pattern of patterns) {
+    if (pattern.startsWith('!') || pattern.includes('**')) continue;
+    if (pattern.endsWith('/*')) {
+      const base = join(root, pattern.slice(0, -2));
+      if (!existsSync(base)) continue;
+      for (const name of readdirSync(base)) {
+        const d = join(base, name);
+        if (statSync(d).isDirectory() && existsSync(join(d, 'package.json'))) dirs.push(d);
+      }
+    } else if (existsSync(join(root, pattern, 'package.json'))) {
+      dirs.push(join(root, pattern));
+    }
+  }
+  return [...new Set(dirs)];
+}
+
+/**
+ * What Ilse can start in this folder. A Vite or Next project: itself. A monorepo
+ * whose root script is a task runner (turbo, nx…): each Vite or Next app in the
+ * workspace, run straight from its own folder — the runner wouldn't pass the
+ * hidden port on. Anything else: the root script, as is.
+ */
+export function planProject(root: string): SamePortPlan[] {
+  const input = readPlanInput(root);
+  const plan = input ? planSamePort(input, root) : null;
+  if (plan && plan.framework !== 'other') return [plan];
+  const apps: SamePortPlan[] = [];
+  for (const dir of workspaceDirs(root)) {
+    const appInput = readPlanInput(dir);
+    const appPlan = appInput ? planSamePort(appInput, dir) : null;
+    if (appPlan && appPlan.framework !== 'other') {
+      apps.push({ ...appPlan, app: (appInput!.pkg as { name?: string }).name ?? relative(root, dir) });
+    }
+  }
+  if (apps.length > 0) return apps;
+  return plan ? [plan] : [];
 }
 
 /**
@@ -139,8 +194,9 @@ export interface RunningDevServer {
  * Its output goes to `log` line by line, hidden port rewritten to the app's.
  */
 export async function startHiddenDevServer(
-  cwd: string, plan: SamePortPlan, log: (line: string) => void, timeoutMs = 120_000,
+  plan: SamePortPlan, log: (line: string) => void, timeoutMs = 120_000,
 ): Promise<RunningDevServer> {
+  const cwd = plan.dir;
   const hiddenPort = await pickHiddenPort(plan.appPort);
   const { args, env } = hiddenPortArgs(plan.framework, hiddenPort);
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';

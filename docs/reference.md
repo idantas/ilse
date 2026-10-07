@@ -28,11 +28,12 @@ localhost:3000  →  Ilse (proxy + toolbar)  →  localhost:13000  (your dev ser
 
 The browser keeps the same address, so what is tied to it keeps working: the login saved in the browser, cookies, SSO and OAuth callbacks, links in emails. Nothing is written to the project, and any browser works. Ctrl+C stops Ilse and the dev server together; the dev server's log shows up in Ilse's terminal.
 
-- **The port:** a `--port` / `-p` in the script, else `server.port` in `vite.config`, else the framework default (Next 3000, Vite 5173). `--target <port>` overrides it.
+- **The port:** detected — a `--port` / `-p` in the script, else `server.port` in `vite.config`, else the framework default (Next 3000, Vite 5173). The first time in each project Ilse shows it — *Your app will run at localhost:5173* — and you **run on this port** or **change the port**. The choice is saved per project in `~/.ilse/config.json`; `ilse-design --port <n>` changes it later, `--target <n>` overrides it for one run.
+- **Monorepos:** when the root script is a task runner (`turbo dev`, …), Ilse finds the Vite and Next apps in the workspace (`workspaces` in `package.json`, or `pnpm-workspace.yaml`) and runs the app's own `dev` script from its folder — the runner wouldn't pass the hidden port on. Several apps: it asks once which one to open.
 - **The hidden port:** `PORT` for everyone, plus `--port` for Next and Vite (a flag after the script's own wins over it).
 - **Port already in use:** Ilse says so and stops — it never puts the toolbar over a server it didn't start, which may belong to another project. If it's your own dev server, stop it and run `ilse` again, or use it as it is with `--separate`. A dev server that already loads the toolbar (Vite plugin) is used right there.
 - **Separate address:** `--separate` for one run, or choose it in the first run. You run the dev server yourself and Ilse opens `localhost:4700`; anything tied to the original address (logins, callbacks) stays there.
-- **Not covered yet:** a dev script that starts several servers at once (they'd all get the same `PORT`), and frameworks that read neither `PORT` nor `--port`. Use `--separate` there.
+- **Not covered yet:** a dev script that starts several servers at once (they'd all get the same `PORT`), apps that need other workspace services running alongside, and frameworks that read neither `PORT` nor `--port`. Use `--separate` there.
 
 ## Modes
 
@@ -96,6 +97,7 @@ Every prompt carries `ilse · annotation <id> · <Component> · <file>`, so past
 ilse-design                 # start your dev server behind Ilse on its usual port, listen
 ilse-design --separate      # this run: open on a separate address (localhost:4700); run the dev server yourself
 ilse-design --same-port     # this run: the usual address, even if the setup chose the separate one
+ilse-design --port 5173     # the port your app runs on, saved for this project
 ilse-design --target 3000   # dev server port, if auto-detection misses it
 ilse-design --proxy-port 4800
 ilse-design --no-open       # don't open the browser
