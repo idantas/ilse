@@ -7,13 +7,13 @@
 Run it without installing, in your project's folder:
 
 ```bash
-npx ilse-design@next
+npx ilse-design
 ```
 
-The 0.5 beta is published under the `next` tag — without `@next`, npm still gives you the old 0.4. To keep the command around, install it once:
+To keep the command around, install it once:
 
 ```bash
-npm install -g ilse-design@next   # installs it as `ilse` / `ilse-design`
+npm install -g ilse-design   # installs it as `ilse` / `ilse-design`
 ```
 
 When a newer version is out, Ilse says so at startup, with the command to update. Every version is also a [GitHub Release](https://github.com/idantas/ilse/releases).
@@ -30,7 +30,7 @@ The browser keeps the same address, so what is tied to it keeps working: the log
 
 - **The port:** a `--port` / `-p` in the script, else `server.port` in `vite.config`, else the framework default (Next 3000, Vite 5173). `--target <port>` overrides it.
 - **The hidden port:** `PORT` for everyone, plus `--port` for Next and Vite (a flag after the script's own wins over it).
-- **Port already in use** (you started the dev server yourself): Ilse says so and opens on the separate address for this run.
+- **Port already in use:** Ilse says so and stops — it never puts the toolbar over a server it didn't start, which may belong to another project. If it's your own dev server, stop it and run `ilse` again, or use it as it is with `--separate`. A dev server that already loads the toolbar (Vite plugin) is used right there.
 - **Separate address:** `--separate` for one run, or choose it in the first run. You run the dev server yourself and Ilse opens `localhost:4700`; anything tied to the original address (logins, callbacks) stays there.
 - **Not covered yet:** a dev script that starts several servers at once (they'd all get the same `PORT`), and frameworks that read neither `PORT` nor `--port`. Use `--separate` there.
 
@@ -107,7 +107,7 @@ ilse-design changes         # what Ilse changed that isn't committed yet
 ilse-design bookmarklet     # the bookmarklet that puts the toolbar on any local page
 ```
 
-These assume a global install. Without it, use `npx ilse-design@next` instead of `ilse-design`. The command is also available as `ilse`.
+These assume a global install. Without it, use `npx ilse-design` instead of `ilse-design`. The command is also available as `ilse`.
 
 **Environment switches**, mostly for comparing runs:
 
@@ -158,7 +158,7 @@ The choice is saved per project in `~/.ilse/config.json` (never in the repo) and
 With `--separate`, the proxy gives your app a second address, `localhost:4700`, and whatever is tied to the original one stays there: the login session saved in the browser, OAuth callbacks, links in emails. With the Vite plugin the toolbar comes from your dev server itself, so you keep working on your usual address.
 
 ```bash
-npm install -D ilse-design@next
+npm install -D ilse-design
 ```
 
 ```ts
@@ -211,7 +211,7 @@ Both only work on `localhost` pages. They fetch the toolbar from the running `il
 If the proxy gets in the way and your app isn't on Vite — for example, auth callbacks bound to your dev port in Next.js:
 
 ```bash
-npm install -D ilse-design@next
+npm install -D ilse-design
 ```
 
 ```tsx

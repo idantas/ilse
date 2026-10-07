@@ -34,7 +34,7 @@ Ilse uses *your* agent and *your* account. It has no account, key or server of i
 In your project's folder — no need to start the app first — run:
 
 ```bash
-npx ilse-design@next
+npx ilse-design
 ```
 
 Ilse starts your dev server (`npm run dev`) behind itself and opens your app at its usual address — `http://localhost:3000`, or whatever port it uses — with the toolbar on top. Logins, SSO and callbacks keep working. The first run asks a few questions and takes about a minute. Next time, just `ilse` if you [installed it](docs/reference.md#install).
