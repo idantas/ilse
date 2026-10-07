@@ -18,7 +18,7 @@ import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { getLocalToken, readServerInfo } from '../config/local-token.js';
 import { MCP_PATH } from './http.js';
 
-const NOT_RUNNING = 'Ilse is not running. In your project folder, run `npx ilse-design@next` (or `ilse`) and try again.';
+const NOT_RUNNING = 'Ilse is not running. In your project folder, run `npx ilse-design@latest` (or `ilse`) and try again.';
 
 async function main(): Promise<void> {
   const stdio = new StdioServerTransport();

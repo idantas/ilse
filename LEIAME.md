@@ -34,12 +34,14 @@ A Ilse usa o *seu* agente e a *sua* conta. Ela não tem conta, chave nem servido
 Na pasta do seu projeto — sem precisar subir o app antes — rode:
 
 ```bash
-npx ilse-design
+npx ilse-design@latest
 ```
+
+A Ilse está no npm como [`ilse-design`](https://www.npmjs.com/package/ilse-design) e precisa do Node.js 18 ou mais novo. O `@latest` garante a versão mais nova, mesmo que uma mais antiga esteja instalada na sua máquina.
 
 A Ilse sobe o seu servidor de dev (`npm run dev`) por trás e abre o app no endereço de sempre — `http://localhost:3000`, ou a porta que ele usa — com a barra por cima. Login, SSO e callbacks continuam funcionando. Na primeira vez ela faz algumas perguntas e leva cerca de um minuto. Nas próximas, é só `ilse` se você a [instalou](docs/reference.pt-BR.md#instalar).
 
-Prefere rodar o servidor de dev você mesmo? `--separate` abre a Ilse num endereço próprio, `localhost:4700`. Outros jeitos: o [plugin Vite](docs/reference.pt-BR.md#na-porta-do-seu-app-plugin-vite), o [bookmarklet ou a extensão do Chrome](docs/reference.pt-BR.md#qualquer-página-local-bookmarklet-ou-extensão-do-chrome).
+Prefere rodar o servidor de dev você mesmo? `--separate` abre a Ilse num endereço próprio, `localhost:4700`. Outros jeitos: o [plugin Vite](docs/reference.pt-BR.md#na-porta-do-seu-app-plugin-vite), o [bookmarklet ou a extensão do Chrome (experimental)](docs/reference.pt-BR.md#qualquer-página-local-bookmarklet-ou-extensão-do-chrome).
 
 Não se sente à vontade com o terminal? Peça ao seu agente: *"Instale e rode a Ilse neste projeto — veja https://github.com/idantas/ilse"*.
 

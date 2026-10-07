@@ -51,7 +51,7 @@ export function pickUpdate(current: string, tags: { latest?: string; next?: stri
   return candidates[0] ?? null;
 }
 
-const installCommand = (tag: 'latest' | 'next') => `npm install -g ilse-design${tag === 'next' ? '@next' : ''}`;
+const installCommand = (tag: 'latest' | 'next') => `npm install -g ilse-design@${tag}`;
 
 export async function checkForUpdate(): Promise<UpdateResult | null> {
   try {

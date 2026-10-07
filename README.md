@@ -34,12 +34,14 @@ Ilse uses *your* agent and *your* account. It has no account, key or server of i
 In your project's folder — no need to start the app first — run:
 
 ```bash
-npx ilse-design
+npx ilse-design@latest
 ```
+
+Ilse is on npm as [`ilse-design`](https://www.npmjs.com/package/ilse-design) and needs Node.js 18 or newer. `@latest` makes sure you get the newest version, even if an older one is installed on your machine.
 
 Ilse starts your dev server (`npm run dev`) behind itself and opens your app at its usual address — `http://localhost:3000`, or whatever port it uses — with the toolbar on top. Logins, SSO and callbacks keep working. The first run asks a few questions and takes about a minute. Next time, just `ilse` if you [installed it](https://github.com/idantas/ilse/blob/main/docs/reference.md#install).
 
-Prefer to run the dev server yourself? `--separate` opens Ilse on its own address, `localhost:4700`. More ways: the [Vite plugin](https://github.com/idantas/ilse/blob/main/docs/reference.md#on-your-apps-own-port-vite-plugin), the [bookmarklet or Chrome extension](https://github.com/idantas/ilse/blob/main/docs/reference.md#any-local-page-bookmarklet-or-chrome-extension).
+Prefer to run the dev server yourself? `--separate` opens Ilse on its own address, `localhost:4700`. More ways: the [Vite plugin](https://github.com/idantas/ilse/blob/main/docs/reference.md#on-your-apps-own-port-vite-plugin), the [bookmarklet or the Chrome extension (experimental)](https://github.com/idantas/ilse/blob/main/docs/reference.md#any-local-page-bookmarklet-or-chrome-extension).
 
 Not comfortable with the terminal? Ask your agent: *"Install and run Ilse in this project — see https://github.com/idantas/ilse"*.
 

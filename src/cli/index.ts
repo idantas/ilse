@@ -57,7 +57,7 @@ program
     if (!isClaudeInstalled()) {
       console.log(`  ${t('setup.noClaude')}`);
       console.log(`  ${t('setup.manualHint')}`);
-      console.log('  claude mcp add ilse -- npx -y -p ilse-design@next ilse-mcp');
+      console.log('  claude mcp add ilse -- npx -y -p ilse-design@latest ilse-mcp');
       return;
     }
 

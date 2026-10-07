@@ -597,8 +597,8 @@ const messages = {
     en: 'Your dev server already loads Ilse (plugin) — no proxy, open:',
   },
   'bookmarklet.notRunning': {
-    pt: 'A Ilse não está rodando na porta {port}. Suba com npx ilse-design e clique de novo.',
-    en: "Ilse isn't running on port {port}. Start it with npx ilse-design, then click again.",
+    pt: 'A Ilse não está rodando na porta {port}. Suba com npx ilse-design@latest e clique de novo.',
+    en: "Ilse isn't running on port {port}. Start it with npx ilse-design@latest, then click again.",
   },
   'bookmarklet.pageTitle': {
     pt: 'Ilse em qualquer página local',
@@ -625,8 +625,8 @@ const messages = {
     en: 'Print the bookmarklet that puts the toolbar on any local page',
   },
   'vite.notRunning': {
-    pt: 'Ilse: a barra aparece quando o `ilse` estiver rodando (npx ilse-design) — depois, recarregue a página.',
-    en: 'Ilse: the toolbar shows up once `ilse` is running (npx ilse-design) — then reload the page.',
+    pt: 'Ilse: a barra aparece quando o `ilse` estiver rodando (npx ilse-design@latest) — depois, recarregue a página.',
+    en: 'Ilse: the toolbar shows up once `ilse` is running (npx ilse-design@latest) — then reload the page.',
   },
   'cmd.target': {
     pt: 'Porta do dev server (padrão: detecta sozinho)',

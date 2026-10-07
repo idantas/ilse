@@ -7,13 +7,15 @@
 Run it without installing, in your project's folder:
 
 ```bash
-npx ilse-design
+npx ilse-design@latest
 ```
 
-To keep the command around, install it once:
+Ilse is on npm as [`ilse-design`](https://www.npmjs.com/package/ilse-design); it needs Node.js 18 or newer. Keep `@latest`: without it, `npx` runs a copy already installed on your machine, however old.
+
+To keep the command around, install it once — the same command updates it:
 
 ```bash
-npm install -g ilse-design   # installs it as `ilse` / `ilse-design`
+npm install -g ilse-design@latest   # installs it as `ilse` / `ilse-design`
 ```
 
 When a newer version is out, Ilse says so at startup, with the command to update. Every version is also a [GitHub Release](https://github.com/idantas/ilse/releases).
@@ -109,7 +111,7 @@ ilse-design changes         # what Ilse changed that isn't committed yet
 ilse-design bookmarklet     # the bookmarklet that puts the toolbar on any local page
 ```
 
-These assume a global install. Without it, use `npx ilse-design` instead of `ilse-design`. The command is also available as `ilse`.
+These assume a global install. Without it, use `npx ilse-design@latest` instead of `ilse-design`. The command is also available as `ilse`.
 
 **Environment switches**, mostly for comparing runs:
 
@@ -204,7 +206,17 @@ No proxy and nothing in the project, not even a dev dependency: your browser put
 
 **Bookmarklet.** With `ilse-design` running, open `http://localhost:4747/__ilse/bookmarklet` and drag the button to your bookmarks bar (`ilse-design bookmarklet` prints the link and the code). On your app's page, click the bookmark. A full reload takes the toolbar away; click again.
 
-**Chrome extension.** Turns the toolbar on per site and brings it back on every reload. Load it once: `chrome://extensions` → *Developer mode* → *Load unpacked* → the `extension/` folder of this repo. Then, on your app's page, click the Ilse icon — the badge says **ON**. Click again to turn it off.
+**Chrome extension** *(experimental — not on the Chrome Web Store yet, tested in automated runs only)*. Turns the toolbar on per site and brings it back on every reload. Load it once:
+
+1. Find the folder. With Ilse installed globally (`npm install -g ilse-design@latest`), it's inside the package — print its path with:
+   ```bash
+   echo "$(npm root -g)/ilse-design/extension"
+   ```
+   Or use the `extension/` folder of a clone of this repository.
+2. In Chrome, open `chrome://extensions`, turn on *Developer mode*, click *Load unpacked* and pick that folder.
+3. On your app's page, with `ilse` running, click the Ilse icon — the badge says **ON**. Click again to turn it off.
+
+After updating Ilse, click *Reload* on the extension's card in `chrome://extensions` to pick up the new version.
 
 Both only work on `localhost` pages. They fetch the toolbar from the running `ilse` and run it in the page without a network request, so a service worker (MSW, PWAs) can't drop it. A page with a strict Content-Security-Policy can still block them; use the proxy there, which removes that header.
 

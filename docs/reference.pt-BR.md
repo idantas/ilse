@@ -7,13 +7,15 @@
 Rode sem instalar, na pasta do seu projeto:
 
 ```bash
-npx ilse-design
+npx ilse-design@latest
 ```
 
-Para deixar o comando disponível, instale uma vez:
+A Ilse está no npm como [`ilse-design`](https://www.npmjs.com/package/ilse-design); precisa do Node.js 18 ou mais novo. Mantenha o `@latest`: sem ele, o `npx` roda uma cópia que já esteja instalada na sua máquina, por mais antiga que seja.
+
+Para deixar o comando disponível, instale uma vez — o mesmo comando atualiza depois:
 
 ```bash
-npm install -g ilse-design   # instala como `ilse` / `ilse-design`
+npm install -g ilse-design@latest   # instala como `ilse` / `ilse-design`
 ```
 
 Quando sai uma versão nova, a Ilse avisa ao iniciar, com o comando para atualizar. Cada versão também vira uma [Release no GitHub](https://github.com/idantas/ilse/releases).
@@ -109,7 +111,7 @@ ilse-design changes         # o que a Ilse mudou e ainda não foi commitado
 ilse-design bookmarklet     # o bookmarklet que põe a barra em qualquer página local
 ```
 
-Isso supõe a instalação global. Sem ela, use `npx ilse-design` no lugar de `ilse-design`. O comando também existe como `ilse`.
+Isso supõe a instalação global. Sem ela, use `npx ilse-design@latest` no lugar de `ilse-design`. O comando também existe como `ilse`.
 
 **Variáveis de ambiente**, principalmente para comparar execuções:
 
@@ -204,7 +206,17 @@ Sem proxy e nada no projeto, nem dependência de dev: o próprio navegador põe 
 
 **Bookmarklet.** Com o `ilse-design` rodando, abra `http://localhost:4747/__ilse/bookmarklet` e arraste o botão para a barra de favoritos (`ilse-design bookmarklet` mostra o link e o código). Na página do seu app, clique no favorito. Um recarregamento completo tira a barra; clique de novo.
 
-**Extensão do Chrome.** Liga a barra por site e a traz de volta a cada recarregamento. Carregue uma vez: `chrome://extensions` → *Modo do desenvolvedor* → *Carregar sem compactação* → a pasta `extension/` deste repositório. Depois, na página do seu app, clique no ícone da Ilse — o selo mostra **ON**. Clique de novo para desligar.
+**Extensão do Chrome** *(experimental — ainda não está na Chrome Web Store, testada só de forma automatizada)*. Liga a barra por site e a traz de volta a cada recarregamento. Carregue uma vez:
+
+1. Ache a pasta. Com a Ilse instalada globalmente (`npm install -g ilse-design@latest`), ela vem dentro do pacote — mostre o caminho com:
+   ```bash
+   echo "$(npm root -g)/ilse-design/extension"
+   ```
+   Ou use a pasta `extension/` de um clone deste repositório.
+2. No Chrome, abra `chrome://extensions`, ligue o *Modo do desenvolvedor*, clique em *Carregar sem compactação* e escolha essa pasta.
+3. Na página do seu app, com o `ilse` rodando, clique no ícone da Ilse — o selo mostra **ON**. Clique de novo para desligar.
+
+Depois de atualizar a Ilse, clique em *Recarregar* no card da extensão em `chrome://extensions` para pegar a versão nova.
 
 Os dois só funcionam em páginas `localhost`. Eles buscam a barra na Ilse em execução e a rodam na página sem nenhuma requisição de rede, então um service worker (MSW, PWAs) não consegue derrubá-la. Uma página com Content-Security-Policy restrita ainda pode bloqueá-los; nesse caso use o proxy, que remove esse cabeçalho.
 
