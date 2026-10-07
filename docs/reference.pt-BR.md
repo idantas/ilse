@@ -7,15 +7,16 @@
 Rode sem instalar, na pasta do seu projeto:
 
 ```bash
-npx --allow-git=root github:idantas/ilse
+npx ilse-design@next
 ```
 
-A Ilse ainda não está no npm, então isso instala direto do GitHub e faz o build na primeira vez. O `--allow-git=root` é necessário no npm 12, que recusa instalar direto do git; versões anteriores ignoram. Para deixar o comando disponível, instale uma vez — em dois passos, porque o npm não consegue fazer o build de um pacote numa instalação global direto do git:
+A beta 0.5 está publicada na tag `next` — sem o `@next`, o npm ainda entrega a 0.4 antiga. Para deixar o comando disponível, instale uma vez:
 
 ```bash
-npm pack git+https://github.com/idantas/ilse.git   # gera o pacote a partir do GitHub
-npm install -g ./ilse-design-*.tgz                  # instala como `ilse` / `ilse-design`
+npm install -g ilse-design@next   # instala como `ilse` / `ilse-design`
 ```
+
+Quando sai uma versão nova, a Ilse avisa ao iniciar, com o comando para atualizar. Cada versão também vira uma [Release no GitHub](https://github.com/idantas/ilse/releases).
 
 ## Onde a Ilse abre
 
@@ -106,7 +107,7 @@ ilse-design changes         # o que a Ilse mudou e ainda não foi commitado
 ilse-design bookmarklet     # o bookmarklet que põe a barra em qualquer página local
 ```
 
-Isso supõe a instalação global. Sem ela, use `npx --allow-git=root github:idantas/ilse` no lugar de `ilse-design`. O comando também existe como `ilse`.
+Isso supõe a instalação global. Sem ela, use `npx ilse-design@next` no lugar de `ilse-design`. O comando também existe como `ilse`.
 
 **Variáveis de ambiente**, principalmente para comparar execuções:
 
@@ -157,7 +158,7 @@ A escolha fica salva por projeto em `~/.ilse/config.json` (nunca no repositório
 Com `--separate`, o proxy dá ao seu app um segundo endereço, `localhost:4700`, e o que está preso ao original fica lá: a sessão de login salva no navegador, callbacks de OAuth, links em e-mails. Com o plugin Vite a barra vem do próprio servidor de dev, e você continua no endereço de sempre.
 
 ```bash
-npm install -D github:idantas/ilse
+npm install -D ilse-design@next
 ```
 
 ```ts
@@ -210,7 +211,7 @@ Os dois só funcionam em páginas `localhost`. Eles buscam a barra na Ilse em ex
 Se o proxy atrapalhar e seu app não usa Vite — por exemplo, callbacks de login presos à porta de dev no Next.js:
 
 ```bash
-npm install -D github:idantas/ilse
+npm install -D ilse-design@next
 ```
 
 ```tsx

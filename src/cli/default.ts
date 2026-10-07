@@ -367,7 +367,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   // Update notification (non-blocking — result may already be ready)
   const update = await updatePromise;
   if (update?.hasUpdate) {
-    console.log(chalk.yellow(`  ↑ ilse-design ${update.latest} disponível`) + chalk.dim(` · npm update ilse-design`));
+    console.log(chalk.yellow(`  ↑ ${t('cli.updateAvailable', { version: update.latest })}`) + chalk.dim(` · ${update.install}`));
   }
 
   // Port printed after startServer() — placeholder updated below

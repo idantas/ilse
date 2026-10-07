@@ -7,15 +7,16 @@
 Run it without installing, in your project's folder:
 
 ```bash
-npx --allow-git=root github:idantas/ilse
+npx ilse-design@next
 ```
 
-Ilse isn't on npm yet, so this installs straight from GitHub and builds on the first run. `--allow-git=root` is needed on npm 12, which refuses git installs by default; older npm ignores it. To keep the command around, install it once — in two steps, because npm can't build a package during a global install from git:
+The 0.5 beta is published under the `next` tag — without `@next`, npm still gives you the old 0.4. To keep the command around, install it once:
 
 ```bash
-npm pack git+https://github.com/idantas/ilse.git   # builds the package from GitHub
-npm install -g ./ilse-design-*.tgz                  # installs it as `ilse` / `ilse-design`
+npm install -g ilse-design@next   # installs it as `ilse` / `ilse-design`
 ```
+
+When a newer version is out, Ilse says so at startup, with the command to update. Every version is also a [GitHub Release](https://github.com/idantas/ilse/releases).
 
 ## Where Ilse opens
 
@@ -106,7 +107,7 @@ ilse-design changes         # what Ilse changed that isn't committed yet
 ilse-design bookmarklet     # the bookmarklet that puts the toolbar on any local page
 ```
 
-These assume a global install. Without it, use `npx --allow-git=root github:idantas/ilse` instead of `ilse-design`. The command is also available as `ilse`.
+These assume a global install. Without it, use `npx ilse-design@next` instead of `ilse-design`. The command is also available as `ilse`.
 
 **Environment switches**, mostly for comparing runs:
 
@@ -157,7 +158,7 @@ The choice is saved per project in `~/.ilse/config.json` (never in the repo) and
 With `--separate`, the proxy gives your app a second address, `localhost:4700`, and whatever is tied to the original one stays there: the login session saved in the browser, OAuth callbacks, links in emails. With the Vite plugin the toolbar comes from your dev server itself, so you keep working on your usual address.
 
 ```bash
-npm install -D github:idantas/ilse
+npm install -D ilse-design@next
 ```
 
 ```ts
@@ -210,7 +211,7 @@ Both only work on `localhost` pages. They fetch the toolbar from the running `il
 If the proxy gets in the way and your app isn't on Vite — for example, auth callbacks bound to your dev port in Next.js:
 
 ```bash
-npm install -D github:idantas/ilse
+npm install -D ilse-design@next
 ```
 
 ```tsx
