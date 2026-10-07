@@ -1,6 +1,6 @@
 {
   "name": "ilse-design",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "The designer's eye inside the code agent: point at what's wrong in your running app, or adjust it like in Figma — your own coding agent changes the code.",
   "keywords": [
     "design",
