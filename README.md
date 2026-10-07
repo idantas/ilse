@@ -41,7 +41,7 @@ Ilse is on npm as [`ilse-design`](https://www.npmjs.com/package/ilse-design) and
 
 Ilse starts your dev server (`npm run dev`) behind itself and opens your app at its usual address — `http://localhost:3000`, or whatever port it uses — with the toolbar on top. Logins, SSO and callbacks keep working. The first run asks a few questions and takes about a minute. Next time, just `ilse` if you [installed it](https://github.com/idantas/ilse/blob/main/docs/reference.md#install).
 
-Prefer to run the dev server yourself? `--separate` opens Ilse on its own address, `localhost:4700`. More ways: the [Vite plugin](https://github.com/idantas/ilse/blob/main/docs/reference.md#on-your-apps-own-port-vite-plugin), the [bookmarklet or Chrome extension](https://github.com/idantas/ilse/blob/main/docs/reference.md#any-local-page-bookmarklet-or-chrome-extension).
+Prefer to run the dev server yourself? `--separate` opens Ilse on its own address, `localhost:4700`. More ways: the [Vite plugin](https://github.com/idantas/ilse/blob/main/docs/reference.md#on-your-apps-own-port-vite-plugin), the [bookmarklet or the Chrome extension (experimental)](https://github.com/idantas/ilse/blob/main/docs/reference.md#any-local-page-bookmarklet-or-chrome-extension).
 
 Not comfortable with the terminal? Ask your agent: *"Install and run Ilse in this project — see https://github.com/idantas/ilse"*.
 

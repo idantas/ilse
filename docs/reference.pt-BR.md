@@ -206,7 +206,17 @@ Sem proxy e nada no projeto, nem dependência de dev: o próprio navegador põe 
 
 **Bookmarklet.** Com o `ilse-design` rodando, abra `http://localhost:4747/__ilse/bookmarklet` e arraste o botão para a barra de favoritos (`ilse-design bookmarklet` mostra o link e o código). Na página do seu app, clique no favorito. Um recarregamento completo tira a barra; clique de novo.
 
-**Extensão do Chrome.** Liga a barra por site e a traz de volta a cada recarregamento. Carregue uma vez: `chrome://extensions` → *Modo do desenvolvedor* → *Carregar sem compactação* → a pasta `extension/` deste repositório. Depois, na página do seu app, clique no ícone da Ilse — o selo mostra **ON**. Clique de novo para desligar.
+**Extensão do Chrome** *(experimental — ainda não está na Chrome Web Store, testada só de forma automatizada)*. Liga a barra por site e a traz de volta a cada recarregamento. Carregue uma vez:
+
+1. Ache a pasta. Com a Ilse instalada globalmente (`npm install -g ilse-design@latest`), ela vem dentro do pacote — mostre o caminho com:
+   ```bash
+   echo "$(npm root -g)/ilse-design/extension"
+   ```
+   Ou use a pasta `extension/` de um clone deste repositório.
+2. No Chrome, abra `chrome://extensions`, ligue o *Modo do desenvolvedor*, clique em *Carregar sem compactação* e escolha essa pasta.
+3. Na página do seu app, com o `ilse` rodando, clique no ícone da Ilse — o selo mostra **ON**. Clique de novo para desligar.
+
+Depois de atualizar a Ilse, clique em *Recarregar* no card da extensão em `chrome://extensions` para pegar a versão nova.
 
 Os dois só funcionam em páginas `localhost`. Eles buscam a barra na Ilse em execução e a rodam na página sem nenhuma requisição de rede, então um service worker (MSW, PWAs) não consegue derrubá-la. Uma página com Content-Security-Policy restrita ainda pode bloqueá-los; nesse caso use o proxy, que remove esse cabeçalho.
 

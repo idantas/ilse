@@ -41,7 +41,7 @@ A Ilse está no npm como [`ilse-design`](https://www.npmjs.com/package/ilse-desi
 
 A Ilse sobe o seu servidor de dev (`npm run dev`) por trás e abre o app no endereço de sempre — `http://localhost:3000`, ou a porta que ele usa — com a barra por cima. Login, SSO e callbacks continuam funcionando. Na primeira vez ela faz algumas perguntas e leva cerca de um minuto. Nas próximas, é só `ilse` se você a [instalou](docs/reference.pt-BR.md#instalar).
 
-Prefere rodar o servidor de dev você mesmo? `--separate` abre a Ilse num endereço próprio, `localhost:4700`. Outros jeitos: o [plugin Vite](docs/reference.pt-BR.md#na-porta-do-seu-app-plugin-vite), o [bookmarklet ou a extensão do Chrome](docs/reference.pt-BR.md#qualquer-página-local-bookmarklet-ou-extensão-do-chrome).
+Prefere rodar o servidor de dev você mesmo? `--separate` abre a Ilse num endereço próprio, `localhost:4700`. Outros jeitos: o [plugin Vite](docs/reference.pt-BR.md#na-porta-do-seu-app-plugin-vite), o [bookmarklet ou a extensão do Chrome (experimental)](docs/reference.pt-BR.md#qualquer-página-local-bookmarklet-ou-extensão-do-chrome).
 
 Não se sente à vontade com o terminal? Peça ao seu agente: *"Instale e rode a Ilse neste projeto — veja https://github.com/idantas/ilse"*.
 
