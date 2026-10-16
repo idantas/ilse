@@ -1,6 +1,6 @@
 # Ilse
 
-> The designer's eye inside the code agent. Point at what's wrong in the running app in the browser; your own coding agent (Claude Code, Codex, Cursor CLI, Gemini CLI) fixes it in the code — or Ilse applies it itself when no AI is needed. Local only, no API keys of its own. MIT.
+> The designer's eye inside the code agent. Point at what's wrong in the running app in the browser; your own coding agent (Claude Code, Codex, Cursor CLI, Gemini CLI) fixes it in the code — or Ilse applies it itself when no AI is needed. Local only, no API keys of its own. PolyForm Shield 1.0.0 (free to use; no competing products).
 
 ## Use it
 

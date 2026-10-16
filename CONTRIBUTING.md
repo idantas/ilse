@@ -8,3 +8,4 @@ Thanks for helping. Issues, ideas and pull requests are all welcome.
 - **Security problem?** Report it privately — see [SECURITY.md](SECURITY.md).
 - **Pull requests:** one topic each, saying *why* and how you tested it. The checklist in the PR template mirrors "Done means" in AGENTS.md.
 - **Reporting a bug:** include OS, Node, framework, agent and the session journal (toolbar → Settings → Logs → copy). The journal has timings and counts only — no notes, prompts, code or paths.
+- **License:** Ilse is under the [PolyForm Shield License 1.0.0](LICENSE). By sending a pull request you agree that your contribution is licensed under it, and that the maintainer may relicense it in future versions of Ilse.
