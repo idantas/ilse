@@ -71,14 +71,14 @@ export function insertionIndex(p: { x: number; y: number }, children: Slot[], ax
 
 // ── React's view of an element (dev builds) ────────────────────────────────
 
-interface Fiber {
+export interface Fiber {
   key: string | null;
   type: unknown;
   return: Fiber | null;
   _debugOwner?: Fiber | null;
 }
 
-function fiberOf(el: Element): Fiber | null {
+export function fiberOf(el: Element): Fiber | null {
   const k = Object.keys(el).find(k => k.startsWith('__reactFiber$'));
   return k ? (el as unknown as Record<string, Fiber>)[k] : null;
 }
@@ -277,8 +277,14 @@ function adopt(parent: HTMLElement): LiveList {
  * selects its <button>, but the thing to reorder is the <li> around it.
  */
 export function reorderUnit(el: HTMLElement): HTMLElement {
+  // The first box on the way up with a look of its own (a card, a button):
+  // the climb never trades it for a bigger one around it. A card inside a card
+  // drags the inner card, not the outer one from the grid.
+  let own: HTMLElement | null = null;
   let node: HTMLElement | null = el;
   for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
+    if (own && node !== own && hasSurface(node) && !sameBox(node.getBoundingClientRect(), own.getBoundingClientRect())) return own;
+    if (!own && hasSurface(node)) own = node;
     const parent: HTMLElement | null = node.parentElement;
     if (!parent || parent === document.body) break;
     if (!axisOf(parent)) continue;
@@ -288,7 +294,17 @@ export function reorderUnit(el: HTMLElement): HTMLElement {
     const alike = items.filter(c => c !== node && lookAlike(c, node!));
     if (items.includes(node) && alike.length >= 1) return node;
   }
-  return el;
+  return own ?? el;
+}
+
+/** Background, border or shadow: a box the eye reads as an object, not a layout wrapper */
+function hasSurface(el: HTMLElement): boolean {
+  const cs = getComputedStyle(el);
+  const bg = cs.backgroundColor;
+  const visibleBg = !!bg && bg !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(bg) && !/\/\s*0\)$/.test(bg);
+  const border = ['Top', 'Right', 'Bottom', 'Left'].some(side =>
+    parseFloat(cs.getPropertyValue(`border-${side.toLowerCase()}-width`)) > 0 && cs.getPropertyValue(`border-${side.toLowerCase()}-style`) !== 'none');
+  return visibleBg || border || (cs.boxShadow !== 'none' && cs.boxShadow !== '');
 }
 
 const SLOT_ATTRS = ['data-slot', 'data-sidebar', 'role'];

@@ -52,6 +52,45 @@ function collectVarNames(): Set<string> {
 const bare = (name: string) => name.replace(/^--/, '').replace(/^color-/, '');
 
 /**
+ * A gradient token: a variable whose value is a whole gradient
+ * (`--ai-gradient: linear-gradient(…)`). It paints a background, not a colour,
+ * so it's offered for Fill only and applied as `background-image`.
+ */
+export interface GradientToken {
+  /** `gradient.<var name>` — what the agent is told to use */
+  name: string;
+  /** Resolved gradient, var() chains filled in, as the element sees it */
+  value: string;
+  cssVar: string;
+  label: string;
+  type: 'gradient';
+}
+
+export function isGradient(value: string): boolean {
+  return /^(repeating-)?(linear|radial|conic)-gradient\(/i.test(value.trim());
+}
+
+/** Every gradient token visible from `el` (or the root) */
+export function collectGradientTokens(el?: Element | null): GradientToken[] {
+  if (typeof document === 'undefined') return [];
+  const computed = getComputedStyle(el ?? document.documentElement);
+  const out: GradientToken[] = [];
+  for (const cssVar of collectVarNames()) {
+    const value = computed.getPropertyValue(cssVar).trim();
+    if (!isGradient(value)) continue;
+    out.push({ name: `gradient.${cssVar.slice(2)}`, value, cssVar, label: bare(cssVar), type: 'gradient' });
+  }
+  return out.sort((a, b) => naturalCompare(a.label, b.label));
+}
+
+/** The gradient token an element's `background-image` already is, if any */
+export function gradientIn(backgroundImage: string | undefined, tokens: GradientToken[]): GradientToken | undefined {
+  if (!backgroundImage || !isGradient(backgroundImage)) return undefined;
+  const flat = (v: string) => v.toLowerCase().replace(/\s+/g, '');
+  return tokens.find(t => flat(t.value) === flat(backgroundImage));
+}
+
+/**
  * Every colour token visible from `el` (or the root), deduplicated so that a
  * Tailwind alias and the variable it points at show up once.
  *

@@ -3,7 +3,7 @@ import http from 'node:http';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { serveToolbar, toolbarScript, TOOLBAR_PATH } from '../toolbar.js';
+import { serveToolbar, toolbarScript, TOOLBAR_PATH, PROXY_HEADER } from '../toolbar.js';
 import { pageHasToolbar } from '../find-dev-server.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'ilse-toolbar-'));
@@ -105,5 +105,18 @@ describe('pageHasToolbar', () => {
     }
     // Port 1 is never a dev server
     expect(await pageHasToolbar({ host: '127.0.0.1', port: 1 }, 300)).toBe(false);
+  });
+
+  it('is false for a page another Ilse proxy serves (the port is taken, not this app with the plugin)', async () => {
+    const proxied = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html', [PROXY_HEADER]: '1' });
+      res.end(`<html><body><script src="${TOOLBAR_PATH}" defer></script></body></html>`);
+    });
+    const proxiedPort = await listen(proxied);
+    try {
+      expect(await pageHasToolbar({ host: '127.0.0.1', port: proxiedPort })).toBe(false);
+    } finally {
+      await new Promise<void>((r) => proxied.close(() => r()));
+    }
   });
 });

@@ -19,7 +19,7 @@ Antes de chamar o seu agente, a Ilse faz a busca por ele:
 - **Só o trecho necessário.** O agente recebe quais linhas ler, não o arquivo inteiro — um componente de 900 linhas são ~10 mil tokens, reenviados a cada turno.
 - **Ficha do componente.** Para um componente reutilizado: onde ele é definido, se aceita `className` e onde é usado.
 - **O histórico da própria Ilse.** As últimas mudanças que a Ilse fez no mesmo arquivo vão junto ("decididas pelo designer, mantenha"), para uma correção nova não desfazer uma anterior.
-- **Seus tokens de design.** Lidos ao iniciar, de `tailwind.config`, `@theme` do Tailwind v4, variáveis CSS ou `tokens.json` do W3C, para o agente usar o seu token em vez de um valor fixo.
+- **Seus tokens de design.** Lidos ao iniciar, de `tailwind.config`, `@theme` do Tailwind v4, variáveis CSS, `tokens.json` do W3C ou um `DESIGN.md` (formato aberto do Google: os tokens do front matter entram no painel, e o agente é apontado para o arquivo pelas regras), para o agente usar o seu token em vez de um valor fixo. Tokens de degradê (`--brand-gradient: linear-gradient(…)`) aparecem no Fill, numa seção Degradês própria.
 - **Só o que importa.** Os estilos são filtrados pela intenção: "cor errada" manda só informação de cor.
 - **Suas referências.** Prints colados vão junto; SVGs arrastados são copiados para o projeto como assets.
 

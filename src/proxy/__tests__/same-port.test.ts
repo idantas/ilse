@@ -3,7 +3,8 @@ import net from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { planSamePort, hiddenPortArgs, rewriteLog, portIsFree, planProject } from '../same-port.js';
+import { planSamePort, hiddenPortArgs, rewriteLog, portIsFree, planProject, loggedPorts, LockHolderWatch, stopGroup } from '../same-port.js';
+import { spawn } from 'node:child_process';
 
 describe('planSamePort', () => {
   it('Next: the dev script, default port 3000', () => {
@@ -91,5 +92,51 @@ describe('planProject', () => {
     const root = mkdtempSync(join(tmpdir(), 'ilse-'));
     write(root, 'package.json', { scripts: { dev: 'node server.js' } });
     expect(planProject(root)).toEqual([{ script: 'dev', framework: 'other', appPort: 3000, dir: root }]);
+  });
+});
+
+describe('loggedPorts', () => {
+  it('reads the address a server that ignored PORT prints', () => {
+    expect(loggedPorts(' INFO  Accepting connections at http://localhost:5173')).toEqual([5173]);
+    expect(loggedPorts('Serving HTTP on 0.0.0.0 port 8000 (http://0.0.0.0:8000/)')).toEqual([8000]);
+    expect(loggedPorts('Local: http://localhost:\x1b[1m5173\x1b[22m/ · http://127.0.0.1:5173')).toEqual([5173]);
+  });
+  it('ignores remote hosts and lines with no address', () => {
+    expect(loggedPorts('The latest version of `serve` is 14.2.6')).toEqual([]);
+    expect(loggedPorts('see https://example.com:8443/docs')).toEqual([]);
+  });
+});
+
+describe('LockHolderWatch', () => {
+  it("reads PID and port from Next's 'already running' block", () => {
+    const w = new LockHolderWatch();
+    for (const l of [
+      ' \x1b[32m✓\x1b[39m Ready in 443ms',
+      ' - Local:         http://localhost:3000',
+      ' ⨯ Another next dev server is already running.',
+      '',
+      ' - Local:        http://localhost:13000',
+      ' - PID:          89648',
+      ' - Dir:          /Users/x/sac-frontend',
+    ]) w.feed(l);
+    expect(w.result()).toEqual({ pid: 89648, port: 13000 });
+  });
+  it('nothing seen: no holder', () => {
+    const w = new LockHolderWatch();
+    w.feed(' - Local: http://localhost:3000');
+    w.feed(' - PID: 1');
+    expect(w.result()).toBeUndefined();
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('stopGroup', () => {
+  it('kills a group that ignores SIGTERM', async () => {
+    const child = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { detached: true, stdio: 'ignore' });
+    await new Promise(r => setTimeout(r, 300));
+    const t0 = Date.now();
+    stopGroup(child.pid!, 300);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    await new Promise(r => setTimeout(r, 100));
+    expect(() => process.kill(-child.pid!, 0)).toThrow();
   });
 });

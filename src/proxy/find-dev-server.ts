@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
 import type { DevTarget } from './server.js';
-import { TOOLBAR_PATH } from './toolbar.js';
+import { TOOLBAR_PATH, PROXY_HEADER } from './toolbar.js';
 
 const COMMON_PORTS = [3000, 5173, 3001, 4321, 8080, 5174, 8000, 4200];
 
@@ -54,7 +54,10 @@ export async function findDevServer(cwd: string, ports = candidatePorts(cwd), ex
   for (const port of ports) {
     if (exclude.includes(port)) continue;
     for (const host of ['127.0.0.1', '::1']) {
-      if (await probe(host, port)) return { host, port };
+      if (!(await probe(host, port))) continue;
+      // Another `ilse` (another project's proxy) answers here: not this project's dev server
+      if (await servedByIlse(port)) break;
+      return { host, port };
     }
   }
   return null;
@@ -70,7 +73,8 @@ export function pageHasToolbar(target: DevTarget, timeoutMs = 2000): Promise<boo
     const req = http.get(
       { host: target.host, port: target.port, path: '/', headers: { accept: 'text/html' }, timeout: timeoutMs },
       (res) => {
-        if (res.statusCode !== 200) { res.resume(); resolve(false); return; }
+        // Another `ilse` (another project, another terminal) proxying this port isn't this app's plugin
+        if (res.statusCode !== 200 || res.headers[PROXY_HEADER]) { res.resume(); resolve(false); return; }
         let html = '';
         res.setEncoding('utf8');
         res.on('data', (c: string) => { html += c; });
@@ -81,6 +85,22 @@ export function pageHasToolbar(target: DevTarget, timeoutMs = 2000): Promise<boo
     req.on('timeout', () => { req.destroy(); resolve(false); });
     req.on('error', () => resolve(false));
   });
+}
+
+/** True when another `ilse` proxy serves `port` (its pages carry the proxy header) */
+export async function servedByIlse(port: number, timeoutMs = 1500): Promise<boolean> {
+  for (const host of ['127.0.0.1', '::1']) {
+    const marked = await new Promise<boolean | null>((resolve) => {
+      const req = http.get({ host, port, path: '/', timeout: timeoutMs }, (res) => {
+        res.resume();
+        resolve(!!res.headers[PROXY_HEADER]);
+      });
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+      req.on('error', () => resolve(null));
+    });
+    if (marked !== null) return marked;
+  }
+  return false;
 }
 
 /** Polls until a dev server shows up — the user may start it after `ilse`. */

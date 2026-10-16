@@ -90,6 +90,8 @@ export interface Annotation {
   nearbyElements?: string[]; // sibling elements
   text?: string;             // element's own visible text (short) — helps locate the source
   source?: SourceHit[];      // file:line candidates located by the CLI before the agent runs
+  /** The `ilse test` finding this note fixes — tested again once the agent is done */
+  testFinding?: { id: string; page: string; category?: string; selector?: string };
   meta?: AnnotationMeta;     // experience metadata for the journal — never the prompt text
   position?: { top: number; left: number; width: number; height: number };
   environment?: {

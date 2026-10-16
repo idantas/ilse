@@ -562,6 +562,9 @@ export interface BatchExecutionResult {
   tokenUsage?: TokenUsage;
 }
 
+/** What the agent is doing as it streams: editing files, or reading and reasoning (the mascot types only while it edits) */
+export type AgentActivity = 'edit' | 'think';
+
 /**
  * Execute a batch of annotations with stream-json parsing.
  *
@@ -579,7 +582,7 @@ export async function executeBatch(
     cwd?: string;
     timeoutMs?: number;
     onProgress?: (id: string, summary: string) => void;
-    onThinking?: (text: string) => void;  // emitted as claude streams reasoning/tool events
+    onThinking?: (text: string, activity: AgentActivity) => void;  // emitted as claude streams reasoning/tool events
     onEvent?: (event: Record<string, unknown>) => void;  // every raw stream-json event (journal)
     sessionId?: string;
     /** Claude Code model alias or id; undefined = the user's default */
@@ -723,7 +726,7 @@ export async function executeBatch(
                 }
               },
               (id) => { sessionId = id; },
-              (thinking) => options.onThinking?.(thinking),
+              (thinking, activity) => options.onThinking?.(thinking, activity),
               (usage) => { tokenUsage = { ...usage, isResume: !!options.sessionId }; },
             );
           } catch { /* ignore non-JSON lines */ }
@@ -794,13 +797,13 @@ export async function executeBatch(
  * Process a single stream-json event from Claude Code CLI.
  * Events shape: https://docs.claude.com/en/docs/claude-code/sdk#streaming-output-format
  */
-function handleStreamEvent(
+export function handleStreamEvent(
   event: Record<string, unknown>,
   annotations: Annotation[],
   summaries: Map<string, string>,
   onToolUse: (filePath?: string) => void,
   onSessionId: (id: string) => void,
-  onThinking: (text: string) => void,
+  onThinking: (text: string, activity: AgentActivity) => void,
   onUsage?: (usage: TokenUsage) => void,
 ): void {
   // Capture token usage from result event
@@ -837,9 +840,10 @@ function handleStreamEvent(
 
         // Emit a human-friendly "thinking" line per tool use
         const thinking = describeToolUse(toolName, input);
-        if (thinking) onThinking(thinking);
+        const edits = !!toolName && ['Edit', 'Write', 'MultiEdit', 'Update'].includes(toolName);
+        if (thinking) onThinking(thinking, edits ? 'edit' : 'think');
 
-        if (toolName && ['Edit', 'Write', 'MultiEdit', 'Update'].includes(toolName)) {
+        if (edits) {
           const filePath = typeof input?.file_path === 'string' ? input.file_path : undefined;
           onToolUse(filePath);
         }
@@ -862,7 +866,7 @@ function handleStreamEvent(
           .filter(l => l.trim() && !/^#[a-z0-9]+:/i.test(l.trim()))
           .join(' ')
           .slice(0, 120);
-        if (cleanText) onThinking(cleanText);
+        if (cleanText) onThinking(cleanText, 'think');
       }
     }
   }

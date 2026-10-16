@@ -58,7 +58,16 @@ export const ilse = {
   orange: '#FF6C03',
   orangeLight: '#FFC194',
   orangePale: '#FFECDE',
+  /** Test mode — blue, away from the orange and from the finding severities (red, amber, gray) */
+  test: '#2F6BFF',
+  testLight: '#A1BCFF',
+  testPale: '#E2EAFF',
 } as const;
+
+/** The toolbar's accent per mode: hex for fills, "r,g,b" for rgba() glows */
+export const modeAccent = (mode: 'design' | 'test') => mode === 'test'
+  ? { hex: ilse.test, rgb: '47,107,255' }
+  : { hex: ilse.orange, rgb: '255,108,3' };
 
 // Font — preset uses --font-sans (inherits from app).
 // We use the system sans-serif stack to match whatever the user's app defines.

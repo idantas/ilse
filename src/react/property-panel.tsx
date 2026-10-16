@@ -24,7 +24,7 @@ import { t } from '../i18n/index.js';
 const translate = t;
 import { getDSTokens, type DSToken } from './analyze.js';
 import { readColor, canonicalColor, toHex, isTransparent } from './color.js';
-import { collectColorTokens, withStaticTokens, byBaseness, type ColorToken } from './color-tokens.js';
+import { collectColorTokens, collectGradientTokens, gradientIn, withStaticTokens, byBaseness, type ColorToken, type GradientToken } from './color-tokens.js';
 import { ColorPicker } from './color-picker.js';
 import { readPageScales, onScale, type PageScales } from './scale.js';
 import {
@@ -75,6 +75,8 @@ const PROPS: PropSpec[] = [
 
   { key: 'color',           label: 'Text',   group: 'color', tokenType: 'color' },
   { key: 'backgroundColor', label: 'Fill',   group: 'color', tokenType: 'color' },
+  // A gradient token picked for Fill: painted as background-image
+  { key: 'backgroundImage', label: 'Fill',   group: 'color', control: true },
   { key: 'borderColor',     label: 'Color',  group: 'stroke', tokenType: 'color' },
   // Stroke weight/style/sides: edited through the Stroke controls
   ...['borderWidth', 'borderStyle', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth']
@@ -240,7 +242,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   // nodes — React keeps pointing at them, so its next render simply wins. ──
   // `from` comes from the draft when there is one: a remounted panel renders
   // before the old one has put the original text back.
-  const [textOriginal] = useState(() => textEdit?.from ?? getElement()?.textContent ?? '');
+  const [textOriginal] = useState(() => textEdit?.from ?? editableText(getElement()) ?? '');
   const [text, setText] = useState(textEdit?.to ?? textOriginal);
   const textRef = useRef(text);
   const textNodes = useRef<Array<{ node: Text; data: string }> | null>(null);
@@ -248,7 +250,15 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     const e = getElement();
     if (!e) return;
     textNodes.current ??= Array.from(e.childNodes).filter((n): n is Text => n.nodeType === Node.TEXT_NODE).map(node => ({ node, data: node.data }));
-    textNodes.current.forEach((n, i) => { n.node.data = i === 0 ? value : ''; });
+    // Lines between <br>s: one per line when the count matches, else all on the first
+    const lines = value.split('\n');
+    const runs = lineRuns(e);
+    const firsts = new Set(runs.map(r => r[0]).filter(Boolean));
+    const fits = lines.length === runs.length;
+    textNodes.current.forEach((n, i) => {
+      if (fits) n.node.data = firsts.has(n.node) ? lines[runs.findIndex(r => r[0] === n.node)] : '';
+      else n.node.data = i === 0 ? lines.join(' ') : '';
+    });
   }
   function revertText() { textNodes.current?.forEach(n => { n.node.data = n.data; }); }
   function setTextValue(value: string) {
@@ -269,6 +279,11 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     () => withStaticTokens(collectColorTokens(getElement()), dsTokens),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [colorEpoch, targetId, dsTokens],
+  );
+  const gradientTokens = useMemo(
+    () => collectGradientTokens(getElement()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [colorEpoch, targetId],
   );
   const scales = useMemo(() => readPageScales(dsTokens), [dsTokens]);
   // Computed styles + the padding/margin longhands they imply — what "no change" is compared against
@@ -319,6 +334,18 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     setPos({ top: box.top, left: box.left });
   }
 
+  /** The element's background-image before the edits (not among the captured styles) */
+  function currentImage(): string {
+    const el = getElement();
+    if (!el) return '';
+    const inline = el.style.getPropertyValue('background-image');
+    if (!previews.current['background-image']) return getComputedStyle(el).backgroundImage;
+    el.style.setProperty('background-image', originalInline.current.backgroundImage || null);
+    const v = getComputedStyle(el).backgroundImage;
+    el.style.setProperty('background-image', inline);
+    return v;
+  }
+
   function getElement(): HTMLElement | null {
     if (targetEl.current?.isConnected) return targetEl.current;
     if (!targetId) return null;
@@ -352,6 +379,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
 
     if (picked) editTokens.current[spec.key] = picked.name;
     else delete editTokens.current[spec.key];
+    if (spec.key === 'backgroundColor' && editsRef.current.backgroundImage) clearGradient();
 
     if (el) {
       if (!(spec.key in originalInline.current)) {
@@ -373,16 +401,46 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     onChange(buildChanges(next));
   }
 
+  /** Fill with a gradient token: previewed through its variable, sent as background-image */
+  function applyGradient(g: GradientToken) {
+    const el = getElement();
+    if (el) {
+      if (!('backgroundImage' in originalInline.current)) originalInline.current.backgroundImage = el.style.getPropertyValue('background-image');
+      const preview = `var(${g.cssVar})`;
+      el.style.setProperty('background-image', preview);
+      previews.current['background-image'] = preview;
+      syncTwins();
+    }
+    editTokens.current.backgroundImage = g.name;
+    const next = { ...editsRef.current, backgroundImage: g.value };
+    editsRef.current = next;
+    setEdits(next);
+    onChange(buildChanges(next));
+  }
+
+  function clearGradient() {
+    const el = getElement();
+    if (el) {
+      el.style.setProperty('background-image', originalInline.current.backgroundImage || null);
+      delete previews.current['background-image'];
+    }
+    delete editTokens.current.backgroundImage;
+    const { backgroundImage: _drop, ...next } = editsRef.current;
+    editsRef.current = next;
+    setEdits(next);
+  }
+
   function buildChanges(next: Record<string, string>): StyleChange[] {
     return Object.entries(next).map(([key, to]) => {
       const s = PROPS.find(p => p.key === key)!;
       const family = tokensFor(s, dsTokens, colorTokens, scales);
       const token = matchToken(to, family, COLOR_PROPS.has(key), editTokens.current[key]);
+      const gradient = key === 'backgroundImage';
       return {
         property: key,
-        from: base[key] ?? '',
+        from: gradient ? currentImage() : base[key] ?? '',
         to,
-        token: token?.name,
+        token: gradient ? editTokens.current[key] : token?.name,
         offToken: family.length > 0 && !token && !onScale(to, family) && !(COLOR_PROPS.has(key) && isTransparent(to))
           && !(NONE_KEYS.test(key) && isZero(to)),
       };
@@ -396,7 +454,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   // Text reads like a Figma text layer: its colour *is* the fill. A separate
   // "Text" row next to a transparent "Fill" is two answers to one question.
   const el = getElement();
-  const isText = !!textSelection || (!!el && el.childElementCount === 0 && !!el.textContent?.trim());
+  const isText = !!textSelection || (!!el && editableText(el) !== null);
   const parentStyle = el?.parentElement ? getComputedStyle(el.parentElement) : null;
   const parentFlow: ParentFlow = parentStyle && /flex/.test(parentStyle.display)
     ? (parentStyle.flexDirection.startsWith('column') ? 'column' : 'row') : null;
@@ -420,6 +478,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     if (p.key === 'gap') return layout.flow !== 'block';
     return !!styles[p.key];
   };
+  // The gradient token Fill shows: the one just picked, or the one the element already has
+  const fillGradient = edits.backgroundImage
+    ? gradientTokens.find(g => g.name === editTokens.current.backgroundImage)
+    : el ? gradientIn(getComputedStyle(el).backgroundImage, gradientTokens) : undefined;
   const groups = (['layout', 'typography', 'color', 'stroke', 'appearance'] as Group[])
     .map(g => ({ group: g, specs: PROPS.filter(p => p.group === g && shown(p)) }))
     .filter(g => g.specs.length > 0 || ((g.group === 'layout' || g.group === 'stroke') && !!styles.display));
@@ -436,11 +498,15 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   function undo(): string | undefined {
     const snap = history.current.pop();
     if (!snap) return undefined;
-    const keys = new Set([...Object.keys(editsRef.current), ...Object.keys(snap.edits)]);
+    // The gradient last: restoring Fill's colour would otherwise clear it again
+    const keys = [...new Set([...Object.keys(editsRef.current), ...Object.keys(snap.edits)])]
+      .sort((x, y) => Number(x === 'backgroundImage') - Number(y === 'backgroundImage'));
     for (const key of keys) {
       const spec = PROPS.find(p => p.key === key);
       if (!spec) continue;
       const tokenName = snap.tokens[key];
+      const gradient = key === 'backgroundImage' && tokenName ? gradientTokens.find(g => g.name === tokenName) : undefined;
+      if (gradient && snap.edits[key]) { applyGradient(gradient); continue; }
       const picked = tokenName ? colorTokens.find(tk => tk.name === tokenName) : undefined;
       apply(spec, snap.edits[key] ?? '', picked);
     }
@@ -546,7 +612,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
             <textarea
               value={text}
               onChange={(e) => { record('Texto'); setTextValue(e.target.value); }}
-              rows={Math.min(4, Math.max(1, Math.ceil(text.length / 34)))}
+              rows={Math.min(4, Math.max(1, text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 34)), 0)))}
               spellCheck
               style={{
                 width: '100%', boxSizing: 'border-box', resize: 'none', display: 'block',
@@ -602,9 +668,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                 key={spec.key}
                 spec={textFill && spec.key === 'color' ? { ...spec, label: 'Fill' } : spec}
                 current={styles[spec.key] ?? '0px'}
-                edited={edits[spec.key]}
+                edited={edits[spec.key] ?? (spec.key === 'backgroundColor' ? edits.backgroundImage : undefined)}
                 tokens={tokensFor(spec, dsTokens, colorTokens, scales)}
                 preferredToken={editTokens.current[spec.key] ?? tokenFromClasses(getElement(), spec.key, colorTokens)}
+                gradient={spec.key === 'backgroundColor' ? fillGradient : undefined}
                 pickerOpen={picker?.key === spec.key}
                 onOpenPicker={(el) => {
                   if (picker?.key === spec.key) { setPicker(null); return; }
@@ -673,6 +740,11 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
             value={edits[spec.key] ?? styles[spec.key] ?? ''}
             tokens={colorTokens}
             tokenName={editTokens.current[spec.key] ?? tokenFromClasses(getElement(), spec.key, colorTokens)}
+            {...(spec.key === 'backgroundColor' ? {
+              gradients: gradientTokens,
+              gradientName: fillGradient?.name,
+              onPickGradient: (g: GradientToken) => { record(spec.label); applyGradient(g); },
+            } : {})}
             anchor={picker.anchor}
             anchorEl={picker.anchorEl}
             onPick={(v, token) => { record(spec.label); apply(spec, v, token); }}
@@ -878,14 +950,40 @@ function Toggle({ on, onClick, label, hint }: { on: boolean; onClick: () => void
   );
 }
 
+// ── Text the panel can retype ──────────────────────────────────────────────
+
+/**
+ * The element's text when it is only text — plain, or split by <br>s, which
+ * come back as line breaks (`Um mascote que<br>entende AG-UI.` →
+ * "Um mascote que\nentende AG-UI."). Null when it holds other elements:
+ * a <b> or a <span> inside is structure the textarea can't keep.
+ */
+export function editableText(el: Element | null): string | null {
+  if (!el || Array.from(el.children).some(c => c.tagName !== 'BR')) return null;
+  const lines = lineRuns(el).map(run => run.map(n => n.data).join('').replace(/\s+/g, ' ').trim());
+  return lines.join('').trim() ? lines.join('\n') : null;
+}
+
+/** The text nodes of each line, split at <br> */
+function lineRuns(el: Element): Text[][] {
+  const runs: Text[][] = [[]];
+  for (const n of Array.from(el.childNodes)) {
+    if (n.nodeType === Node.TEXT_NODE) runs[runs.length - 1].push(n as Text);
+    else if ((n as Element).tagName === 'BR') runs.push([]);
+  }
+  return runs;
+}
+
 // ── One property row ───────────────────────────────────────────────────────
 
-function PropertyRow({ spec, current, edited, tokens, preferredToken, pickerOpen, onOpenPicker, onApply }: {
+function PropertyRow({ spec, current, edited, tokens, preferredToken, gradient, pickerOpen, onOpenPicker, onApply }: {
   spec: PropSpec;
   current: string;
   edited?: string;
   tokens: DSToken[];
   preferredToken?: string;
+  /** Fill painted by a gradient token: shown instead of the colour under it */
+  gradient?: GradientToken;
   pickerOpen?: boolean;
   onOpenPicker?: (anchor: HTMLElement) => void;
   onApply: (value: string) => void;
@@ -895,7 +993,7 @@ function PropertyRow({ spec, current, edited, tokens, preferredToken, pickerOpen
   const matched = matchToken(value, tokens, isColor, preferredToken);
   // `transparent` is a keyword every system has (bg-transparent), not a stray value.
   const clear = isColor && !matched && isTransparent(value);
-  const isOffToken = tokens.length > 0 && !matched && !clear && !onScale(value, tokens) && !(NONE_KEYS.test(spec.key) && isZero(value));
+  const isOffToken = !gradient && tokens.length > 0 && !matched && !clear && !onScale(value, tokens) && !(NONE_KEYS.test(spec.key) && isZero(value));
   const controlStyle = {
     flex: 1, minWidth: 0, fontSize: 11, fontFamily: font.sans,
     padding: '3px 4px', borderRadius: radius.sm,
@@ -924,12 +1022,14 @@ function PropertyRow({ spec, current, edited, tokens, preferredToken, pickerOpen
             borderColor: pickerOpen ? color.ring : isOffToken ? '#E8A33D' : color.border,
           }}
         >
-          <Swatch value={value} />
+          {gradient
+            ? <span style={{ width: 14, height: 14, flexShrink: 0, borderRadius: 3, backgroundImage: gradient.value, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.1)' }} />
+            : <Swatch value={value} />}
           <span style={{
             flex: isOffToken ? 'none' : 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            fontFamily: matched || clear ? font.sans : font.mono,
+            fontFamily: gradient || matched || clear ? font.sans : font.mono,
           }}>
-            {matched ? tokenLabel(matched) : clear ? 'transparent' : toHex(value).toUpperCase()}
+            {gradient ? gradient.label : matched ? tokenLabel(matched) : clear ? 'transparent' : toHex(value).toUpperCase()}
           </span>
           {isOffToken && (
             <span style={{ flex: 1, minWidth: 0, textAlign: 'right', fontSize: 9, color: '#8A4B12', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

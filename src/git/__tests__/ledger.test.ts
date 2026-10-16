@@ -56,7 +56,9 @@ describe('commit context', () => {
     expect(commitContextChoice(dir)).toBeUndefined();
     saveCommitContextChoice(dir, false);
     expect(commitContextChoice(dir)).toBe(false);
-    expect(existsSync(join(dir, '.ilserc.json'))).toBe(true);
+    // Remembered outside the project's files
+    expect(existsSync(join(dir, '.ilserc.json'))).toBe(false);
+    expect(existsSync(join(dir, '.git', 'ilse', 'state.json'))).toBe(true);
     expect(COMMIT_MARKER).toContain('ilse');
   });
 });

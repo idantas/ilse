@@ -2,6 +2,7 @@ import type { Annotation, AnnotationIntent } from '../types.js';
 import { t } from '../i18n/index.js';
 import { historyFor, formatHistory } from '../git/ledger.js';
 import { componentCard, type ComponentCard } from '../context/locate.js';
+import { findDesignMd } from '../setup/design-md.js';
 
 export interface AugmentedAnnotation {
   note: string;
@@ -266,6 +267,8 @@ export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   if (annotation.grepPattern && !sourceBlock) lines.push(`**Grep:** \`${annotation.grepPattern}\``);
   if (annotation.componentStack?.length) lines.push(`**Stack:** ${annotation.componentStack.join(' > ')}`);
   if (annotation.domPath) lines.push(`**DOM:** ${annotation.domPath}`);
+  const designMd = findDesignMd(process.cwd());
+  if (designMd) lines.push(`**Design contract:** \`${designMd}\` — its tokens and rules win over guesses; read the part you need.`);
   if (annotation.note) {
     const safeNote = annotation.note.replace(/[`*_~]/g, '').slice(0, 500);
     lines.push(`**Note (verbatim designer text):**\n<<<\n${safeNote}\n>>>`);

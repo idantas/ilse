@@ -18,11 +18,12 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 
 ## Rules — never break these
 
-1. **The AI is always the user's.** Ilse runs the agent CLI the user already has (Claude Code, Codex, Cursor CLI, Gemini CLI) or lets it pull work over MCP. Never add API keys, accounts, servers or billing of Ilse's own.
-2. **Nothing leaves the machine.** Proxy, WebSocket and MCP bind to loopback. The journal stores timings and counts — never note text, prompts, code or file paths.
+1. **The AI is always the user's.** Ilse runs the agent CLI the user already has (Claude Code, Codex, Cursor CLI, Gemini CLI) or lets it pull work over MCP. Never add API keys, AI servers or charge for AI usage. A paid Ilse Pro license is allowed; it never stores or proxies an AI key.
+2. **Nothing leaves the machine.** Proxy, WebSocket and MCP bind to loopback. The journal stores timings and counts — never note text, prompts, code or file paths. The only exceptions: the anonymous update check, and Pro's download/activation (the only moment a license key is sent). Both have an off switch.
 3. **Cheapest step that works.** Class swap (no AI) → quick path (one fast-model call) → full agent. A step that isn't sure hands over to the next one; it never guesses.
 4. **Don't touch the user's project uninvited.** Changes land only to apply a request (always undoable), plus the one-time commit note the user agrees to.
 5. **Every shortcut has an off switch** (`ILSE_QUICK`, `ILSE_HISTORY`, `ILSE_COMPONENT_CARD`, `ILSE_RESUME`, `ILSE_MODEL`), so runs can be compared in the journal.
+6. **Free and Pro have one written border** — `docs/free-vs-pro.md`. The core never imports Pro code; Pro plugs in through `src/pro/types.ts`.
 
 ## Map
 

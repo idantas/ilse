@@ -26,7 +26,8 @@ async function main(): Promise<void> {
 
   const connectUpstream = async (): Promise<StreamableHTTPClientTransport | null> => {
     if (upstream) return upstream;
-    const info = readServerInfo();
+    // The agent starts this bridge in its project: talk to that project's Ilse
+    const info = readServerInfo(process.cwd());
     if (!info) return null;
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${info.port}${MCP_PATH}`), {
       requestInit: { headers: { Authorization: `Bearer ${getLocalToken()}` } },

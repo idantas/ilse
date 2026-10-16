@@ -1,24 +1,30 @@
 import chalk from 'chalk';
+import { loadPro } from '../pro/load.js';
 import * as p from '@clack/prompts';
-import { loadUserConfig, saveUserConfig, isFirstRun, isProjectSetup, type IlseMode } from '../config/user-config.js';
+import { loadUserConfig, saveUserConfig, isFirstRun, type IlseMode } from '../config/user-config.js';
 import { detectAgent, executeAnnotation, executeBatch, buildBatchPrompt, killAllActiveProcesses, type AgentDetection } from '../agent/executor.js';
-import { startServer, broadcast, getPort } from '../bridge/ws-server.js';
+import { startServer, broadcast, getPort, getAllowedOrigin } from '../bridge/ws-server.js';
 import { resolveAnnotation, markSent, getAnnotation } from '../bridge/store.js';
 import { createMcpHttpHandler, MCP_PATH } from '../mcp/http.js';
 import { getLocalToken, writeServerInfo } from '../config/local-token.js';
 import { createRequire } from 'node:module';
 import { Journal } from '../telemetry/journal.js';
-import { detectFramework, type Framework } from '../setup/framework-detect.js';
+import { detectFramework, type Framework, type FrameworkDetection } from '../setup/framework-detect.js';
+import { removeIlseComponent, type RemoveResult } from '../setup/remove-component.js';
+import { choseInjectedToolbar, saveInjectedToolbarChoice } from '../config/project-rc.js';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { basename, join, relative } from 'node:path';
 import { injectIlseComponent } from '../setup/inject-component.js';
 import { detectTokens } from '../setup/token-detect.js';
 import { t, detectLocale, setLocale } from '../i18n/index.js';
 import type { Annotation } from '../types.js';
 import { checkForUpdate } from './update-check.js';
-import { startProxy } from '../proxy/server.js';
+import { startProxy, type DevTarget } from '../proxy/server.js';
 import { serveToolbar } from '../proxy/toolbar.js';
 import { serveBookmarklet } from '../proxy/bookmarklet.js';
-import { findDevServer, waitForDevServer, pageHasToolbar } from '../proxy/find-dev-server.js';
-import { planProject, portIsFree, startHiddenDevServer, type SamePortPlan } from '../proxy/same-port.js';
+import { findDevServer, waitForDevServer, pageHasToolbar, servedByIlse } from '../proxy/find-dev-server.js';
+import { codePorts, projectUsesPlugin, portHolder, stopIlse, busyOptions, type PortHolder } from '../proxy/port-hints.js';
+import { planProject, portIsFree, nextFreePort, startHiddenDevServer, DevServerLockedError, type SamePortPlan, type RunningDevServer } from '../proxy/same-port.js';
 import { spawn } from 'node:child_process';
 import { planTokenSwap, planTextSwap, applyTokenSwap, describeSwap, type SwapPlan } from '../context/token-swap.js';
 import {
@@ -102,7 +108,7 @@ async function firstRunSetup(agent: AgentDetection): Promise<IlseMode> {
 }
 
 // ── Per-project setup (inject toolbar) ───────────────────────────────────────
-// Runs whenever .ilserc.json doesn't exist in cwd — independent of global setup.
+// Runs with --inject until the project is marked as using it — independent of global setup.
 
 async function projectSetup(): Promise<void> {
   p.intro(chalk.bold(t('cli.newProject')));
@@ -147,6 +153,29 @@ async function projectSetup(): Promise<void> {
 
   p.outro(chalk.bold(t('cli.ready')));
 }
+
+// ── <Ilse /> left in the layout by an older Ilse ─────────────────────────────
+// Older versions always wrote <Ilse /> into the layout; now it's opt-in (--inject,
+// which marks the project). Unmarked means the user never chose it: take it out,
+// quietly, so the toolbar comes from the CLI and matches its version.
+
+async function removeLegacyComponent(framework: FrameworkDetection): Promise<FrameworkDetection> {
+  const cwd = process.cwd();
+  const path = framework.layoutPath!;
+  const rel = relative(cwd, path);
+  let result: RemoveResult;
+  try { result = removeIlseComponent(readFileSync(path, 'utf8'), path); } catch { result = { ok: false, reason: 'not-found' }; }
+  if (!result.ok) {
+    p.log.warn(t('cli.legacyFailed', { path: rel }));
+    return framework;
+  }
+  try { writeFileSync(path, result.content, 'utf8'); } catch {
+    p.log.warn(t('cli.legacyFailed', { path: rel }));
+    return framework;
+  }
+  return { ...framework, alreadyInstalled: false };
+}
+
 
 // ── Formatted annotation display ─────────────────────────────────────────────
 
@@ -236,6 +265,8 @@ async function choosePort(plan: SamePortPlan, options: DefaultOptions, key: stri
   const saved = loadUserConfig().appPorts?.[key];
   if (saved) return saved;
   if (!interactive()) return plan.appPort;
+  // Taken: don't offer it — startSamePort says so and suggests a free one
+  if (!(await portIsFree(plan.appPort))) return plan.appPort;
   const keep = await p.select({
     message: t('samePort.portQuestion', { url: `localhost:${plan.appPort}` }),
     options: [
@@ -258,6 +289,91 @@ async function choosePort(plan: SamePortPlan, options: DefaultOptions, key: stri
   return port;
 }
 
+/** Who holds a taken port, in words: "another Ilse (site)", "next (other-app)" */
+function describeHolder(holder: PortHolder | null): string | null {
+  if (!holder) return null;
+  const project = holder.dir ? basename(holder.dir) : undefined;
+  if (holder.ilse) return project ? t('samePort.whoIlse', { project }) : t('samePort.whoIlseAlone');
+  return project ? `${holder.program} (${project})` : holder.program;
+}
+
+/**
+ * The app's port is taken by something that isn't this app's plugin: say who,
+ * then offer what keeps the login working. Returns the port to run on (saved
+ * for this project), or null to give up with a hint.
+ */
+async function chooseBusyPort(plan: SamePortPlan, key: string): Promise<number | null> {
+  const busy = plan.appPort;
+  const [holder, header] = await Promise.all([portHolder(busy), servedByIlse(busy)]);
+  const ilse = !!holder?.ilse || header;
+  const who = describeHolder(holder ? { ...holder, ilse } : null) ?? (ilse ? t('samePort.whoIlseAlone') : null);
+  const ports = codePorts(plan.dir);
+  const free: number[] = [];
+  for (const cp of ports) if (cp.port !== busy && await portIsFree(cp.port)) free.push(cp.port);
+  const nextFree = await nextFreePort(busy).catch(() => null);
+  const busyLine = who ? t('samePort.busyBy', { url: `localhost:${busy}`, who }) : t('samePort.busy', { port: busy });
+
+  if (!interactive()) {
+    console.log('');
+    console.log(chalk.yellow(`  ${busyLine}`));
+    if (ports.length) console.log(chalk.dim(`  ${t('samePort.codePorts', { list: ports.map(cp => `:${cp.port} (${cp.sources[0]})`).join(', ') })}`));
+    console.log(chalk.dim(`  ${t('samePort.busyHint')}`));
+    console.log('');
+    return null;
+  }
+
+  // The code doesn't say whether the login is tied to this port: ask once per project
+  let loginTied = loadUserConfig().loginTied?.[key];
+  if (loginTied === undefined && !ports.some(cp => cp.auth)) {
+    const answer = await p.confirm({ message: t('samePort.loginQuestion', { port: busy }), initialValue: true });
+    if (p.isCancel(answer)) { p.cancel(t('cli.cancelled')); process.exit(0); }
+    loginTied = answer;
+    saveUserConfig({ loginTied: { ...loadUserConfig().loginTied, [key]: answer } });
+  }
+
+  const options = busyOptions({ busyPort: busy, ports, free, nextFree, holderIsIlse: ilse && !!holder, loginTied });
+  const recommended = options.length > 2 && options[0].kind !== 'free' ? ` ${t('samePort.recommended')}` : '';
+  const choice = await p.select({
+    message: busyLine,
+    options: options.map((o, i) => {
+      const mark = i === 0 ? recommended : '';
+      switch (o.kind) {
+        case 'code': return { value: i, label: t('samePort.busyUse', { url: `localhost:${o.port}` }) + mark, hint: t('samePort.fromCode', { source: o.source }) };
+        case 'stop': return { value: i, label: t('samePort.stopIlse', { url: `localhost:${o.port}` }) + mark, hint: loginTied || ports.some(cp => cp.port === busy && cp.auth) ? t('samePort.loginHere') : undefined };
+        case 'free': return {
+          value: i,
+          label: t('samePort.busyUse', { url: `localhost:${o.port}` }) + mark,
+          hint: o.authPort ? (o.authSource ? t('samePort.loginWarn', { source: o.authSource, port: o.authPort }) : t('samePort.loginWarnSaid', { port: o.authPort })) : undefined,
+        };
+        default: return { value: i, label: t('samePort.portChange') };
+      }
+    }),
+  });
+  if (p.isCancel(choice)) { p.cancel(t('cli.cancelled')); process.exit(0); }
+  const picked = options[choice as number];
+  let port: number;
+  if (picked.kind === 'stop') {
+    console.log(chalk.dim(`  ${t('samePort.stopping')}`));
+    if (!(await stopIlse(holder!, () => portIsFree(busy)))) {
+      console.log(chalk.yellow(`  ${t('samePort.stopFailed')}`));
+      return null;
+    }
+    port = busy;
+  } else if (picked.kind === 'other') {
+    const answer = await p.text({
+      message: t('samePort.portAsk'),
+      placeholder: String(nextFree ?? busy + 1),
+      validate: (v) => (/^\d{2,5}$/.test(v ?? '') && Number(v) > 0 && Number(v) < 65536 ? undefined : t('samePort.portInvalid')),
+    });
+    if (p.isCancel(answer)) { p.cancel(t('cli.cancelled')); process.exit(0); }
+    port = Number(answer);
+  } else {
+    port = picked.port;
+  }
+  saveUserConfig({ appPorts: { ...loadUserConfig().appPorts, [key]: port } });
+  return port;
+}
+
 async function startSamePort(options: DefaultOptions, bridgePort: number): Promise<'same-port' | 'plugin' | 'busy' | 'failed'> {
   const key = process.cwd();
   const plans = planProject(key);
@@ -270,7 +386,7 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
   if (!(await portIsFree(plan.appPort))) {
     // Already serving the toolbar itself (Vite plugin): nothing to start, work right there
     const running = await findDevServer(process.cwd(), [plan.appPort]);
-    if (running && await pageHasToolbar(running)) {
+    if (running && projectUsesPlugin(plan.dir) && await pageHasToolbar(running)) {
       const url = `http://localhost:${plan.appPort}`;
       console.log('');
       console.log(chalk.dim(`  ${t('proxy.direct')} `) + chalk.bold.cyan(url));
@@ -278,34 +394,67 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
       if (options.open !== false) openBrowser(url);
       return 'plugin';
     }
-    // Whatever holds the port may not even be this project — never put the toolbar over it
-    console.log('');
-    console.log(chalk.yellow(`  ${t('samePort.busy', { port: plan.appPort })}`));
-    console.log(chalk.dim(`  ${t('samePort.busyHint')}`));
-    console.log('');
+    // Whatever holds the port may not even be this project — never put the toolbar over it.
+    // Say who holds it and offer a port the code expects (login callbacks), saved for this project
+    const choice = await chooseBusyPort(plan, key);
+    if (choice !== null) return startSamePort({ ...options, port: undefined, target: choice }, bridgePort);
     return 'busy';
   }
   const where = plan.app ? ` · ${plan.app}` : '';
   console.log(chalk.dim(`  ${t('samePort.starting', { script: `npm run ${plan.script}${where}` })}`));
-  let dev;
+  let dev: RunningDevServer | undefined;
+  let reused: DevTarget | undefined;
   try {
     dev = await startHiddenDevServer(plan, (line) => console.log(chalk.dim('  │ ') + line));
   } catch (err) {
-    console.log(chalk.red(`  ✗ ${t('samePort.failed')}: ${(err as Error).message}`));
-    return 'failed';
+    if (!(err instanceof DevServerLockedError)) {
+      console.log(chalk.red(`  ✗ ${t('samePort.failed')}: ${(err as Error).message}`));
+      console.log(chalk.dim(`  ${t('samePort.failedHint')}`));
+      return 'failed';
+    }
+    // Next allows one dev server per folder. One that answers is used as is;
+    // one that doesn't is stuck and only blocks — say how to stop it
+    const { pid, port } = err.holder;
+    reused = port !== undefined && port !== plan.appPort ? (await findDevServer(plan.dir, [port])) ?? undefined : undefined;
+    if (!reused) {
+      console.log(chalk.red(`  ✗ ${t('samePort.lockStuck', { pid: pid ?? '?' })}`));
+      if (pid) console.log(chalk.dim(`  ${t('samePort.lockStuckHint', { pid })}`));
+      return 'failed';
+    }
+    console.log(chalk.dim(`  ${t('samePort.lockReuse', { port: reused.port, pid: pid ?? '?' })}`));
   }
+  dev?.onExit(({ code, lockHolder }) => {
+    console.log('');
+    if (lockHolder) {
+      console.log(chalk.red(`  ✗ ${t('samePort.lockStuck', { pid: lockHolder.pid ?? '?' })}`));
+      if (lockHolder.pid) console.log(chalk.dim(`  ${t('samePort.lockStuckHint', { pid: lockHolder.pid })}`));
+    } else {
+      console.log(chalk.red(`  ✗ ${t('samePort.exited', { code: String(code) })}`));
+    }
+  });
+  // The script fixed its own port and ignored the hidden one: proxy to where it is.
+  // On the app's port when that's still free, else the separate address.
+  const ownPort = dev?.ownPort;
+  const target = reused ?? dev!.target;
+  const onAppPort = ownPort === undefined || (ownPort !== plan.appPort && await portIsFree(plan.appPort));
+  let url: string;
   try {
-    const target = (await findDevServer(plan.dir, [dev.hiddenPort])) ?? { host: '127.0.0.1', port: dev.hiddenPort };
-    await startProxy({ target, port: plan.appPort, maxPort: plan.appPort, bridgePort, dualStack: true });
+    const proxy = onAppPort
+      ? await startProxy({ target, port: plan.appPort, maxPort: plan.appPort, bridgePort, dualStack: true })
+      : await startProxy({ target, port: options.proxyPort, bridgePort });
+    url = `http://localhost:${proxy.port}`;
   } catch (err) {
-    dev.stop();
+    dev?.stop();
     console.log(chalk.red(`  ✗ ${t('proxy.failed')}: ${(err as Error).message}`));
     return 'failed';
   }
-  const url = `http://localhost:${plan.appPort}`;
   console.log('');
-  console.log(chalk.dim(`  ${t('samePort.open')} `) + chalk.bold.cyan(url));
-  console.log(chalk.dim(`  ${t('samePort.portHint')}`));
+  if (ownPort !== undefined) {
+    console.log(chalk.yellow(`  ${t('samePort.ownPort', { port: ownPort })}`));
+    console.log(chalk.dim(`  ${t('samePort.ownPortHint', { port: ownPort, fixed: ownPort })}`));
+  }
+  console.log(chalk.dim(`  ${t(onAppPort ? 'samePort.open' : 'proxy.open')} `) + chalk.bold.cyan(url));
+  if (onAppPort) console.log(chalk.dim(`  ${t('samePort.portHint')}`));
   console.log('');
   if (options.open !== false) openBrowser(url);
   return 'same-port';
@@ -324,7 +473,7 @@ async function startToolbarProxy(options: DefaultOptions, bridgePort: number): P
     : await waitForDevServer(process.cwd(), {
         onWaiting: () => console.log(chalk.dim(`  ${t('proxy.waiting')}`)),
       });
-  if (await pageHasToolbar(target)) {
+  if (projectUsesPlugin(process.cwd()) && await pageHasToolbar(target)) {
     const url = `http://localhost:${target.port}`;
     console.log('');
     console.log(chalk.dim(`  ${t('proxy.direct')} `) + chalk.bold.cyan(url));
@@ -369,9 +518,13 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
 
   // Toolbar: proxy by default (nothing written to the project). The old
   // flow — writing <Ilse /> into the layout — is opt-in with --inject.
-  const framework = detectFramework();
-  if (options.inject && !isProjectSetup()) {
+  let framework = detectFramework();
+  if (options.inject && !choseInjectedToolbar(process.cwd())) {
     await projectSetup();
+  }
+  if (options.inject) saveInjectedToolbarChoice(process.cwd());
+  else if (framework.alreadyInstalled && !choseInjectedToolbar(process.cwd())) {
+    framework = await removeLegacyComponent(framework);
   }
   const useProxy = !options.inject && !framework.alreadyInstalled;
 
@@ -425,13 +578,13 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   console.log('');
 
   if (config.mode === 'mcp') {
-    console.log(chalk.dim('  Modo: ') + chalk.green(t('cli.modeMcpLabel')));
+    console.log(chalk.dim(`  ${t('cli.modeLabel')}: `) + chalk.green(t('cli.modeMcpLabel')));
   } else if (config.mode === 'automatic' && agent.kind !== 'none') {
-    console.log(chalk.dim('  Modo: ') + chalk.green(t('cli.modeAutoLabel')) + chalk.dim(' · Agente: ') + chalk.cyan(agent.kind)
+    console.log(chalk.dim(`  ${t('cli.modeLabel')}: `) + chalk.green(t('cli.modeAutoLabel')) + chalk.dim(` · ${t('cli.agentLabel')}: `) + chalk.cyan(agent.kind)
       + (agentAccount ? chalk.dim(' · ') + chalk.cyan(describeAccount(agentAccount)) : ''));
     if (agentAccount) console.log(chalk.dim(`  ${t('cli.accountHint')}`));
   } else {
-    console.log(chalk.dim('  Modo: ') + chalk.yellow(t('cli.modeClipboardLabel')));
+    console.log(chalk.dim(`  ${t('cli.modeLabel')}: `) + chalk.yellow(t('cli.modeClipboardLabel')));
   }
 
   if (detectedTokens.length > 0) {
@@ -725,6 +878,10 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         cs.label = annotations.map(a => a.note?.trim() || a.element).filter(Boolean).join(' · ').slice(0, 80);
         recordUndo(cs, 'agent');
         if (currentBatchId) journal.batchChanges(currentBatchId, changeTotals(cs));
+        // Findings from `ilse test` the agent just worked on: test their pages again to confirm
+        const fromTest = annotations.flatMap(a => a.testFinding ? [a.testFinding] : []);
+        const origin = getAllowedOrigin();
+        if (fromTest.length > 0 && origin) proServer?.retest?.(fromTest, origin);
       }
     }
   };
@@ -824,8 +981,8 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
             if (resolved) broadcast({ type: 'resolved', annotation: resolved });
           }
         },
-        onThinking: (text) => {
-          broadcast({ type: 'thinking', text });
+        onThinking: (text, activity) => {
+          broadcast({ type: 'thinking', text, activity });
         },
       });
       let result = await run(resumeId);
@@ -862,7 +1019,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
           model,
           prompt: repairPrompt(breaks),
           onEvent: (event) => journal.agentEvent(batchId, event),
-          onThinking: (text) => broadcast({ type: 'thinking', text }),
+          onThinking: (text, activity) => broadcast({ type: 'thinking', text, activity }),
         });
         breaks = repair.ok && !userStopped ? opts.broken!() : breaks;
         if (repair.sessionId) result = { ...result, sessionId: repair.sessionId };
@@ -998,6 +1155,22 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     },
   });
 
+  // Test mode from the toolbar is Ilse Pro's: the page asks, Pro runs it. Without Pro, none of these hooks exist
+  const pro = await loadPro();
+  const proServer = pro?.server?.({
+    cwd: process.cwd(),
+    send: broadcast,
+    log: (line, tone) => {
+      const retest = /^retest:(\d+):(\d+)$/.exec(line);
+      const summary = /^summary:(\d+):(\d+):(.*)$/.exec(line);
+      const text = line === 'no-browser' ? `${t('test.noBrowser')} npx playwright install chromium`
+        : line === 'login-saved' ? `✓ ${t('test.loginSaved')}`
+        : retest ? t('test.retest', { fixed: retest[1], still: retest[2] })
+        : summary ? `${t('test.summary', { count: summary[1], pages: summary[2] })} · ${summary[3]}` : line;
+      console.log(tone === 'warn' ? chalk.yellow(`  ${text}`) : chalk.dim(`  ${text}`));
+    },
+  });
+
   const server = await startServer({
     // The toolbar for pages that load it from this port rather than the proxy:
     // the Vite plugin's middleware, the bookmarklet, the browser extension
@@ -1010,7 +1183,13 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     onUndo: handleUndo,
     onRedo: handleRedo,
     getLogs: () => ({ json: journal.toJSON(), markdown: journal.toMarkdown() }),
+    // Pro's test findings, shown in the toolbar's page scan
+    getFindings: proServer?.getFindings,
+    decideFinding: proServer?.decideFinding,
+    testControl: proServer?.testControl,
     connectExtras: () => ({
+      // The toolbar shows test mode awake only when Pro can run it
+      pro: { test: !!proServer?.testControl },
       undo: undoState(),
       mcp: { url: `http://localhost:${getPort()}${MCP_PATH}`, token: localToken },
       ...(agentAccount ? { account: describeAccount(agentAccount) } : {}),

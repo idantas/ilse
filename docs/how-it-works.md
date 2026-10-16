@@ -19,7 +19,7 @@ Before your agent is called, Ilse does the searching for it:
 - **Only the slice it needs.** The agent is told which lines to read, not the whole file — a 900-line component is ~10k tokens, re-sent on every turn.
 - **Component card.** For a reused component: where it is defined, whether it takes a `className`, and where it is used.
 - **Ilse's own history.** The last changes Ilse made to the same file ride along ("decided by the designer, keep them"), so a new fix doesn't undo an earlier one.
-- **Your design tokens.** Read on startup from `tailwind.config`, Tailwind v4 `@theme`, CSS variables or W3C `tokens.json`, so the agent uses your token rather than a hardcoded value.
+- **Your design tokens.** Read on startup from `tailwind.config`, Tailwind v4 `@theme`, CSS variables, W3C `tokens.json` or a `DESIGN.md` (Google's open format: its front-matter tokens join the panel, and the agent is pointed at the file for the rules), so the agent uses your token rather than a hardcoded value. Gradient tokens (`--brand-gradient: linear-gradient(…)`) show up under Fill, in their own Gradients section.
 - **Only what matters.** Styles are filtered by intent: "wrong color" sends only color information.
 - **Your references.** Pasted screenshots go along; dropped SVGs are copied into the project as assets.
 

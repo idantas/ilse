@@ -6,6 +6,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { readDesignMd } from './design-md.js';
 
 export interface DetectedToken {
   name: string;
@@ -184,6 +185,21 @@ function detectLibraries(cwd: string): string[] {
 // ── Main detection ─────────────────────────────────────────────────────────
 
 export function detectTokens(cwd: string = process.cwd()): TokenDetectionResult {
+  const found = detectCodeTokens(cwd);
+  // DESIGN.md adds what the code doesn't declare (yet); the code wins on a clash
+  const design = readDesignMd(cwd);
+  if (!design || design.tokens.length === 0) return found;
+  const label = (t: DetectedToken) => t.name.replace(/^[a-z]+\./, '');
+  const have = new Set(found.tokens.map(t => `${t.type}:${label(t)}`));
+  const extra = design.tokens.filter(t => !have.has(`${t.type}:${label(t)}`));
+  return {
+    ...found,
+    source: found.source === 'none' ? design.path : `${found.source} + ${design.path}`,
+    tokens: [...found.tokens, ...extra],
+  };
+}
+
+function detectCodeTokens(cwd: string): TokenDetectionResult {
   const libraries = detectLibraries(cwd);
 
   // Try sources in priority order

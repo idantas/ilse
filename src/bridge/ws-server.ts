@@ -13,6 +13,7 @@ import {
   nextSequence,
 } from './store.js';
 import type { Annotation } from '../types.js';
+import type { LiveFindings, Decision, TestAction } from '../pro/types.js';
 import { getLocale } from '../i18n/index.js';
 import { locateSource, type SourceHit, type LocateQuery } from '../context/locate.js';
 
@@ -45,6 +46,11 @@ export interface WsServerOptions {
   onRedo?: () => void;
   /** Journal export for Settings → Logs */
   getLogs?: () => { json: unknown; markdown: string };
+  /** The latest `ilse test` run, minus what the dev already decided */
+  getFindings?: () => LiveFindings;
+  decideFinding?: (id: string, decision: Decision) => boolean;
+  /** Toolbar's test mode, on the app at this origin (the page's own, loopback only) */
+  testControl?: (action: TestAction, origin: string) => void;
   /** Plain HTTP requests on the same port (the MCP endpoint). Return true when handled. */
   httpHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean> | boolean;
   /** Extra fields for the 'connected' payload — e.g. undo state after a page reload */
@@ -213,6 +219,7 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
         domPath: msg.domPath as string | undefined,
         nearbyElements: msg.nearbyElements as string[] | undefined,
         text: typeof msg.text === 'string' ? msg.text.slice(0, 80) : undefined,
+        testFinding: parseTestFinding(msg.testFinding),
         ...(() => {
           const t0 = performance.now();
           const source = locateForMessage(msg);
@@ -331,6 +338,25 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       break;
     }
 
+    case 'findings': {
+      const live = options.getFindings?.() ?? { at: null, findings: [] };
+      ws.send(JSON.stringify({ type: 'findings', ...live }));
+      break;
+    }
+
+    case 'test': {
+      // The origin this server was claimed by — the app the toolbar is on, never one the message names
+      const actions: TestAction[] = ['run', 'run-anon', 'login', 'login-done', 'login-cancel'];
+      if (allowedOrigin && actions.includes(msg.action as TestAction)) options.testControl?.(msg.action as TestAction, allowedOrigin);
+      break;
+    }
+
+    case 'finding_decide': {
+      const decision = msg.decision === 'approved' || msg.decision === 'discarded' ? msg.decision : null;
+      if (typeof msg.id === 'string' && decision) options.decideFinding?.(msg.id, decision);
+      break;
+    }
+
     case 'stats': {
       ws.send(JSON.stringify({ type: 'stats', stats: getStats() }));
       break;
@@ -339,6 +365,20 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
     default:
       ws.send(JSON.stringify({ type: 'error', message: `Unknown type: ${msg.type}` }));
   }
+}
+
+/** Only the fields a retest needs, as plain short strings */
+function parseTestFinding(v: unknown): Annotation['testFinding'] {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  if (typeof o.id !== 'string' || typeof o.page !== 'string' || !o.page.startsWith('/')) return undefined;
+  const str = (x: unknown, max: number) => typeof x === 'string' ? x.slice(0, max) : undefined;
+  return { id: o.id.slice(0, 40), page: o.page.slice(0, 300), category: str(o.category, 30), selector: str(o.selector, 300) };
+}
+
+/** The app this server serves (the first page that connected), null before one does */
+export function getAllowedOrigin(): string | null {
+  return allowedOrigin;
 }
 
 export function broadcast(data: Record<string, unknown>) {

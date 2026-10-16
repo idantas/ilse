@@ -211,7 +211,7 @@ export type CaptureMode = 'click' | 'text' | 'area';
 // --- Smart Identification ---
 
 // Framework internals that pollute the component stack — filter these out
-const FRAMEWORK_INTERNALS = new Set([
+export const FRAMEWORK_INTERNALS = new Set([
   'SegmentViewNode', 'InnerLayoutRouter', 'RedirectErrorBoundary', 'RedirectBoundary',
   'HTTPAccessFallbackBoundary', 'NotFoundBoundary', 'LoadingBoundary', 'ErrorBoundary',
   'ClientSegmentRoot', 'OuterLayoutRouter', 'MetadataBoundary', 'Suspense',

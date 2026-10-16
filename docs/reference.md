@@ -33,7 +33,7 @@ The browser keeps the same address, so what is tied to it keeps working: the log
 - **The port:** detected — a `--port` / `-p` in the script, else `server.port` in `vite.config`, else the framework default (Next 3000, Vite 5173). The first time in each project Ilse shows it — *Your app will run at localhost:5173* — and you **run on this port** or **change the port**. The choice is saved per project in `~/.ilse/config.json`; `ilse-design --port <n>` changes it later, `--target <n>` overrides it for one run.
 - **Monorepos:** when the root script is a task runner (`turbo dev`, …), Ilse finds the Vite and Next apps in the workspace (`workspaces` in `package.json`, or `pnpm-workspace.yaml`) and runs the app's own `dev` script from its folder — the runner wouldn't pass the hidden port on. Several apps: it asks once which one to open.
 - **The hidden port:** `PORT` for everyone, plus `--port` for Next and Vite (a flag after the script's own wins over it).
-- **Port already in use:** Ilse says so and stops — it never puts the toolbar over a server it didn't start, which may belong to another project. If it's your own dev server, stop it and run `ilse` again, or use it as it is with `--separate`. A dev server that already loads the toolbar (Vite plugin) is used right there.
+- **Port already in use:** Ilse says who holds it (another `ilse`, or another app's dev server) and offers, best first: a free port your code names (`.env.example`, `next.config`, `vite.config`, auth/middleware files, the dev script); stopping the other `ilse` when your login is tied to that port; the next free port — with a warning when the login points to the taken one; or a port you type. The choice is saved for this project. Real `.env` files are never opened: only committed templates, and only `host:port` and the variable name are kept. When the code doesn't say, Ilse asks once whether the login depends on the port. It never puts the toolbar over a server it didn't start. Without a terminal to ask, it stops and lists the ports your code names. The toolbar is used right on the app's port only when the project's `vite.config` loads `ilse-design/vite`.
 - **Separate address:** `--separate` for one run, or choose it in the first run. You run the dev server yourself and Ilse opens `localhost:4700`; anything tied to the original address (logins, callbacks) stays there.
 - **Not covered yet:** a dev script that starts several servers at once (they'd all get the same `PORT`), apps that need other workspace services running alongside, and frameworks that read neither `PORT` nor `--port`. Use `--separate` there.
 
@@ -50,7 +50,7 @@ The first run asks how Ilse should hand annotations to your agent:
 ### Point and adjust
 
 - **3 ways to point:** click an element, select text, or draw an area.
-- **Select the parent:** the ↰ button on the note card moves the selection up to the containing element (library wrappers of the same size are skipped). A click inside an SVG selects the whole `<svg>`; ⌘-click (Ctrl-click) selects the exact element, such as one path of an icon.
+- **Select the parent:** the ↰ button on the note card moves the selection up to the containing element (library wrappers of the same size are skipped). The element's label at the top of the card opens its place in the page: a couple of elements above, the ones beside it and the ones inside, named by the component that renders them. Hover a row to see it on the page; click to select it. A click inside an SVG selects the whole `<svg>`; ⌘-click (Ctrl-click) selects the exact element, such as one path of an icon.
 - **Property panel:** text, layout (width/height as Fixed · Hug · Fill, flow, alignment, gap, padding and margin per side), typography, colors, stroke, radius and opacity — with your project's scale and tokens.
 - **None:** spacing, radius and stroke-weight lists start with *None* (zero) — no padding, square corners, no stroke.
 - **Stroke:** *+* adds one and shows its color, weight, style and sides; *−* takes it away.
@@ -65,7 +65,6 @@ The first run asks how Ilse should hand annotations to your agent:
 ### Review the page
 
 - **Scan:** checks the whole page and lists design issues by category — contrast, typography, spacing, accessibility, components. Hover an issue to see where it is.
-- **Suggestions for one element:** the glasses button on the card shows that element's issues. *Fix all suggestions* sends them as one request; *Review with AI* runs your agent to review reuse, consistency and tokens (uses your account).
 
 ### Toolbar and settings
 
@@ -133,7 +132,16 @@ It never records your note text, prompts, code or file paths.
 
 ## Connect your agent (MCP)
 
-To work from your agent's chat (Claude Desktop, Claude Code, Cursor…): run `ilse-design --mode mcp`, open the toolbar settings → **Connect agent**, copy the block for your agent and paste it into its MCP settings.
+To work from your agent's chat, install Ilse in your agents once:
+
+```bash
+ilse mcp install              # asks which of the agents found: claude-code, claude-desktop, cursor, codex, gemini
+ilse mcp install cursor       # just one
+ilse mcp install --print      # show what would change, change nothing
+ilse mcp uninstall            # take it out again
+```
+
+Each agent gets the `ilse-mcp` bridge, which finds the `ilse` running in the agent's project by itself. Only Ilse's entry is touched; a settings file that doesn't parse is left alone. Once installed, every new conversation knows Ilse's rules — including calling `ilse_changes` before a commit, so edits made through Ilse don't look like strangers. Then run `ilse-design --mode mcp` in the project. (The toolbar settings → **Connect agent** still shows the blocks to paste by hand.)
 
 At the start of a conversation, start the watch once:
 
@@ -245,6 +253,8 @@ export default function RootLayout({ children }) {
 ```
 
 It renders nothing in production. Run `ilse-design` as usual and it skips the proxy.
+
+Older versions of Ilse always wrote `<Ilse />` into the layout. So when it finds one it didn't mark as your choice, Ilse removes it and uses the toolbar without touching the project. To keep yours, run once with `--inject` (remembered in `.git/ilse/state.json`, outside the project's files).
 
 ## Compatibility
 
