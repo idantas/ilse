@@ -11,7 +11,7 @@
 
 Você abre seu app no navegador, aponta o que está errado e diz como deveria ser — ou ajusta ali mesmo, como no Figma. Seu agente de IA muda o código. Você vê o resultado na página e decide se fica ou se desfaz.
 
-> **Projeto pessoal, em beta.** Feito por um designer, para designers que trabalham com agentes de código. Gratuito e open source.
+> **Projeto pessoal, em beta.** Feito por um designer, para designers que trabalham com agentes de código. Gratuito para usar, com o código aberto para ler.
 
 ## O que dá para fazer
 
@@ -69,4 +69,4 @@ A IA livrou os designers do gargalo da execução, mas o ofício ainda precisa d
 
 Issues e pull requests são bem-vindos — veja [CONTRIBUTING.md](CONTRIBUTING.md). Problemas de segurança vão em privado: [SECURITY.md](SECURITY.md).
 
-Licença MIT — veja [LICENSE](LICENSE).
+[PolyForm Shield 1.0.0](LICENSE): livre para usar, alterar e compartilhar — só não para criar um produto que concorra com a Ilse. Até a 0.5.1 a licença era MIT; veja [NOTICE](NOTICE).

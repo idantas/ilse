@@ -11,7 +11,7 @@
 
 You open your app in the browser, point at what's wrong and say how it should be — or adjust it right there, like in Figma. Your AI coding agent changes the code. You see the result on the page, and keep it or undo it.
 
-> **Side project, in beta.** Made by a designer, for designers who work with code agents. Free and open source.
+> **Side project, in beta.** Made by a designer, for designers who work with code agents. Free to use, with the code open to read.
 
 ## What you can do
 
@@ -69,4 +69,4 @@ AI freed designers from the execution bottleneck, but craft still needs human ju
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](https://github.com/idantas/ilse/blob/main/CONTRIBUTING.md). Security problems go privately: [SECURITY.md](https://github.com/idantas/ilse/blob/main/SECURITY.md).
 
-MIT license — see [LICENSE](https://github.com/idantas/ilse/blob/main/LICENSE).
+[PolyForm Shield 1.0.0](https://github.com/idantas/ilse/blob/main/LICENSE): free to use, change and share — just not to build a product that competes with Ilse. Versions up to 0.5.1 were MIT; see [NOTICE](https://github.com/idantas/ilse/blob/main/NOTICE).

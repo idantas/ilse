@@ -1,0 +1,36 @@
+Ilse
+Required Notice: Copyright (c) 2026 Iverson Dantas (https://github.com/idantas/ilse)
+
+Starting with version 0.5.2, Ilse is licensed under the PolyForm Shield
+License 1.0.0 (see LICENSE): free to use, change and share, but not to build
+a product that competes with Ilse.
+
+Versions up to and including 0.5.1 were released under the MIT License and
+stay under it. That includes code contributed under the MIT License by
+Huxley Dias (pull request #13: Vite plugin, bookmarklet, Chrome extension and
+the WebSocket client scan fix). Its notice is kept below, as the MIT License
+requires.
+
+-------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2026 Iverson Dantas
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

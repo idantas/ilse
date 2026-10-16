@@ -24,7 +24,7 @@
   "bugs": {
     "url": "https://github.com/idantas/ilse/issues"
   },
-  "license": "MIT",
+  "license": "PolyForm-Shield-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/idantas/ilse.git"
@@ -32,7 +32,8 @@
   "files": [
     "dist",
     "extension",
-    "README.md"
+    "README.md",
+    "NOTICE"
   ],
   "type": "module",
   "exports": {
