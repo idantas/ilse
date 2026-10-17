@@ -84,6 +84,7 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
   const [order, setOrder] = useState<Order>(() => load(ORDER_KEY, ['color', 'group'] as const, 'color'));
   const [hovered, setHovered] = useState<Swatch | null>(null);
   const [hoveredGradient, setHoveredGradient] = useState<GradientToken | null>(null);
+  const [hoveredNone, setHoveredNone] = useState(false);
   const gradientCaption = hoveredGradient ?? (hovered ? undefined : gradients.find(g => g.name === gradientName));
   const [hsv, setHsv] = useState<HSVA>(() => rgbToHsv(current));
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -149,6 +150,13 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
     onPick('transparent');
   }
   const isNone = !gradientName && isTransparent(value);
+  const noneChip = allowNone ? (
+    <NoColorChip
+      selected={isNone}
+      onHover={(on) => { setHoveredNone(on); if (on) { setHovered(null); setHoveredGradient(null); } }}
+      onPick={pickNone}
+    />
+  ) : null;
 
   function pickTyped(input: string) {
     const c = readColor(input);
@@ -219,7 +227,13 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
 
         {/* Caption: which token is under the cursor / applied, or how far off-standard */}
         <div style={{ height: 16, padding: `0 ${PAD}px 6px`, display: 'flex', alignItems: 'center', gap: 6, color: color.mutedForeground }}>
-          {gradientCaption ? (
+          {hoveredNone || (isNone && !hovered && !hoveredGradient) ? (
+            <>
+              <span style={{ color: color.foreground }}>{t('color.none')}</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontFamily: font.mono, fontSize: 10, flexShrink: 0 }}>transparent</span>
+            </>
+          ) : gradientCaption ? (
             <>
               <span style={{ color: color.foreground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{gradientCaption.label}</span>
               <span style={{ flex: 1 }} />
@@ -248,19 +262,14 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
           ) : current.a === 0 ? 'transparent' : null}
         </div>
 
-        {allowNone && (
-          <div style={{ padding: `0 ${PAD}px 8px` }}>
-            <NoColorButton selected={isNone} onPick={pickNone} />
-          </div>
-        )}
-
         {tokens.length + gradients.length === 0 ? (
           <div style={{ padding: `0 ${PAD}px ${PAD}px`, color: color.mutedForeground, lineHeight: 1.5 }}>
+            {noneChip && <div style={{ display: 'grid', gridTemplateColumns: `repeat(${COLS}, 1fr)`, gap: 5, marginBottom: 8 }}>{noneChip}</div>}
             Nenhum token de cor nesta página. Declare as cores como variáveis CSS no <code>:root</code>.
           </div>
         ) : (
           <div
-            onMouseLeave={() => { setHovered(null); setHoveredGradient(null); }}
+            onMouseLeave={() => { setHovered(null); setHoveredGradient(null); setHoveredNone(false); }}
             style={{ overflowY: 'auto', maxHeight: 176, padding: `2px ${PAD}px ${PAD}px` }}
           >
             {gradients.length > 0 && (
@@ -288,10 +297,11 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
               </div>
             )}
             {order === 'color' ? (
-              colorSections(tokens).map(sec => (
+              colorSections(tokens).map((sec, i) => (
                 <div key={sec.name} style={{ marginBottom: 10 }}>
                   <div style={groupLabel}>{t(SECTION_LABELS[sec.name])}</div>
                   <SwatchGrid
+                    lead={i === 0 ? noneChip : null}
                     swatches={sec.swatches}
                     selected={matched}
                     nearest={nearest?.token}
@@ -301,7 +311,7 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
                 </div>
               ))
             ) : (
-              familyRows(tokens).map(row => (
+              familyRows(tokens).map((row, i) => (
                 <div key={row.name} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
                   <span title={row.name} style={{
                     width: 64, flexShrink: 0, paddingTop: 3, color: color.mutedForeground,
@@ -310,6 +320,7 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
                     {row.name}
                   </span>
                   <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {i === 0 && noneChip && <span style={{ width: 20, height: 20, display: 'flex' }}>{noneChip}</span>}
                     {row.tokens.map(t => (
                       <ChipButton
                         key={t.name}
@@ -335,27 +346,30 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
 
 // ── No colour ──────────────────────────────────────────────────────────────
 
-function NoColorButton({ selected, onPick }: { selected: boolean; onPick: () => void }) {
+function NoColorChip({ selected, onHover, onPick }: {
+  selected: boolean;
+  onHover: (on: boolean) => void;
+  onPick: () => void;
+}) {
   return (
     <button
-      onClick={onPick}
+      aria-label={t('color.none')}
       aria-pressed={selected}
-      title="transparent"
+      title={`${t('color.none')} · transparent`}
+      onMouseEnter={() => onHover(true)}
+      onFocus={() => onHover(true)}
+      onMouseLeave={() => onHover(false)}
+      onBlur={() => onHover(false)}
+      onClick={onPick}
       style={{
-        display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '3px 6px 3px 3px',
-        border: `1px solid ${selected ? ilse.orange : color.border}`, borderRadius: radius.sm - 2,
-        backgroundColor: color.background, color: color.foreground, cursor: 'pointer',
-        fontSize: 11, fontFamily: font.sans, textAlign: 'left',
-      }}
-    >
-      <span style={{
-        width: 18, height: 18, flexShrink: 0, borderRadius: 4, backgroundColor: '#fff',
-        boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.12)',
+        aspectRatio: '1', width: '100%', padding: 0, cursor: 'pointer', flexShrink: 0,
+        border: 'none', borderRadius: 5, backgroundColor: '#fff',
+        // Red diagonal: the usual "none" mark
         backgroundImage: 'linear-gradient(to top right, transparent calc(50% - 0.75px), #E5484D calc(50% - 0.75px), #E5484D calc(50% + 0.75px), transparent calc(50% + 0.75px))',
-      }} />
-      <span style={{ flex: 1 }}>{t('color.none')}</span>
-      <span style={{ fontFamily: font.mono, fontSize: 10, color: color.mutedForeground }}>transparent</span>
-    </button>
+        boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.1)',
+        outline: selected ? `2px solid ${ilse.orange}` : 'none', outlineOffset: 1.5,
+      }}
+    />
   );
 }
 
@@ -363,7 +377,9 @@ function NoColorButton({ selected, onPick }: { selected: boolean; onPick: () => 
 
 const COLS = 8;
 
-function SwatchGrid({ swatches, selected, nearest, onHover, onPick }: {
+function SwatchGrid({ lead, swatches, selected, nearest, onHover, onPick }: {
+  /** A cell before the tokens (the "No colour" chip) */
+  lead?: React.ReactNode;
   swatches: Swatch[];
   selected?: ColorToken;
   nearest?: ColorToken;
@@ -372,6 +388,7 @@ function SwatchGrid({ swatches, selected, nearest, onHover, onPick }: {
 }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${COLS}, 1fr)`, gap: 5 }}>
+      {lead}
       {swatches.map(sw => {
         const has = (x?: ColorToken) => !!x && sw.all.some(a => a.name === x.name);
         return (
