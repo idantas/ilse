@@ -745,6 +745,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
               gradientName: fillGradient?.name,
               onPickGradient: (g: GradientToken) => { record(spec.label); applyGradient(g); },
             } : {})}
+            allowNone={spec.key !== 'color'}
             anchor={picker.anchor}
             anchorEl={picker.anchorEl}
             onPick={(v, token) => { record(spec.label); apply(spec, v, token); }}

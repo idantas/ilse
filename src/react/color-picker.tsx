@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { color, radius, shadow, font, ilse } from './tokens.js';
 import {
-  readColor, rgbToHsv, hsvToRgb, formatColor, rgbaToHex, deltaE,
+  readColor, rgbToHsv, hsvToRgb, formatColor, rgbaToHex, deltaE, isTransparent,
   type ColorFormat, type HSVA, type RGBA,
 } from './color.js';
 import { familyRows, colorSections, byBaseness, type ColorToken, type GradientToken, type Swatch } from './color-tokens.js';
@@ -55,8 +55,10 @@ function save(key: string, v: string) {
 
 type EyeDropperCtor = new () => { open: () => Promise<{ sRGBHex: string }> };
 
-export function ColorPicker({ value, tokens, tokenName, gradients = [], gradientName, onPickGradient, anchor, anchorEl, onPick, onClose }: {
+export function ColorPicker({ value, tokens, tokenName, gradients = [], gradientName, onPickGradient, allowNone = true, anchor, anchorEl, onPick, onClose }: {
   value: string;
+  /** Offer "No colour" (transparent) — off for text, where it hides the text */
+  allowNone?: boolean;
   tokens: ColorToken[];
   /** Gradient tokens — offered for Fill only */
   gradients?: GradientToken[];
@@ -138,6 +140,15 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
     lastEmitted.current = null;
     onPick(t.value, t);
   }
+
+  // "No colour" is the `transparent` keyword (bg-transparent), not alpha 0 on the
+  // current hue — it maps to a class every system has.
+  function pickNone() {
+    lastEmitted.current = null;
+    setHsv(h => ({ ...h, a: 0 }));
+    onPick('transparent');
+  }
+  const isNone = !gradientName && isTransparent(value);
 
   function pickTyped(input: string) {
     const c = readColor(input);
@@ -237,6 +248,12 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
           ) : current.a === 0 ? 'transparent' : null}
         </div>
 
+        {allowNone && (
+          <div style={{ padding: `0 ${PAD}px 8px` }}>
+            <NoColorButton selected={isNone} onPick={pickNone} />
+          </div>
+        )}
+
         {tokens.length + gradients.length === 0 ? (
           <div style={{ padding: `0 ${PAD}px ${PAD}px`, color: color.mutedForeground, lineHeight: 1.5 }}>
             Nenhum token de cor nesta página. Declare as cores como variáveis CSS no <code>:root</code>.
@@ -313,6 +330,32 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
       </div>
     </div>,
     document.body,
+  );
+}
+
+// ── No colour ──────────────────────────────────────────────────────────────
+
+function NoColorButton({ selected, onPick }: { selected: boolean; onPick: () => void }) {
+  return (
+    <button
+      onClick={onPick}
+      aria-pressed={selected}
+      title="transparent"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '3px 6px 3px 3px',
+        border: `1px solid ${selected ? ilse.orange : color.border}`, borderRadius: radius.sm - 2,
+        backgroundColor: color.background, color: color.foreground, cursor: 'pointer',
+        fontSize: 11, fontFamily: font.sans, textAlign: 'left',
+      }}
+    >
+      <span style={{
+        width: 18, height: 18, flexShrink: 0, borderRadius: 4, backgroundColor: '#fff',
+        boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.12)',
+        backgroundImage: 'linear-gradient(to top right, transparent calc(50% - 0.75px), #E5484D calc(50% - 0.75px), #E5484D calc(50% + 0.75px), transparent calc(50% + 0.75px))',
+      }} />
+      <span style={{ flex: 1 }}>{t('color.none')}</span>
+      <span style={{ fontFamily: font.mono, fontSize: 10, color: color.mutedForeground }}>transparent</span>
+    </button>
   );
 }
 

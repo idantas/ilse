@@ -851,6 +851,7 @@ const messages = {
   'color.section.gradient': { pt: 'Degradês', en: 'Gradients' },
   'color.gradient': { pt: 'degradê', en: 'gradient' },
   'color.eyedropper': { pt: 'Conta-gotas', en: 'Eyedropper' },
+  'color.none': { pt: 'Sem cor', en: 'No color' },
   'color.value': { pt: 'Valor da cor', en: 'Color value' },
   'color.opacity': { pt: 'Opacidade', en: 'Opacity' },
   'sketch.penColor': { pt: 'Cor do lápis', en: 'Pen color' },
