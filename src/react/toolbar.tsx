@@ -38,6 +38,7 @@ import { analyzeSketch, renderSketchImage, formatSketchNote, drawnContainer, typ
 import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, scopeTwins, type LiveDrag, selectionTarget, selectableParent } from './live-layout.js';
 import type { StyleChange, StyleData } from '../types.js';
 import { toggleFreeze, isFrozen } from './freeze.js';
+import { shieldPage } from './shield.js';
 import { TooltipLayer } from './tooltip-layer.js';
 import { radius, color, shadow, ilse, font, modeAccent } from './tokens.js';
 import { t, detectLocale, setLocale, getLocale, type Locale } from '../i18n/index.js';
@@ -570,6 +571,19 @@ function AnnotationPopover({
           </button>
         )}
         {/* The suggestions toggle (eyeglass) left the card for now; a sent annotation still lists them */}
+        {/* Same as Esc: the draft and its previews go, selection mode stays */}
+        <button
+          onClick={onCancel}
+          title={withShortcut(t('toolbar.close'), 'Esc')}
+          aria-label={t('toolbar.close')}
+          style={{
+            width: 24, height: 24, flexShrink: 0, padding: 0, border: 'none', borderRadius: radius.sm,
+            background: 'none', cursor: 'pointer', color: color.mutedForeground,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <IconX size={14} stroke={1.75} />
+        </button>
       </div>
 
       {/* Where the element sits — the styles are already in the property panel */}
@@ -1584,6 +1598,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   useEffect(() => {
     setMounted(true);
+    shieldPage();
     // Sync pause state on mount — freeze state is persisted on window and
     // survives HMR/remount, but the React state does not. Without this
     // sync, the button icon would show "pause" even when already frozen.
