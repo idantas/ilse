@@ -13,6 +13,7 @@ import {
   nextSequence,
 } from './store.js';
 import type { Annotation } from '../types.js';
+import type { LiveFindings, Decision, TestAction } from '../pro/types.js';
 import { getLocale } from '../i18n/index.js';
 import { locateSource, type SourceHit, type LocateQuery } from '../context/locate.js';
 
@@ -41,10 +42,23 @@ export interface WsServerOptions {
   onAnnotation?: (annotation: Annotation) => void;
   onBatch?: (annotations: Annotation[]) => void;
   onStop?: () => void;
-  onUndo?: () => void;
+  /** With a change id: only when that change is the one an undo takes back now */
+  onUndo?: (changeSetId?: string) => void;
+  /** Undo a run that landed off the page and run its notes again, pointed at this page */
+  onRedoHere?: (changeSetId: string) => void;
   onRedo?: () => void;
   /** Journal export for Settings → Logs */
   getLogs?: () => { json: unknown; markdown: string };
+  /** The latest `ilse test` run, minus what the dev already decided */
+  getFindings?: () => LiveFindings;
+  decideFinding?: (id: string, decision: Decision) => boolean;
+  /** The memory screen: the design history, and test mode's memory when Pro is there */
+  getMemory?: () => Record<string, unknown>;
+  /** "Voltar a avisar" on a finding the dev ignored */
+  undoDecision?: (id: string) => boolean;
+  forgetTestMemory?: () => void;
+  /** Toolbar's test mode, on the app at this origin (the page's own, loopback only) */
+  testControl?: (action: TestAction, origin: string) => void;
   /** Plain HTTP requests on the same port (the MCP endpoint). Return true when handled. */
   httpHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean> | boolean;
   /** Extra fields for the 'connected' payload — e.g. undo state after a page reload */
@@ -177,6 +191,12 @@ function parseFrames(v: unknown): LocateQuery['frames'] {
   return out.element || out.owner ? out : undefined;
 }
 
+function parseNames(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const names = v.filter((n): n is string => typeof n === 'string' && /^[A-Z][\w$]{0,79}$/.test(n)).slice(0, 600);
+  return names.length > 0 ? names : undefined;
+}
+
 function parseTextEdit(v: unknown): Annotation['textEdit'] {
   const t = v as { from?: unknown; to?: unknown } | null;
   return t && typeof t.from === 'string' && typeof t.to === 'string' && t.from !== t.to ? { from: t.from, to: t.to } : undefined;
@@ -213,6 +233,8 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
         domPath: msg.domPath as string | undefined,
         nearbyElements: msg.nearbyElements as string[] | undefined,
         text: typeof msg.text === 'string' ? msg.text.slice(0, 80) : undefined,
+        testFinding: parseTestFinding(msg.testFinding),
+        pageComponents: parseNames(msg.pageComponents),
         ...(() => {
           const t0 = performance.now();
           const source = locateForMessage(msg);
@@ -321,13 +343,45 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       break;
     }
     case 'undo': {
-      options.onUndo?.();
+      options.onUndo?.(typeof msg.changeSetId === 'string' ? msg.changeSetId : undefined);
+      break;
+    }
+    case 'redo-here': {
+      if (typeof msg.changeSetId === 'string') options.onRedoHere?.(msg.changeSetId);
       break;
     }
 
     case 'logs': {
       const logs = options.getLogs?.();
       ws.send(JSON.stringify({ type: 'logs', json: logs?.json ?? null, markdown: logs?.markdown ?? '' }));
+      break;
+    }
+
+    case 'findings': {
+      const live = options.getFindings?.() ?? { at: null, findings: [] };
+      ws.send(JSON.stringify({ type: 'findings', ...live }));
+      break;
+    }
+
+    case 'test': {
+      // The origin this server was claimed by — the app the toolbar is on, never one the message names
+      const actions: TestAction[] = ['run', 'run-anon', 'login', 'login-done', 'login-cancel'];
+      if (allowedOrigin && actions.includes(msg.action as TestAction)) options.testControl?.(msg.action as TestAction, allowedOrigin);
+      break;
+    }
+
+    case 'finding_decide': {
+      const decision = msg.decision === 'approved' || msg.decision === 'discarded' ? msg.decision : null;
+      if (typeof msg.id === 'string' && decision) options.decideFinding?.(msg.id, decision);
+      break;
+    }
+
+    case 'memory':
+    case 'memory_undo_decision':
+    case 'memory_forget_test': {
+      if (msg.type === 'memory_undo_decision' && typeof msg.id === 'string') options.undoDecision?.(msg.id);
+      if (msg.type === 'memory_forget_test') options.forgetTestMemory?.();
+      ws.send(JSON.stringify({ type: 'memory', ...(options.getMemory?.() ?? {}) }));
       break;
     }
 
@@ -339,6 +393,20 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
     default:
       ws.send(JSON.stringify({ type: 'error', message: `Unknown type: ${msg.type}` }));
   }
+}
+
+/** Only the fields a retest needs, as plain short strings */
+function parseTestFinding(v: unknown): Annotation['testFinding'] {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  if (typeof o.id !== 'string' || typeof o.page !== 'string' || !o.page.startsWith('/')) return undefined;
+  const str = (x: unknown, max: number) => typeof x === 'string' ? x.slice(0, max) : undefined;
+  return { id: o.id.slice(0, 40), page: o.page.slice(0, 300), category: str(o.category, 30), selector: str(o.selector, 300) };
+}
+
+/** The app this server serves (the first page that connected), null before one does */
+export function getAllowedOrigin(): string | null {
+  return allowedOrigin;
 }
 
 export function broadcast(data: Record<string, unknown>) {

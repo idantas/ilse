@@ -100,6 +100,17 @@ export function markSent(ids: string[]): number {
   return count;
 }
 
+/** Back to pending with a new note — the same request, run again */
+export function reopenAnnotation(id: string, note: string): Annotation | undefined {
+  const annotation = annotations.get(id);
+  if (!annotation) return undefined;
+  annotation.note = note;
+  annotation.status = 'pending';
+  annotation.resolvedSummary = undefined;
+  notifyListeners();
+  return annotation;
+}
+
 export function resolveAnnotation(id: string, summary: string): Annotation | undefined {
   const a = annotations.get(id);
   if (!a) return undefined;

@@ -211,7 +211,7 @@ export type CaptureMode = 'click' | 'text' | 'area';
 // --- Smart Identification ---
 
 // Framework internals that pollute the component stack — filter these out
-const FRAMEWORK_INTERNALS = new Set([
+export const FRAMEWORK_INTERNALS = new Set([
   'SegmentViewNode', 'InnerLayoutRouter', 'RedirectErrorBoundary', 'RedirectBoundary',
   'HTTPAccessFallbackBoundary', 'NotFoundBoundary', 'LoadingBoundary', 'ErrorBoundary',
   'ClientSegmentRoot', 'OuterLayoutRouter', 'MetadataBoundary', 'Suspense',
@@ -242,6 +242,39 @@ export function getComponentStack(el: Element): string[] {
   }
 
   return stack;
+}
+
+/** A component's name from its fiber type — memo() wraps it in .type, forwardRef() in .render */
+export function componentTypeName(type: unknown): string | undefined {
+  if (!type || typeof type === 'string') return undefined;
+  const t = type as { displayName?: string; name?: string; render?: { displayName?: string; name?: string }; type?: unknown };
+  const name = t.displayName || t.name || t.render?.displayName || t.render?.name || (t.type ? componentTypeName(t.type) : undefined);
+  return name && /^[A-Z]/.test(name) && !FRAMEWORK_INTERNALS.has(name) ? name : undefined;
+}
+
+/**
+ * The components rendered on this page (dev builds), for the CLI to tell whether
+ * a run's edits landed here: each fiber's component, and the component whose JSX
+ * wrote it — which names server components too (React 19 dev stacks). Empty off React.
+ */
+export function pageComponents(limit = 600): string[] {
+  const names = new Set<string>();
+  const seen = new Set<unknown>();
+  type F = { type?: unknown; return?: F | null; _debugStack?: { stack?: string } };
+  const all = document.body.getElementsByTagName('*');
+  for (let i = 0; i < all.length && names.size < limit; i++) {
+    const el = all[i];
+    const k = Object.keys(el).find(key => key.startsWith('__reactFiber$'));
+    if (!k || el.closest('[data-ilse-toolbar]')) continue;
+    for (let f = (el as unknown as Record<string, F>)[k] as F | null | undefined, d = 0; f && d < 80 && !seen.has(f); f = f.return, d++) {
+      seen.add(f);
+      const name = componentTypeName(f.type);
+      if (name) names.add(name);
+      const wrote = firstAppFrame(f._debugStack?.stack)?.fn;
+      if (wrote && !FRAMEWORK_INTERNALS.has(wrote)) names.add(wrote);
+    }
+  }
+  return [...names];
 }
 
 const SAFE_PROP_KEYS = new Set([

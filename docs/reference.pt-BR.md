@@ -33,7 +33,7 @@ O navegador continua no mesmo endereço, então o que está preso a ele continua
 - **A porta:** detectada — um `--port` / `-p` no script, senão `server.port` no `vite.config`, senão o padrão do framework (Next 3000, Vite 5173). Na primeira vez em cada projeto a Ilse mostra — *Seu app vai rodar em localhost:5173* — e você escolhe **rodar nessa porta** ou **mudar a porta**. A escolha fica salva por projeto em `~/.ilse/config.json`; `ilse-design --port <n>` muda depois, `--target <n>` vale só para uma execução.
 - **Monorepos:** quando o script da raiz é um orquestrador (`turbo dev`, …), a Ilse acha os apps Vite e Next do workspace (`workspaces` no `package.json`, ou `pnpm-workspace.yaml`) e roda o `dev` do próprio app, na pasta dele — o orquestrador não repassaria a porta escondida. Com vários apps, ela pergunta uma vez qual abrir.
 - **A porta escondida:** `PORT` para todos, mais `--port` no Next e no Vite (uma flag depois da do script vale mais).
-- **Porta já em uso:** a Ilse avisa e para — ela nunca põe a barra em cima de um servidor que não subiu, que pode ser de outro projeto. Se for o seu servidor de dev, pare ele e rode `ilse` de novo, ou use ele como está com `--separate`. Um servidor que já carrega a barra (plugin Vite) é usado ali mesmo.
+- **Porta já em uso:** a Ilse diz quem está nela (outra `ilse` ou o dev server de outro app) e oferece, da melhor para a pior: uma porta livre que o seu código cita (`.env.example`, `next.config`, `vite.config`, arquivos de auth/middleware, o script dev); parar a outra `ilse` quando o login depende daquela porta; a próxima porta livre — com aviso quando o login aponta para a ocupada; ou uma porta que você digita. A escolha fica salva para este projeto. Os `.env` de verdade nunca são abertos: só os modelos que vão pro git, e só `host:porta` e o nome da variável são guardados. Quando o código não diz, a Ilse pergunta uma vez se o login depende da porta. Ela nunca põe a barra em cima de um servidor que não subiu. Sem terminal para perguntar, ela para e lista as portas que o código cita. A barra só é usada direto na porta do app quando o `vite.config` do projeto carrega `ilse-design/vite`.
 - **Endereço separado:** `--separate` numa execução, ou escolha isso na primeira vez. Você roda o servidor de dev e a Ilse abre `localhost:4700`; o que está preso ao endereço original (login, callbacks) fica lá.
 - **Ainda não coberto:** um script de dev que sobe vários servidores juntos (todos recebem a mesma `PORT`), apps que precisam de outros serviços do workspace rodando junto, e frameworks que não leem nem `PORT` nem `--port`. Use `--separate` nesses casos.
 
@@ -50,22 +50,21 @@ Na primeira vez, a Ilse pergunta como entregar as anotações ao seu agente:
 ### Apontar e ajustar
 
 - **3 jeitos de apontar:** clicar num elemento, selecionar texto ou desenhar uma área.
-- **Selecionar o pai:** o botão ↰ no card da nota sobe a seleção para o elemento que contém o atual (wrappers de biblioteca do mesmo tamanho são pulados). Um clique dentro de um SVG seleciona o `<svg>` inteiro; ⌘-clique (Ctrl-clique) seleciona o elemento exato, como um path de um ícone.
+- **Selecionar o pai:** o botão ↰ no card da nota sobe a seleção para o elemento que contém o atual (wrappers de biblioteca do mesmo tamanho são pulados). O nome do elemento no topo do card abre o lugar dele na página: alguns elementos acima, os que estão ao lado e os que estão dentro, com o nome do componente que os renderiza. Passe o mouse numa linha para vê-la na página; clique para selecioná-la. Um clique dentro de um SVG seleciona o `<svg>` inteiro; ⌘-clique (Ctrl-clique) seleciona o elemento exato, como um path de um ícone.
 - **Painel de propriedades:** texto, layout (largura/altura como Fixed · Hug · Fill, fluxo, alinhamento, gap, padding e margin por lado), tipografia, cores, borda, arredondamento e opacidade — com a escala e os tokens do seu projeto.
 - **None:** as listas de espaçamento, arredondamento e espessura da borda começam com *None* (zero) — sem padding, cantos retos, sem borda.
 - **Borda:** o *+* adiciona e já mostra cor, espessura, estilo e lados; o *−* tira.
 - **Aplicar em — só neste ou todos:** quando o elemento faz parte de um componente repetido na página. Com *Todos · N*, os ajustes do painel aparecem em todas as instâncias de uma vez.
 - **Editar texto:** elementos de texto ganham um campo *Text* no topo do painel. Texto que vem de variável, prop ou tradução vai para o agente, que muda na origem.
 - **Remover um elemento:** *Remove element* no fim do painel, ou a tecla Delete (fn+⌫ no Mac) com a nota vazia — o ⌫ funciona com o foco fora da nota. Numa lista feita com `.map`, só aquele item sai, a não ser que *Aplicar em* diga todos.
-- **Mover de verdade:** arraste para reordenar, ou para dentro e para fora de containers; a página se reorganiza ao vivo.
+- **Mover de verdade:** arraste para reordenar, ou para dentro e para fora de containers; a página se reorganiza ao vivo. O arraste move o que está selecionado — a célula, não a linha; o título, não o card. Para mover o container, selecione ele antes (↰ ou a árvore).
 - **Redimensionar:** arraste as alças, com encaixe na grade.
-- **Lápis:** rabisque na página; os traços são lidos e vão junto.
+- **Lápis:** rabisque na página; os traços são lidos e vão junto. Um desenho numa área vazia se ancora no elemento que o contém, e o agente recebe o arquivo dele como num clique.
 - **Imagens de referência:** cole ou envie um print ou SVG.
 
 ### Revisar a página
 
 - **Scan:** analisa a página inteira e lista problemas de design por categoria — contraste, tipografia, espaçamento, acessibilidade, componentes. Passe o mouse num problema para ver onde ele está.
-- **Sugestões de um elemento:** o botão dos óculos no card mostra os problemas daquele elemento. *Corrigir todas as sugestões* envia tudo como um pedido; *Analisar com IA* roda o seu agente para revisar reuso, consistência e tokens (usa a sua conta).
 
 ### Barra e configurações
 
@@ -74,7 +73,7 @@ Na primeira vez, a Ilse pergunta como entregar as anotações ao seu agente:
 - **Pausar animações:** congele tooltips, toasts e dropdowns para anotá-los.
 - **Ocultar marcadores:** esconde os pontos das anotações na página.
 - **Limpar anotações:** apaga todas (clique duas vezes para confirmar).
-- **Configurações:** estado da conexão e das anotações, a conta do Claude em uso, **Design System** (cole um `tokens.json` do W3C quando a Ilse não acha seus tokens), **Snap to grid**, **Conectar agente** (MCP), **Logs**, **Atalhos de teclado** e **Idioma** (inglês / português, detectado automaticamente).
+- **Configurações:** estado da conexão e das anotações, a conta do Claude em uso, **Design System** (cole um `tokens.json` do W3C quando a Ilse não acha seus tokens), **Snap to grid**, **Conectar agente** (MCP), **Logs**, **Memória do projeto** ([o que mostra](how-it-works.pt-BR.md#memória-do-projeto)), **Atalhos de teclado** e **Idioma** (inglês / português, detectado automaticamente).
 
 ### Atalhos de teclado
 
@@ -121,9 +120,35 @@ Isso supõe a instalação global. Sem ela, use `npx ilse-design@latest` no luga
 | `ILSE_MODEL=<modelo>` | Um modelo para tudo |
 | `ILSE_QUICK=0` | Sem o degrau rápido |
 | `ILSE_HISTORY=0` | Sem o histórico da Ilse no prompt |
+| `ILSE_CHECK=off` | Sem as checagens do projeto depois de uma mudança; `types` roda só o typecheck |
 | `ILSE_COMPONENT_CARD=0` | Sem a ficha do componente |
 | `ILSE_RESUME=1` | Retoma a sessão do agente entre lotes |
 | `ILSE_AGENT_USER_CONTEXT=1` | Deixa o agente carregar seu `CLAUDE.md` pessoal e memória |
+
+## Checagens do projeto
+
+Depois de cada mudança a Ilse roda o typecheck do projeto e os testes que cobrem os arquivos alterados, e o agente corrige o que a mudança quebrou ([como funciona](how-it-works.pt-BR.md#passar-no-ci)). Ela acha tudo sozinha: `tsc` quando existe um `tsconfig.json`, e `vitest` ou `jest` pelo `package.json`. Para apontar outro caminho, no `.ilserc.json`:
+
+```json
+{
+  "check": {
+    "typecheck": "pnpm typecheck",
+    "test": "pnpm test --",
+    "timeoutMs": 180000
+  },
+  "protected": [
+    { "path": "components/ui/**", "note": "cópia do protótipo — mude com um patch em scripts/prototype/patches/" },
+    "src/generated/**"
+  ]
+}
+```
+
+- `typecheck`: um comando cuja saída se lê como a do `tsc`, ou `false` para pular.
+- `test`: um comando que recebe os arquivos alterados no fim; só o código de saída é lido. `false` pula os testes.
+- `timeoutMs`: por comando (padrão 3 minutos). Uma checagem que estoura o tempo é pulada, não reprovada.
+- `protected`: globs, ou `{ path, note }`. O agente é avisado para não editá-los (com a nota), e uma edição ali volta para ele corrigir.
+
+`ILSE_CHECK=off` desliga tudo; `ILSE_CHECK=types` mantém só o typecheck. O journal registra quanto tempo as checagens levaram e quantos problemas acharam — nunca quais.
 
 ## Logs
 
@@ -133,7 +158,16 @@ Ele nunca registra o texto da nota, prompts, código nem caminhos de arquivo.
 
 ## Conectar seu agente (MCP)
 
-Para trabalhar pelo chat do agente (Claude Desktop, Claude Code, Cursor…): rode `ilse-design --mode mcp`, abra as configurações da barra → **Conectar agente**, copie o bloco do seu agente e cole nas configurações de MCP dele.
+Para trabalhar pelo chat do agente, instale a Ilse nos seus agentes uma vez:
+
+```bash
+ilse mcp install              # pergunta em quais dos encontrados: claude-code, claude-desktop, cursor, codex, gemini
+ilse mcp install cursor       # só um
+ilse mcp install --print      # mostra o que mudaria, sem mudar nada
+ilse mcp uninstall            # tira de novo
+```
+
+Cada agente recebe a ponte `ilse-mcp`, que acha sozinha a `ilse` rodando no projeto do agente. Só a entrada da Ilse é mexida; um arquivo de configuração que não abre fica como está. Instalada, toda conversa nova conhece as regras da Ilse — inclusive chamar `ilse_changes` antes de commitar, para as edições feitas pela Ilse não parecerem de estranhos. Depois rode `ilse-design --mode mcp` no projeto. (Configurações da barra → **Conectar agente** continua mostrando os blocos para colar à mão.)
 
 No começo de uma conversa, inicie a observação uma vez:
 
@@ -245,6 +279,8 @@ export default function RootLayout({ children }) {
 ```
 
 Em produção ele não renderiza nada. Rode `ilse-design` como sempre e ele pula o proxy.
+
+Versões antigas da Ilse sempre escreviam o `<Ilse />` no layout. Por isso, quando ela acha um que não foi marcado como escolha sua, remove e usa a barra sem mexer no projeto. Para manter o seu, rode uma vez com `--inject` (fica guardado em `.git/ilse/state.json`, fora dos arquivos do projeto).
 
 ## Compatibilidade
 

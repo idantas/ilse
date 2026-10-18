@@ -14,6 +14,7 @@ import { join, relative } from 'node:path';
 import net from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { findDevServer } from './find-dev-server.js';
+import type { DevTarget } from './server.js';
 
 export type DevFramework = 'next' | 'vite' | 'other';
 
@@ -137,6 +138,16 @@ export function rewriteLog(line: string, hiddenPort: number, appPort: number): s
   );
 }
 
+/**
+ * Local ports a dev server's log line names as its address (`localhost:5173`,
+ * `http://0.0.0.0:8080`…). How Ilse finds a server that ignored the hidden port.
+ */
+export function loggedPorts(line: string): number[] {
+  const plain = line.replace(/\x1b\[[0-9;]*m/g, '');
+  const ports = [...plain.matchAll(/(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):(\d{2,5})(?!\d)/g)].map(m => Number(m[1]));
+  return [...new Set(ports)].filter(p => p > 0 && p < 65536);
+}
+
 export function readPlanInput(cwd: string): PlanInput | null {
   const pkgPath = join(cwd, 'package.json');
   if (!existsSync(pkgPath)) return null;
@@ -176,6 +187,12 @@ export async function portIsFree(port: number): Promise<boolean> {
   return true;
 }
 
+/** The first free port after `port`: what to suggest when the app's port is taken */
+export async function nextFreePort(port: number): Promise<number> {
+  for (let p = port + 1; p < Math.min(port + 100, 65536); p++) if (await portIsFree(p)) return p;
+  throw new Error('no free port');
+}
+
 /** A free port for the hidden dev server: app port + 10000 when possible */
 export async function pickHiddenPort(appPort: number): Promise<number> {
   const start = appPort + 10000 <= 65000 ? appPort + 10000 : 20000;
@@ -186,12 +203,22 @@ export async function pickHiddenPort(appPort: number): Promise<number> {
 export interface RunningDevServer {
   child: ChildProcess;
   hiddenPort: number;
+  /** Where the dev server answers: the hidden port, or its own when it ignored it */
+  target: DevTarget;
+  /** Set when the script fixes its own port and ignored the hidden one */
+  ownPort?: number;
   stop: () => void;
+  /** Called once if the dev server stops on its own */
+  onExit: (cb: (info: DevExit) => void) => void;
 }
 
 /**
  * Starts `npm run <script>` on the hidden port and resolves once it answers.
  * Its output goes to `log` line by line, hidden port rewritten to the app's.
+ *
+ * Not every server takes a port from outside (`serve -l 5173`, a port fixed in
+ * code). Guessing flags never ends, so Ilse watches instead: an address the
+ * server's own log names that answers is where it really is.
  */
 export async function startHiddenDevServer(
   plan: SamePortPlan, log: (line: string) => void, timeoutMs = 120_000,
@@ -208,12 +235,19 @@ export async function startHiddenDevServer(
     detached: process.platform !== 'win32',
   });
 
+  // npm exiting doesn't mean the group is gone: the dev server can outlive it as an
+  // orphan, so the whole group is stopped whatever npm's state
+  let stopped = false;
   const stop = () => {
-    if (child.exitCode !== null || child.pid === undefined) return;
-    try { process.platform === 'win32' ? child.kill() : process.kill(-child.pid, 'SIGTERM'); } catch { /* already gone */ }
+    if (stopped || child.pid === undefined) return;
+    stopped = true;
+    if (process.platform === 'win32') { child.kill(); return; }
+    stopGroup(child.pid);
   };
   process.on('exit', stop);
 
+  const holder = new LockHolderWatch();
+  const named = new Set<number>();
   for (const stream of [child.stdout, child.stderr]) {
     let buf = '';
     stream?.setEncoding('utf8');
@@ -221,28 +255,107 @@ export async function startHiddenDevServer(
       buf += chunk;
       const lines = buf.split('\n');
       buf = lines.pop() ?? '';
-      for (const l of lines) log(rewriteLog(l, hiddenPort, plan.appPort));
+      for (const l of lines) {
+        holder.feed(l);
+        // The other server's address isn't where this one is
+        if (!holder.seen) for (const p of loggedPorts(l)) if (p !== hiddenPort) named.add(p);
+        log(rewriteLog(l, hiddenPort, plan.appPort));
+      }
     });
   }
 
+  const exitListeners: Array<(info: DevExit) => void> = [];
+  let exitInfo: DevExit | undefined;
   const exited = new Promise<never>((_, reject) => {
-    child.once('exit', (code) => reject(new Error(`the dev server exited (code ${code})`)));
+    child.once('exit', (code) => {
+      exitInfo = { code, lockHolder: holder.result() };
+      for (const cb of exitListeners) cb(exitInfo);
+      reject(exitInfo.lockHolder ? new DevServerLockedError(exitInfo.lockHolder) : new Error(`the dev server exited (code ${code})`));
+    });
     child.once('error', reject);
   });
-  const ready = (async () => {
+  exited.catch(() => { /* surfaced by the race below or by onExit */ });
+  const ready = (async (): Promise<{ target: DevTarget; ownPort?: number }> => {
     const until = Date.now() + timeoutMs;
     while (Date.now() < until) {
-      if (await findDevServer(cwd, [hiddenPort])) return;
+      if (holder.seen) break;
+      const hidden = await findDevServer(cwd, [hiddenPort]);
+      if (hidden) return { target: hidden };
+      const own = named.size > 0 ? await findDevServer(cwd, [...named]) : null;
+      if (own) return { target: own, ownPort: own.port };
       await new Promise(r => setTimeout(r, 400));
     }
+    // Next 16 says "Ready" and answers for a moment before it sees another server holds the folder's lock
+    if (holder.seen) return new Promise<never>(() => {});
     throw new Error(`the dev server didn't answer on :${hiddenPort}`);
   })();
 
   try {
-    await Promise.race([ready, exited]);
+    const found = await Promise.race([ready, exited]);
+    // Next 16 can answer for a moment and only then hit the lock: give it the time to say so
+    await Promise.race([new Promise(r => setTimeout(r, 600)), exited]);
+    const onExit = (cb: (info: DevExit) => void) => { if (exitInfo) cb(exitInfo); else exitListeners.push(cb); };
+    return { child, hiddenPort, stop, onExit, ...found };
   } catch (err) {
     stop();
     throw err;
   }
-  return { child, hiddenPort, stop };
+}
+
+export interface DevExit {
+  code: number | null;
+  lockHolder?: LockHolder;
+}
+
+/** Another `next dev` of this project, named by Next when it refuses to start a second one */
+export interface LockHolder {
+  pid?: number;
+  port?: number;
+}
+
+export class DevServerLockedError extends Error {
+  constructor(readonly holder: LockHolder) {
+    super(`another dev server of this project is running${holder.pid ? ` (PID ${holder.pid})` : ''}`);
+    this.name = 'DevServerLockedError';
+  }
+}
+
+/**
+ * Reads Next's "Another next dev server is already running" block, line by line:
+ *
+ *   ⨯ Another next dev server is already running.
+ *   - Local:        http://localhost:13000
+ *   - PID:          89648
+ */
+export class LockHolderWatch {
+  seen = false;
+  private pid?: number;
+  private port?: number;
+
+  feed(line: string): void {
+    const plain = line.replace(/\x1b\[[0-9;]*m/g, '');
+    if (/another next dev server is already running/i.test(plain)) { this.seen = true; return; }
+    if (!this.seen) return;
+    const pid = plain.match(/\bPID:\s*(\d+)/);
+    if (pid && this.pid === undefined) this.pid = Number(pid[1]);
+    const local = plain.match(/\bLocal:\s*\S*?:(\d{2,5})\b/);
+    if (local && this.port === undefined) this.port = Number(local[1]);
+  }
+
+  result(): LockHolder | undefined {
+    return this.seen ? { pid: this.pid, port: this.port } : undefined;
+  }
+}
+
+/**
+ * Stops a process group: SIGTERM, then SIGKILL if it's still there. Synchronous so
+ * it also works from `process.on('exit')`, where nothing async runs — a hung dev
+ * server ignores SIGTERM and would stay behind holding the project's lock.
+ */
+export function stopGroup(pid: number, graceMs = 2000): void {
+  const alive = () => { try { process.kill(-pid, 0); return true; } catch { return false; } };
+  try { process.kill(-pid, 'SIGTERM'); } catch { return; }
+  const nap = new Int32Array(new SharedArrayBuffer(4));
+  for (let waited = 0; waited < graceMs && alive(); waited += 50) Atomics.wait(nap, 0, 0, 50);
+  if (alive()) try { process.kill(-pid, 'SIGKILL'); } catch { /* gone meanwhile */ }
 }

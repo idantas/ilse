@@ -71,14 +71,14 @@ export function insertionIndex(p: { x: number; y: number }, children: Slot[], ax
 
 // ── React's view of an element (dev builds) ────────────────────────────────
 
-interface Fiber {
+export interface Fiber {
   key: string | null;
   type: unknown;
   return: Fiber | null;
   _debugOwner?: Fiber | null;
 }
 
-function fiberOf(el: Element): Fiber | null {
+export function fiberOf(el: Element): Fiber | null {
   const k = Object.keys(el).find(k => k.startsWith('__reactFiber$'));
   return k ? (el as unknown as Record<string, Fiber>)[k] : null;
 }
@@ -272,34 +272,28 @@ function adopt(parent: HTMLElement): LiveList {
 }
 
 /**
- * What actually moves when an element is dragged: the element itself, or the
- * nearest ancestor that is an item of a flex/grid list. Clicking a menu entry
- * selects its <button>, but the thing to reorder is the <li> around it.
+ * What moves when the selection is dragged: the selected element itself. The
+ * designer picked it (click, ↰, the tree) and sees it outlined; climbing to the
+ * nearest "object" around it moved the table row when a cell was dragged, or the
+ * card when its title was. The only climb is through same-size wrappers, which
+ * the designer can't tell apart from it — a menu <button> filling its <li>
+ * drags the <li>, the list item. It stops at an element that already is an
+ * item of a list, so a single-item list doesn't trade it for the list.
  */
 export function reorderUnit(el: HTMLElement): HTMLElement {
-  let node: HTMLElement | null = el;
-  for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
-    const parent: HTMLElement | null = node.parentElement;
-    if (!parent || parent === document.body) break;
-    if (!axisOf(parent)) continue;
-    const items = layoutChildren(parent);
-    // A list has look-alike items (same tag and same slot/classes, as a .map()
-    // renders them); an icon + label pair inside a button doesn't.
-    const alike = items.filter(c => c !== node && lookAlike(c, node!));
-    if (items.includes(node) && alike.length >= 1) return node;
+  let unit = el;
+  for (let parent = el.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+    if (isListItem(unit)) break;
+    if (!sameBox(parent.getBoundingClientRect(), unit.getBoundingClientRect())) break;
+    unit = parent;
   }
-  return el;
+  return unit;
 }
 
-const SLOT_ATTRS = ['data-slot', 'data-sidebar', 'role'];
-
-export function lookAlike(a: Element, b: Element): boolean {
-  if (a.tagName !== b.tagName) return false;
-  const slotted = SLOT_ATTRS.filter(n => a.hasAttribute(n) || b.hasAttribute(n));
-  if (slotted.length) return slotted.every(n => a.getAttribute(n) === b.getAttribute(n));
-  // State classes (active, selected…) differ between items; the structural ones don't
-  const sig = (e: Element) => Array.from(e.classList).filter(c => !/(active|selected|current|open|checked|disabled)/i.test(c)).sort().join(' ');
-  return sig(a) === sig(b);
+/** An item among others in a flex/grid container: dragging it reorders them */
+function isListItem(el: HTMLElement): boolean {
+  const parent = el.parentElement;
+  return !!parent && !!axisOf(parent) && layoutChildren(parent).length > 1;
 }
 
 /** Undo every preview on this container. */

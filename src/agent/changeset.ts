@@ -131,6 +131,8 @@ export function pushUndo(cs: ChangeSet, fromRedo = false): void {
   if (!fromRedo) redoStack.length = 0;
 }
 export function popUndo(): ChangeSet | undefined { return undoStack.pop(); }
+/** The change an undo would take back now */
+export function peekUndo(): ChangeSet | undefined { return undoStack[undoStack.length - 1]; }
 export function pushRedo(cs: ChangeSet): void { redoStack.push(cs); }
 export function popRedo(): ChangeSet | undefined { return redoStack.pop(); }
 export function undoState(): { count: number; label?: string; redoCount: number; redoLabel?: string } {

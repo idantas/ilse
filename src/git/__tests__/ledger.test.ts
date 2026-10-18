@@ -56,7 +56,9 @@ describe('commit context', () => {
     expect(commitContextChoice(dir)).toBeUndefined();
     saveCommitContextChoice(dir, false);
     expect(commitContextChoice(dir)).toBe(false);
-    expect(existsSync(join(dir, '.ilserc.json'))).toBe(true);
+    // Remembered outside the project's files
+    expect(existsSync(join(dir, '.ilserc.json'))).toBe(false);
+    expect(existsSync(join(dir, '.git', 'ilse', 'state.json'))).toBe(true);
     expect(COMMIT_MARKER).toContain('ilse');
   });
 });
@@ -76,5 +78,25 @@ describe('history for the next edit', () => {
     expect(text).toContain('do not revert unless asked');
     expect(text.split('\n')[1]).toContain('"cor primária" → feito h3');
     expect(formatHistory('Card.tsx', [])).toBeUndefined();
+  });
+});
+
+import { ledgerSummary } from '../ledger.js';
+
+describe('ledgerSummary', () => {
+  it('newest first, with the designer\'s note and what is still uncommitted', () => {
+    const dir = repo();
+    recordChange(dir, cs('c1'), { path: 'swap', annotations: [{ id: 'a1', summary: 'gap-3 → gap-4' }] });
+    execFileSync('git', ['commit', '-qam', 'ship', '--allow-empty'], { cwd: dir });
+    writeFileSync(join(dir, 'Card.tsx'), 'b\n');
+    recordChange(dir, cs('c2'), { path: 'agent', annotations: [{ id: 'a2', note: 'título maior' }] });
+    const s = ledgerSummary(dir);
+    expect(s.total).toBe(2);
+    expect(s.pending).toBe(2);
+    expect(s.recent.map(r => [r.id, r.text, r.path])).toEqual([['c2', 'título maior', 'agent'], ['c1', 'gap-3 → gap-4', 'swap']]);
+    expect(s.recent[0].files).toEqual(['Card.tsx']);
+  });
+  it('is empty outside git', () => {
+    expect(ledgerSummary(mkdtempSync(join(tmpdir(), 'ilse-nogit-')))).toEqual({ total: 0, pending: 0, recent: [] });
   });
 });

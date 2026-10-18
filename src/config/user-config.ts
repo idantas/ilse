@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { cwd } from 'node:process';
 
 const CONFIG_DIR = join(homedir(), '.ilse');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -24,6 +23,8 @@ export interface UserConfig {
   address?: 'same' | 'separate';
   /** App port per project path, confirmed or chosen by the designer (same-port mode) */
   appPorts?: Record<string, number>;
+  /** Per project path: the designer said the login depends on the app's port (asked when the code doesn't say) */
+  loginTied?: Record<string, boolean>;
   /** In a monorepo with several apps: the app folder per project path */
   projectApps?: Record<string, string>;
 }
@@ -56,7 +57,3 @@ export function isFirstRun(): boolean {
   return !loadUserConfig().setupDone;
 }
 
-/** True if the current project has never been set up (no .ilserc.json in cwd) */
-export function isProjectSetup(): boolean {
-  return existsSync(join(cwd(), '.ilserc.json'));
-}

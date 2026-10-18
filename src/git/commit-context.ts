@@ -3,10 +3,11 @@
  *
  * A short block in the file every coding agent already reads (AGENTS.md, or
  * CLAUDE.md), pointing at `ilse changes`. Added only with the designer's OK,
- * asked once per project; the answer is kept in .ilserc.json.
+ * asked once per project; the answer is kept out of the project (`.git/ilse/state.json`).
  */
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+import { readProjectRc, updateProjectRc } from '../config/project-rc.js';
 import { join } from 'node:path';
 
 export const COMMIT_MARKER = '<!-- ilse:commit-context -->';
@@ -43,17 +44,12 @@ export function addCommitContext(cwd: string): string {
 
 // ── The answer, per project ────────────────────────────────────────────────
 
-function readRc(cwd: string): Record<string, unknown> {
-  try { return JSON.parse(readFileSync(join(cwd, '.ilserc.json'), 'utf8')) as Record<string, unknown>; } catch { return {}; }
-}
-
 /** undefined = never asked */
 export function commitContextChoice(cwd: string): boolean | undefined {
-  const v = readRc(cwd).commitContext;
+  const v = readProjectRc(cwd).commitContext;
   return typeof v === 'boolean' ? v : undefined;
 }
 
 export function saveCommitContextChoice(cwd: string, value: boolean): void {
-  const rc = { ...readRc(cwd), commitContext: value };
-  try { writeFileSync(join(cwd, '.ilserc.json'), JSON.stringify(rc, null, 2) + '\n', 'utf8'); } catch { /* read-only project */ }
+  updateProjectRc(cwd, { commitContext: value });
 }

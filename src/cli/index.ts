@@ -4,7 +4,6 @@ import { createRequire } from 'node:module';
 import { Command } from 'commander';
 import { listenCommand, annotationsCommand, resolveCommand } from './listen.js';
 import { defaultCommand } from './default.js';
-import { isClaudeInstalled, isAlreadyRegistered, registerInClaude } from '../config/mcp-register.js';
 import { t, detectLocale, setLocale } from '../i18n/index.js';
 import { loadUserConfig } from '../config/user-config.js';
 
@@ -14,6 +13,9 @@ const pkg = require('../../package.json') as { version: string };
 // Initialize locale early so command descriptions are translated
 const _cfg = loadUserConfig();
 setLocale(_cfg.locale ?? detectLocale());
+
+import { loadPro } from '../pro/load.js';
+import { proCore } from '../pro/core.js';
 
 const program = new Command();
 
@@ -50,29 +52,56 @@ program
     });
   });
 
+async function mcpCommand(names: string[], install: boolean, dryRun: boolean): Promise<void> {
+  const { MCP_AGENTS, detectMcpAgents, applyMcp } = await import('../config/mcp-install.js');
+  const list = MCP_AGENTS.join(', ');
+  const unknown = names.find(n => !(MCP_AGENTS as string[]).includes(n));
+  if (unknown) { console.log(`  ${t('mcp.unknown', { agent: unknown, agents: list })}`); process.exitCode = 1; return; }
+  const detected = detectMcpAgents();
+  if (!names.length && detected.length === 0) { console.log(`  ${t('mcp.none', { agents: list })}`); process.exitCode = 1; return; }
+  let agents = names as typeof MCP_AGENTS;
+  // Nothing named: the user picks — installing in an agent is their call, one by one
+  if (!names.length && !dryRun) {
+    if (!process.stdin.isTTY) { console.log(`  ${t('mcp.name', { agents: detected.join(', ') })}`); process.exitCode = 1; return; }
+    const p = await import('@clack/prompts');
+    const picked = await p.multiselect({
+      message: t(install ? 'mcp.pickInstall' : 'mcp.pickUninstall'),
+      options: detected.map(a => ({ value: a, label: a })),
+      required: false,
+      initialValues: [],
+    });
+    if (p.isCancel(picked) || picked.length === 0) { console.log(`  ${t('mcp.nothing')}`); return; }
+    agents = picked;
+  } else if (!names.length) agents = detected;
+  console.log('');
+  for (const agent of agents) {
+    const r = applyMcp(agent, install, dryRun);
+    if (dryRun) {
+      console.log(`  ${t('mcp.wouldWrite', { agent, where: r.where })}`);
+      if (r.preview && r.preview !== r.where) console.log(r.preview.split('\n').map(l => `    ${l}`).join('\n'));
+    } else if (r.ok) console.log(`  ✓ ${t(install ? 'mcp.installed' : 'mcp.removed', { agent })}  ${r.where}`);
+    else { console.log(`  ✗ ${t('mcp.failed', { agent, error: r.error ?? '' })}`); process.exitCode = 1; }
+  }
+  if (install && !dryRun) console.log(`\n  ${t('mcp.after')}`);
+  console.log('');
+}
+
+const mcp = program.command('mcp').description(t('cmd.mcp'));
+mcp
+  .command('install [agents...]')
+  .description(t('cmd.mcpInstall'))
+  .option('--print', t('cmd.mcpPrint'))
+  .action((agents: string[], options: { print?: boolean }) => mcpCommand(agents, true, !!options.print));
+mcp
+  .command('uninstall [agents...]')
+  .description(t('cmd.mcpUninstall'))
+  .option('--print', t('cmd.mcpPrint'))
+  .action((agents: string[], options: { print?: boolean }) => mcpCommand(agents, false, !!options.print));
+
 program
   .command('setup')
   .description(t('cmd.setup'))
-  .action(() => {
-    if (!isClaudeInstalled()) {
-      console.log(`  ${t('setup.noClaude')}`);
-      console.log(`  ${t('setup.manualHint')}`);
-      console.log('  claude mcp add ilse -- npx -y -p ilse-design@latest ilse-mcp');
-      return;
-    }
-
-    if (isAlreadyRegistered()) {
-      console.log(`  ${t('setup.alreadyRegistered')}`);
-      return;
-    }
-
-    const result = registerInClaude();
-    if (result.ok) {
-      console.log(`  ${t('setup.registered')}`);
-    } else {
-      console.log(`  Erro: ${result.error}`);
-    }
-  });
+  .action(() => mcpCommand([], true, false));
 
 program
   .command('listen')
@@ -113,6 +142,20 @@ program
     console.log(`  ${t('bookmarklet.cliOr')}\n`);
     console.log(bookmarkletCode(port, t('bookmarklet.notRunning', { port })) + '\n');
   });
+
+// `ilse test` and the rest of Pro's commands come from Pro when it's installed
+const pro = await loadPro();
+if (pro?.registerCli) {
+  pro.registerCli(program, proCore);
+} else {
+  program
+    .command('test [url]')
+    .description(t('cmd.test'))
+    .allowUnknownOption()
+    .action(() => {
+      console.log(`\n  ${t('pro.testLocked')} https://ilse.design/#pro\n`);
+    });
+}
 
 program
   .command('changes')

@@ -19,7 +19,7 @@ Antes de chamar o seu agente, a Ilse faz a busca por ele:
 - **Só o trecho necessário.** O agente recebe quais linhas ler, não o arquivo inteiro — um componente de 900 linhas são ~10 mil tokens, reenviados a cada turno.
 - **Ficha do componente.** Para um componente reutilizado: onde ele é definido, se aceita `className` e onde é usado.
 - **O histórico da própria Ilse.** As últimas mudanças que a Ilse fez no mesmo arquivo vão junto ("decididas pelo designer, mantenha"), para uma correção nova não desfazer uma anterior.
-- **Seus tokens de design.** Lidos ao iniciar, de `tailwind.config`, `@theme` do Tailwind v4, variáveis CSS ou `tokens.json` do W3C, para o agente usar o seu token em vez de um valor fixo.
+- **Seus tokens de design.** Lidos ao iniciar, de `tailwind.config`, `@theme` do Tailwind v4, variáveis CSS, `tokens.json` do W3C ou um `DESIGN.md` (formato aberto do Google: os tokens do front matter entram no painel, e o agente é apontado para o arquivo pelas regras), para o agente usar o seu token em vez de um valor fixo. Tokens de degradê (`--brand-gradient: linear-gradient(…)`) aparecem no Fill, numa seção Degradês própria.
 - **Só o que importa.** Os estilos são filtrados pela intenção: "cor errada" manda só informação de cor.
 - **Suas referências.** Prints colados vão junto; SVGs arrastados são copiados para o projeto como assets.
 
@@ -43,8 +43,26 @@ Antes de chamar o seu agente, a Ilse faz a busca por ele:
 ## Mantendo seu projeto seguro
 
 - **O agente roda isolado.** Sem o seu `CLAUDE.md` pessoal nem memória — só as instruções do próprio projeto. Sem shell: ele lê e edita arquivos, mais nada.
+- **A mudança tem que cair nesta página.** Todo pedido leva a página em que foi feito. Depois do run, a Ilse compara os componentes que o agente editou com os que aparecem na página; se nenhum estiver nela, a barra diz qual arquivo mudou e onde ele é usado, com **Refazer nesta página**, **Desfazer** e **Manter** — em vez de só "concluído".
 - **O código é conferido depois do agente.** Como o agente não consegue fazer o build do projeto, a Ilse lê cada arquivo que ele mudou. Se algum deixou de compilar, o agente ganha um turno para corrigir exatamente aquele erro; se continuar quebrado, o lote inteiro é desfeito e o card mostra onde.
 - **As prévias não mexem na estrutura do React.** Arrastes e edições do painel aparecem com estilos e substitutos; cancelar uma nota devolve a página como estava.
+
+## Passar no CI
+
+Uma mudança de design pode quebrar o que o CI roda: uma prop usada e nunca declarada, um teste que fixa a aparência antiga, um "mostre só 10 linhas" que mudou o limite de que o backend depende. Por isso, depois de cada mudança — agente, passo rápido ou troca de classe — a Ilse roda as checagens do próprio projeto antes de dizer que terminou:
+
+1. **Typecheck.** `tsc --noEmit`, incremental (o cache fica em `.git/ilse/`). Só contam erros nos arquivos que a mudança tocou ou em arquivos que os importam.
+2. **Os testes que cobrem a mudança.** `vitest related` ou `jest --findRelatedTests` nos arquivos alterados — segundos, não a suíte inteira.
+3. **Só o que passava antes.** O que falha roda de novo no projeto como estava antes da mudança — uma cópia fora do seu projeto (`git archive` do HEAD, seu trabalho não commitado por cima, os arquivos da mudança de volta ao que eram, `node_modules` linkado). Uma falha que já existia — trabalho de outro agente na mesma branch, um teste já vermelho — nunca é atribuída à mudança.
+4. **O agente corrige.** O que a mudança quebrou volta para o agente, junto com o pedido do designer, que ele tem que manter. As regras: um teste que fixa a aparência (texto, classe, cor, marcação) e falhou porque a aparência mudou de propósito é atualizado para a nova aparência; um teste de comportamento (paginação, limites, permissões, requisições, estado) fica, e o código é corrigido para manter o comportamento e ainda entregar a aparência pedida; um erro de tipo é corrigido no código.
+5. **Confere de novo.** Até dois turnos de correção. Uma correção que apaga, pula ou afrouxa um teste não vale: a Ilse compara os testes e as asserções de antes e depois.
+6. **Continua vermelho?** A mudança fica e a barra diz o que ainda falha, com **Desfazer** e **Manter mesmo assim**. O terminal lista cada falha.
+
+Antes de tudo isso, o agente fica sabendo quais testes cobrem o arquivo que vai mudar, então uma mudança de aparência costuma atualizar o teste na mesma passada. Ele também é instruído a mudar só a apresentação — constantes compartilhadas, limites, dados e lógica ficam como estão — e a usar os tokens do projeto.
+
+Com MCP, seu agente conduz os próprios turnos: quando ele resolve a última anotação de um lote, o `ilse_resolve` responde com o que quebrou, e o agente corrige e resolve de novo.
+
+Caminhos que o projeto muda de outro jeito (uma cópia vendorizada que um script aplica patches, código gerado) podem ser marcados no `.ilserc.json` → `protected`: o agente é avisado para não editá-los, e uma edição ali conta como falha a corrigir. Configurações: [Referência → Checagens do projeto](reference.pt-BR.md#checagens-do-projeto).
 
 ## Desfazer
 
@@ -67,6 +85,13 @@ Quando o limite chega:
 - **Edições do painel continuam funcionando** — a troca de classe não usa o agente.
 
 Para seguir antes da renovação: troque de conta (`--account`) ou use o modo área de transferência.
+
+## Memória do projeto
+
+Configurações → **Memória do projeto** mostra tudo o que a Ilse lembra deste projeto — nada fica guardado sem aparecer ali:
+
+- **Mudanças de design** (grátis): as mudanças que a Ilse fez aqui e ficaram, da mais nova para a mais antiga, com a sua nota, os arquivos e quais ainda estão sem commit. Quando o agente mexe num desses arquivos, ele recebe as últimas mudanças feitas ali e o motivo de cada uma.
+- **Modo teste** (Ilse Pro): quantos testes rodaram, os achados que ainda estão lá, os corrigidos e os que voltaram depois de corrigidos (um clique abre a página), o que você pediu para ignorar — com **Voltar a avisar** para desfazer — e onde as checagens acertam ou são ruído, pelas suas decisões. **Esquecer a memória do teste** apaga tudo depois de confirmar (o mesmo que `ilse memory --forget`). Sem o Pro, a seção diz o que ela guardaria.
 
 ## Os commits sabem o que a Ilse mudou
 

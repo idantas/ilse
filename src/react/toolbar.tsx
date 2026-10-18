@@ -10,6 +10,7 @@ import {
   IconTrash,
   IconBolt,
   IconEyeglass2,
+  IconRobot,
   IconSettings,
   IconArrowBackUp,
   IconX,
@@ -22,19 +23,25 @@ import {
   IconMaximize,
   IconPencil,
 } from '@tabler/icons-react';
-import { captureElement, captureTextSelection, captureArea, captureEnvironment, humanizeSelector, type ElementCapture } from './annotator.js';
+import { captureElement, captureTextSelection, captureArea, captureEnvironment, humanizeSelector, pageComponents, type ElementCapture } from './annotator.js';
 import { analyzeElement, scanPage, setDSTokens, getDSTokens, parseTokensJSON, type Suggestion, type PageIssue } from './analyze.js';
 import { connect, disconnect, send, onMessage, onStatus, isConnected } from './ws-client.js';
 import { useImageInput, InlineAttachments } from './image-input.js';
 import { PropertyPanel, type PanelHistory, type TextEdit } from './property-panel.js';
 import { useFrontLayer } from './front-layer.js';
 import { SketchLayer, PencilControl, PEN_COLORS } from './sketch-layer.js';
-import { analyzeSketch, renderSketchImage, formatSketchNote, type Stroke } from './sketch.js';
+import { ElementTree } from './element-tree.js';
+import { IlseMascot, type MascotActivity, type MascotMode, type MascotReaction } from './mascot.js';
+import { SpeechBubble, speechButton, reasoningLine, ReasoningDot } from './speech-bubble.js';
+import { findingsForPage, findingNote, findingElement, findingRef, type TestFinding, type TestFindingRef } from './test-findings.js';
+import { analyzeSketch, renderSketchImage, formatSketchNote, drawnContainer, type Stroke } from './sketch.js';
 import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, scopeTwins, type LiveDrag, selectionTarget, selectableParent } from './live-layout.js';
 import type { StyleChange, StyleData } from '../types.js';
 import { toggleFreeze, isFrozen } from './freeze.js';
+import { shieldPage } from './shield.js';
+import { MemoryPanel, type MemoryData } from './memory-panel.js';
 import { TooltipLayer } from './tooltip-layer.js';
-import { radius, color, shadow, ilse, font } from './tokens.js';
+import { radius, color, shadow, ilse, font, modeAccent } from './tokens.js';
 import { t, detectLocale, setLocale, getLocale, type Locale } from '../i18n/index.js';
 import { withShortcut, isTyping, doublePress, mod, SHORTCUT_GROUPS } from './shortcuts.js';
 
@@ -182,6 +189,7 @@ function textCommand(edit?: { from: string; to: string }): Pick<AutoContext, 'te
     text: [
       `Trocar o texto deste elemento de ${JSON.stringify(edit.from)} para ${JSON.stringify(edit.to)}.`,
       'Se o texto vem de uma variável, prop, tradução (i18n) ou dados de lista, troque na origem — só este texto, respeitando o Scope.',
+      ...(/\n/.test(edit.from + edit.to) ? ['As quebras de linha (\\n) são <br> no código: mantenha uma <br> por quebra.'] : []),
     ].join('\n'),
   };
 }
@@ -290,6 +298,8 @@ interface AnnotationDraft {
   sketch?: Stroke[];
   auto?: AutoContext;
   textEdit?: TextEdit;
+  /** The `ilse test` finding this note fixes — the CLI tests its page again after the agent */
+  testFinding?: TestFindingRef;
 }
 
 interface PopoverRect {
@@ -319,6 +329,8 @@ interface PendingCapture {
   imageFilenames?: string[];
   sketch?: Stroke[];
   auto?: AutoContext;
+  /** The `ilse test` finding this note fixes — the CLI tests its page again after the agent */
+  testFinding?: TestFindingRef;
 }
 
 /** Build a human-readable label: "tag: 'text content truncated...'" */
@@ -439,7 +451,7 @@ function computePopoverPos(rect: PopoverRect, height = 168, width = 322): { top:
 
 function AnnotationPopover({
   context, contextLabel, rect, note, styles, grepPattern, hasElement, suggestions, imageRefs, hasContext, summary, onRemoveSummary, scope, onScope,
-  onSelectParent, onNoteChange, onApplySuggestion, onRequestAnalysis, onAddImage, onRemoveImage, onAdd, onCancel,
+  onSelectParent, treeTarget, onSelectElement, onNoteChange, onApplySuggestion, onRequestAnalysis, onAddImage, onRemoveImage, onAdd, onCancel,
 }: {
   context: string;
   contextLabel: string;
@@ -459,6 +471,10 @@ function AnnotationPopover({
   onScope?: (choice: Scope['choice']) => void;
   /** Move the selection up to the containing element; absent when there is none or the draft has changes */
   onSelectParent?: () => void;
+  /** The selected element, for the tree; absent for text, area and sketch captures */
+  treeTarget?: Element | null;
+  /** Move the selection to another element of the tree; absent while the draft has changes */
+  onSelectElement?: (el: Element) => void;
   /** The designer took a command back — it no longer goes to the agent */
   onRemoveSummary?: (key: AutoKey) => void;
   onApplySuggestion?: (text: string) => void;
@@ -472,8 +488,7 @@ function AnnotationPopover({
   // Initialize with correct position synchronously — avoids flash from 0,0 to target
   const [pos, setPos] = useState<{ top: number; left: number }>(() => computePopoverPos(rect));
   const [copied, setCopied] = useState(false);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  const [cssOpen, setCssOpen] = useState(false);
+  const [treeOpen, setTreeOpen] = useState(false);
   const { handlePaste, handleFileChange, openFilePicker, fileRef } = useImageInput(
     (dataUrl, filename) => onAddImage?.(dataUrl, filename)
   );
@@ -524,19 +539,22 @@ function AnnotationPopover({
       }}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* Header — contextual label (dropdown) + suggestions icon */}
+      {/* Header — contextual label (opens the element's place in the tree) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
         <button
-          onClick={() => setCssOpen(v => !v)}
+          onClick={() => setTreeOpen(v => !v)}
+          disabled={!treeTarget}
+          aria-expanded={treeTarget ? treeOpen : undefined}
+          aria-label={treeTarget ? t('toolbar.tree.toggle') : undefined}
           style={{
-            flex: 1, background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+            flex: 1, background: 'none', border: 'none', cursor: treeTarget ? 'pointer' : 'default', padding: 0,
             display: 'flex', alignItems: 'center', gap: 4,
             fontSize: 12, color: color.mutedForeground, fontFamily: font.sans,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             textAlign: 'left',
           }}
         >
-          <IconChevronRight size={12} stroke={2} style={{ flexShrink: 0, transform: cssOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+          {treeTarget && <IconChevronRight size={12} stroke={2} style={{ flexShrink: 0, transform: treeOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />}
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{contextLabel}</span>
         </button>
         {onSelectParent && (
@@ -553,33 +571,24 @@ function AnnotationPopover({
             <IconCornerLeftUp size={14} stroke={1.75} />
           </button>
         )}
-        <SuggestionsToggle active={suggestionsOpen} onClick={() => setSuggestionsOpen(v => !v)} />
+        {/* The suggestions toggle (eyeglass) left the card for now; a sent annotation still lists them */}
+        {/* Same as Esc: the draft and its previews go, selection mode stays */}
+        <button
+          onClick={onCancel}
+          title={withShortcut(t('toolbar.close'), 'Esc')}
+          aria-label={t('toolbar.close')}
+          style={{
+            width: 24, height: 24, flexShrink: 0, padding: 0, border: 'none', borderRadius: radius.sm,
+            background: 'none', cursor: 'pointer', color: color.mutedForeground,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <IconX size={14} stroke={1.75} />
+        </button>
       </div>
 
-      {/* CSS Properties — read-only list, kept as the quick inline peek.
-          The editable panel is docked to the right (see PropertyPanel). */}
-      {cssOpen && styles && Object.keys(styles).length > 0 && (
-        <div style={{
-          backgroundColor: color.background, border: `1px solid ${color.border}`,
-          borderRadius: radius.md, padding: '8px 10px', marginBottom: 8,
-          fontSize: 11, fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-          lineHeight: 1.6, maxHeight: 160, overflowY: 'auto',
-        }}>
-          {Object.entries(styles).filter(([, v]) => v).map(([key, val]) => (
-            <div key={key}>
-              <span style={{ color: color.mutedForeground }}>{key.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`)}:</span>{' '}
-              <span style={{ color: color.foreground }}>{val};</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Suggestions box */}
-      {suggestionsOpen && (
-        <div style={{ marginBottom: 8 }}>
-          <SuggestionsSection items={suggestions ?? []} onApply={onApplySuggestion} onRequestAnalysis={onRequestAnalysis} />
-        </div>
-      )}
+      {/* Where the element sits — the styles are already in the property panel */}
+      {treeOpen && treeTarget && <ElementTree selected={treeTarget} onSelect={onSelectElement} />}
 
       {/* Repeated component: the edit goes to this one, or to every one of them */}
       {scope && (
@@ -1103,27 +1112,6 @@ function CSSPropertiesSection({ entries }: { entries: Array<[string, string]> })
   );
 }
 
-// ─── SuggestionsToggle — icon button for header ─────────────────────────────
-
-function SuggestionsToggle({ active, onClick }: { active: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={(e) => { e.stopPropagation(); onClick(); }}
-      title={t('suggestions.see')}
-      style={{
-        background: active ? 'rgba(255,108,3,0.08)' : color.secondary,
-        border: 'none',
-        cursor: 'pointer', padding: 6, borderRadius: radius.sm,
-        color: active ? ilse.orange : color.mutedForeground,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0, transition: 'all 0.15s',
-      }}
-    >
-      <IconEyeglass2 size={14} stroke={1.75} />
-    </button>
-  );
-}
-
 // ─── SuggestionsSection ──────────────────────────────────────────────────────
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -1254,10 +1242,17 @@ function SuggestionsSection({ items, onApply, onRequestAnalysis }: {
 // Initialize browser locale once (before first render)
 if (typeof navigator !== 'undefined') setLocale(detectLocale());
 
+
+/** A toast: what Ilse says, and what her mascot does while saying it (none when there's nothing to say) */
+const saying = (text: string | null, reaction?: MascotReaction) => (text ? { text, reaction } : null);
+type AgentInfo = { name?: string; email?: string; plan?: string; calls?: number; model?: string };
+
 export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; demoEndpoint?: string } = {}) {
   const [mounted, setMounted] = useState(false);
   const [langKey, setLangKey] = useState(0); // force re-render on locale change
   const [isOpen, setIsOpen] = useState(false);
+  const isOpenRef = useRef(false);
+  useEffect(() => { isOpenRef.current = isOpen; }, [isOpen]);
   const [annotating, setAnnotating] = useState(false);
   const [annotations, setAnnotations] = useState<AnnotationDraft[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -1282,7 +1277,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [activeMarker, setActiveMarker] = useState<number | null>(null);
   const [markersVisible, setMarkersVisible] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  // Settings header: the agent that runs the changes, its plan, and this session's model runs
+  const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Project memory: asked from the CLI each time it opens, so it is never stale
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryData, setMemoryData] = useState<MemoryData | null>(null);
+  const openMemory = () => { setMemoryData(null); setMemoryOpen(true); send({ type: 'memory' }); };
   // Shortcut groups folded in the modal — the first one starts open
   const [shortcutGroupsOpen, setShortcutGroupsOpen] = useState<Set<string>>(() => new Set([SHORTCUT_GROUPS[0].title]));
   // "Conectar agente": MCP endpoint + token of the running ilse (like Hilo's connection settings)
@@ -1395,25 +1396,100 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setDSTokens(tokens);
         setDsTokensLoaded(true);
         localStorage.setItem(getStorageKey('ilse-ds-tokens'), input);
-        setClipboardToast(`${tokens.length} tokens loaded`);
+        setClipboardToast(saying(`${tokens.length} tokens loaded`));
         setTimeout(() => setClipboardToast(null), 3000);
       } else {
-        setClipboardToast(t('toolbar.clipboard.noTokens'));
+        setClipboardToast(saying(t('toolbar.clipboard.noTokens')));
         setTimeout(() => setClipboardToast(null), 4000);
       }
     } catch {
-      setClipboardToast(t('toolbar.clipboard.invalidJson'));
+      setClipboardToast(saying(t('toolbar.clipboard.invalidJson')));
       setTimeout(() => setClipboardToast(null), 4000);
     }
   }, []);
 
   // Page scan
   const [scanOpen, setScanOpen] = useState(false);
+  // Read from the socket handler, which subscribes once
+  const scanOpenRef = useRef(false);
+  useEffect(() => { scanOpenRef.current = scanOpen; }, [scanOpen]);
+  const toolbarModeRef = useRef<'design' | 'test'>('design');
+  // Design mode: annotate and edit (what Ilse always did). Test mode: an agent tests the app.
+  // Remembered per browser — a convenience, so a blocked storage just starts in design.
+  const [toolbarMode, setToolbarModeState] = useState<'design' | 'test'>(() => {
+    try { return localStorage.getItem('ilse-toolbar-mode') === 'test' ? 'test' : 'design'; } catch { return 'design'; }
+  });
+  const accent = modeAccent(toolbarMode);
+  toolbarModeRef.current = toolbarMode;
+  const setToolbarMode = (mode: 'design' | 'test') => {
+    setToolbarModeState(mode);
+    try { localStorage.setItem('ilse-toolbar-mode', mode); } catch { /* per-browser preference only */ }
+  };
+  // Test mode runs on Ilse Pro. Without it the switch shows her asleep, and a tap says where to get it
+  const [proTest, setProTest] = useState(false);
   const [pageIssues, setPageIssues] = useState<PageIssue[]>([]);
   const [scanHighlight, setScanHighlight] = useState<PopoverRect | null>(null);
   const [scanAiSummary, setScanAiSummary] = useState<string | null>(null);
   const [scanCategory, setScanCategory] = useState<string | null>(null); // null = all
   const [scanReportOpen, setScanReportOpen] = useState(false);
+  // Findings from the last `ilse test` run that the dev hasn't fixed or discarded yet
+  const [testFindings, setTestFindings] = useState<TestFinding[]>([]);
+  // Test mode, asked from here and run by the CLI: where it is, and what it needs from the dev
+  type TestPhase = 'checking' | 'running' | 'login-ask' | 'login-open' | 'error';
+  const [testRun, setTestRun] = useState<{ phase: TestPhase; page?: string; error?: string; expired?: boolean } | null>(null);
+  const [testSteps, setTestSteps] = useState<string[]>([]);
+  /** The mascot at work: is the agent editing (she types) or thinking (she looks up)? */
+  const [agentActivity, setAgentActivity] = useState<MascotActivity>('edit');
+  /** The mode whose mascot is celebrating a finished run, for a moment */
+  const [celebrating, setCelebrating] = useState<MascotMode | null>(null);
+  const celebrateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const celebrate = (mode: MascotMode) => {
+    setCelebrating(mode);
+    if (celebrateTimerRef.current) clearTimeout(celebrateTimerRef.current);
+    celebrateTimerRef.current = setTimeout(() => setCelebrating(null), 1600);
+  };
+  /** Something landed in this agent run: when it ends, she celebrates */
+  const resolvedInRunRef = useRef(false);
+  /**
+   * The test's reasoning, floating above the toolbar exactly like the agent's:
+   * no background, newest line at the bottom, older lines fading. The mascot
+   * in the mode switch is the one that works; only while the test runs.
+   */
+  const testStream = (gap: number, fontSize: number, maxWidth: number) => {
+    const running = testRun?.phase === 'checking' || testRun?.phase === 'running';
+    if (!running || testSteps.length === 0) return null;
+    const lines = testSteps.slice(-3).reverse();
+    return (
+      <div style={{ position: 'absolute', bottom: `calc(100% + ${gap}px)`, right: 0, display: 'flex', flexDirection: 'column-reverse', alignItems: 'flex-end', gap: 4, pointerEvents: 'none' }}>
+        {lines.map((line, i) => (
+          <div key={`${testSteps.length - i}-${line}`} style={{ fontSize, fontFamily: font.sans, maxWidth, ...reasoningLine(i) }}>
+            {i === 0 && <ReasoningDot mode="test" />}
+            {line}
+          </div>
+        ))}
+      </div>
+    );
+  };
+  /** One line of the test's reasoning: the page it opens, then what it found there */
+  const testStepText = (msg: Record<string, unknown>): string => {
+    if (typeof msg.path !== 'string') return t('toolbar.testStepStart');
+    const page = msg.viewport === 'mobile' ? t('toolbar.testOnMobile', { page: msg.path }) : msg.path;
+    if (msg.done !== true) return t('toolbar.testStepPage', { page });
+    const found = typeof msg.found === 'number' ? msg.found : 0;
+    if (found === 0) return t('toolbar.testStepClean', { page });
+    const kinds = (Array.isArray(msg.kinds) ? msg.kinds : []).map(k => t(`toolbar.cat.${k}` as Parameters<typeof t>[0])).join(', ');
+    return t('toolbar.testStepFound', { page, count: found, kinds });
+  };
+  const testAction = (action: 'run' | 'run-anon' | 'login' | 'login-done' | 'login-cancel') => send({ type: 'test', action });
+
+  // Recomputed on every render: a client-side route change shows that page's findings
+  const pageFindings = findingsForPage(testFindings, location.pathname, location.search);
+
+  /** Fix → the finding becomes a note, like one the dev wrote; discard → never shown again */
+  const decideTestFinding = useCallback((f: TestFinding, decision: 'approved' | 'discarded') => {
+    send({ type: 'finding_decide', id: f.id, decision });
+    setTestFindings(prev => prev.filter(x => x.id !== f.id));
+  }, []);
 
   const runPageScan = useCallback(() => {
     const issues = scanPage(500);
@@ -1422,7 +1498,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     setScanCategory(null);
   }, []);
 
-  const [clipboardToast, setClipboardToast] = useState<string | null>(null);
+  /** What Ilse says above the toolbar, and what her mascot does while saying it */
+  const [clipboardToast, setClipboardToast] = useState<{ text: string; reaction?: MascotReaction } | null>(null);
+  /** The last run changed components that aren't on this page — it stays until the designer decides */
+  const [offPage, setOffPage] = useState<{ changeSetId: string; files: string[]; routes: string[] } | null>(null);
+  // The project's typecheck or tests still fail after the agent's repair turns
+  const [checkFailed, setCheckFailed] = useState<{ changeSetId: string; problems: string[]; count: number } | null>(null);
   // Undo: what the CLI can restore (newest batch first)
   const [undo, setUndo] = useState<{ count: number; label?: string; redoCount?: number; redoLabel?: string }>({ count: 0 });
 
@@ -1528,6 +1609,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   useEffect(() => {
     setMounted(true);
+    shieldPage();
     // Sync pause state on mount — freeze state is persisted on window and
     // survives HMR/remount, but the React state does not. Without this
     // sync, the button icon would show "pause" even when already frozen.
@@ -1564,6 +1646,11 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (msg.type === 'connected' && typeof msg.port === 'number') {
         setWsPort(msg.port);
         setConnected(true);
+        const canTest = (msg.pro as { test?: unknown } | undefined)?.test === true;
+        setProTest(canTest);
+        // A browser that remembers test mode from a machine with Pro: back to design
+        if (!canTest && toolbarModeRef.current === 'test') { setToolbarMode('design'); setScanOpen(false); }
+        if (canTest) send({ type: 'findings' });
         if (Array.isArray(msg.known)) {
           const known = msg.known as Array<{ id: string; status: string }>;
           setAnnotations(prev => reconcileSent(prev, known));
@@ -1575,6 +1662,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         if (typeof msg.account === 'string') {
           setAgentAccount(msg.account);
         }
+        if (msg.agent && typeof msg.agent === 'object') setAgentInfo(msg.agent as AgentInfo);
         if (msg.undo && typeof (msg.undo as { count?: unknown }).count === 'number') {
           setUndo(msg.undo as { count: number; label?: string });
         }
@@ -1601,6 +1689,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       }
       if (msg.type === 'resolved' && msg.annotation) {
         const a = msg.annotation as Record<string, unknown>;
+        resolvedInRunRef.current = true;
         const draft = annotationsRef.current.find(d => d.id === a.id);
         if (draft?.styleData) setTimeout(() => clearStylePreview(draft), 600);
         if (draft?.pixelTargetId) expireElement(document.querySelector(`[data-ilse-pixel-target="${draft.pixelTargetId}"]`));
@@ -1645,13 +1734,45 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       // Held while the agent's account is out of quota: stays "sent" (it will run on
       // its own at the reset), so nothing invites a resend that would run it twice
       if (msg.type === 'deferred') {
-        setClipboardToast(typeof msg.message === 'string' ? msg.message : t('toolbar.deferred'));
+        setClipboardToast(saying(typeof msg.message === 'string' ? msg.message : t('toolbar.deferred'), 'queued'));
         setTimeout(() => setClipboardToast(null), 8000);
       }
       if (msg.type === 'status') {
         setAnnotations(prev => prev.map(ann =>
           ann.id === msg.id ? { ...ann, status: msg.status as AnnotationDraft['status'] } : ann
         ));
+      }
+      if (msg.type === 'findings' && Array.isArray(msg.findings)) {
+        setTestFindings(msg.findings as TestFinding[]);
+      }
+      if (msg.type === 'test_checking') { setTestRun({ phase: 'checking' }); setTestSteps([t('toolbar.testStepChecking')]); }
+      if (msg.type === 'test_login_needed') { setTestRun({ phase: 'login-ask', expired: msg.expired === true }); if (toolbarModeRef.current === 'test') setScanOpen(true); }
+      if (msg.type === 'test_login_open') setTestRun({ phase: 'login-open' });
+      if (msg.type === 'test_login_cancelled') setTestRun(null);
+      if (msg.type === 'test_progress') {
+        setTestRun({ phase: 'running' });
+        setTestSteps(prev => [...prev, testStepText(msg)].slice(-20));
+      }
+      if (msg.type === 'test_done') {
+        setTestRun(null);
+        celebrate('test');
+        if (Array.isArray(msg.findings)) setTestFindings(msg.findings as TestFinding[]);
+        // In test mode the results open in the tester; otherwise a toast says it's done
+        if (toolbarModeRef.current === 'test' && isOpenRef.current) setScanOpen(true);
+        else setClipboardToast(saying(t('toolbar.testDone', { count: typeof msg.count === 'number' ? msg.count : 0, pages: typeof msg.pages === 'number' ? msg.pages : 0 })));
+        setTimeout(() => setClipboardToast(null), 5000);
+      }
+      // After the agent fixed findings from the test, the CLI tests their pages again
+      if (msg.type === 'test_retest_started') setClipboardToast(saying(t('toolbar.testRetesting')));
+      if (msg.type === 'test_retest_done') {
+        const fixed = Array.isArray(msg.fixed) ? msg.fixed.length : 0;
+        const still = Array.isArray(msg.still) ? msg.still.length : 0;
+        setClipboardToast(saying(still > 0 ? t('toolbar.testRetestStill', { count: still }) : fixed > 0 ? t('toolbar.testRetestFixed', { count: fixed }) : null));
+        setTimeout(() => setClipboardToast(null), 5000);
+      }
+      if (msg.type === 'test_error') {
+        setTestRun({ phase: 'error', error: msg.reason === 'no-browser' ? t('toolbar.testNoBrowser') : t('toolbar.testFailed') });
+        if (toolbarModeRef.current === 'test') setScanOpen(true);
       }
       if (msg.type === 'logs') {
         const next = { json: msg.json, markdown: typeof msg.markdown === 'string' ? msg.markdown : '' };
@@ -1675,11 +1796,32 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setAnnotations(prev => prev.map(ann => ann.id && ids.has(ann.id) ? { ...ann, status: 'resolved' as const } : ann));
         const conflicts = (msg.conflicts as string[]) ?? [];
         setClipboardToast(conflicts.length
-          ? t('undo.toastConflicts', { files: conflicts.map(f => f.split('/').pop()).join(', ') })
-          : t('redo.toast'));
+          ? saying(t('undo.toastConflicts', { files: conflicts.map(f => f.split('/').pop()).join(', ') }), 'conflict')
+          : saying(t('redo.toast')));
         setTimeout(() => setClipboardToast(null), 3000);
       }
+      if (msg.type === 'agent-usage') {
+        setAgentInfo(prev => prev ? { ...prev, calls: typeof msg.calls === 'number' ? msg.calls : prev.calls, model: typeof msg.model === 'string' ? msg.model : prev.model } : prev);
+      }
+      if (msg.type === 'memory') {
+        setMemoryData({ design: msg.design as MemoryData['design'], pro: !!msg.pro, test: (msg.test ?? null) as MemoryData['test'] });
+      }
+      if (msg.type === 'check-failed' && typeof msg.changeSetId === 'string') {
+        setCheckFailed({
+          changeSetId: msg.changeSetId,
+          problems: Array.isArray(msg.problems) ? (msg.problems as string[]) : [],
+          count: typeof msg.count === 'number' ? msg.count : 0,
+        });
+      }
+      if (msg.type === 'off-page' && typeof msg.changeSetId === 'string') {
+        setOffPage({
+          changeSetId: msg.changeSetId,
+          files: Array.isArray(msg.files) ? (msg.files as string[]) : [],
+          routes: Array.isArray(msg.routes) ? (msg.routes as string[]) : [],
+        });
+      }
       if (msg.type === 'undone') {
+        setOffPage(null);
         const ids = new Set((msg.annotationIds as string[]) ?? []);
         for (const d of annotationsRef.current) if (d.id && ids.has(d.id)) clearStylePreview(d);
         setAnnotations(prev => prev.map(ann =>
@@ -1687,8 +1829,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         ));
         const conflicts = (msg.conflicts as string[]) ?? [];
         setClipboardToast(conflicts.length
-          ? t('undo.toastConflicts', { files: conflicts.map(f => f.split('/').pop()).join(', ') })
-          : t('undo.toast'));
+          ? saying(t('undo.toastConflicts', { files: conflicts.map(f => f.split('/').pop()).join(', ') }), 'conflict')
+          : saying(t('undo.toast')));
         setTimeout(() => setClipboardToast(null), 3000);
       }
       if (msg.type === 'stopped') {
@@ -1706,11 +1848,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         }
         // Show error in toast
         const errorMsg = typeof msg.message === 'string' ? msg.message : t('toolbar.runFailed');
-        setClipboardToast(errorMsg);
+        setClipboardToast(saying(errorMsg, 'failed'));
         setTimeout(() => setClipboardToast(null), 6000);
       }
       if (msg.type === 'thinking' && typeof msg.text === 'string') {
         const id = ++thinkingIdRef.current;
+        if (msg.activity === 'edit' || msg.activity === 'think') setAgentActivity(msg.activity);
         const text = msg.text as string;
         // Don't stream intermediate thinking into aiAnalysis —
         // only the final resolved summary should appear there.
@@ -1741,6 +1884,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setAnnotations(prev => reconcileSent(prev, known));
       }
       if (msg.type === 'thinking-end') {
+        // Agents that don't say what they're doing just type, so start the next run there
+        setAgentActivity('edit');
+        if (resolvedInRunRef.current) { resolvedInRunRef.current = false; celebrate('design'); }
         // The run is over: every answer it had is in. Anything still "sent" lost its answer.
         setTimeout(() => send({ type: 'sync' }), 1200);
       }
@@ -1776,16 +1922,18 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       unsub();
       disconnect();
       if (thinkingTimerRef.current) clearTimeout(thinkingTimerRef.current);
+      if (celebrateTimerRef.current) clearTimeout(celebrateTimerRef.current);
     };
   }, []);
 
   // ── Annotation helpers ─────────────────────────────────────────────────────
 
-  const addAnnotation = useCallback((capture: ElementCapture, prefillNote = '', markerType: MarkerType = 'element', pixelTargetId?: string, intent?: DraftIntent) => {
+  const addAnnotation = useCallback((capture: ElementCapture, prefillNote = '', markerType: MarkerType = 'element', pixelTargetId?: string, intent?: DraftIntent, testFinding?: TestFindingRef) => {
     setAnnotations(prev => [...prev, {
       capture, note: prefillNote, status: 'pending' as const, markerType, pixelTargetId,
       intent: intent ?? inferDraftIntent(prefillNote, !!capture.element),
       severity: 'important' as DraftSeverity,
+      ...(testFinding ? { testFinding } : {}),
     }]);
   }, []);
 
@@ -1819,6 +1967,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       ...(pendingCapture.sketch ? { sketch: pendingCapture.sketch } : {}),
       ...(pendingCapture.auto ? { auto: pendingCapture.auto } : {}),
       ...(pendingCapture.textEdit ? { textEdit: pendingCapture.textEdit } : {}),
+      ...(pendingCapture.testFinding ? { testFinding: pendingCapture.testFinding } : {}),
       ...(styleChanges.length > 0 ? {
         styleData: { selector: pendingCapture.capture.element, changes: styleChanges },
       } : {}),
@@ -2128,6 +2277,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   useEffect(() => { activeMarkerForEsc.current = activeMarker; }, [activeMarker]);
   useEffect(() => { showSettingsForEsc.current = showSettings; }, [showSettings]);
   useEffect(() => { shortcutsOpenForEsc.current = shortcutsOpen; }, [shortcutsOpen]);
+  const memoryOpenForEsc = useRef(false);
+  useEffect(() => { memoryOpenForEsc.current = memoryOpen; }, [memoryOpen]);
   useEffect(() => { chatOpenForEsc.current = chatOpen; }, [chatOpen]);
 
   useEffect(() => {
@@ -2154,6 +2305,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       }
       if (shortcutsOpenForEsc.current) {
         setShortcutsOpen(false);
+        return;
+      }
+      if (memoryOpenForEsc.current) {
+        setMemoryOpen(false);
         return;
       }
       if (showSettingsForEsc.current) {
@@ -2352,6 +2507,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       text: ann.capture.text,
       position: ann.capture.rect,
       environment: env,
+      // What renders on this page: the CLI checks the run's edits landed here
+      pageComponents: pageComponents(),
       // Schema rico
       intent: ann.intent ?? inferDraftIntent(ann.note, !!ann.capture.element),
       severity: ann.severity ?? 'important',
@@ -2362,6 +2519,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     }
     if (ann.styleData?.changes.length) payload.styleData = ann.styleData;
     if (ann.composeMs !== undefined) payload.composeMs = ann.composeMs;
+    if (ann.testFinding) payload.testFinding = ann.testFinding;
     payload.captureMode = ann.markerType;
     if (ann.rearrangeData) {
       payload.rearrangeData = {
@@ -2425,7 +2583,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         .catch(() => {
           setAnnotations(prev => prev.map((a, i) => i === index ? { ...a, status: 'pending' } : a));
           setSendFeedback(null);
-          setClipboardToast('Demo API error');
+          setClipboardToast(saying('Demo API error', 'failed'));
           setTimeout(() => setClipboardToast(null), 4000);
         });
     } else {
@@ -2433,10 +2591,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const markdown = formatAnnotationMarkdown(ann, index);
       navigator.clipboard.writeText(markdown).then(() => {
         setAnnotations(prev => prev.map((a, i) => i === index ? { ...a, status: 'sent' } : a));
-        setClipboardToast(t('toolbar.clipboard.copied'));
+        setClipboardToast(saying(t('toolbar.clipboard.copied'), 'copied'));
         setTimeout(() => setClipboardToast(null), 4000);
       }).catch(() => {
-        setClipboardToast(t('toolbar.clipboard.error'));
+        setClipboardToast(saying(t('toolbar.clipboard.error'), 'oops'));
         setTimeout(() => setClipboardToast(null), 4000);
       });
     }
@@ -2453,10 +2611,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const markdown = formatAllAsMarkdown(annotations);
       navigator.clipboard.writeText(markdown).then(() => {
         setAnnotations(prev => prev.map(a => a.status === 'pending' ? { ...a, status: 'sent' } : a));
-        setClipboardToast(t('toolbar.clipboard.copied'));
+        setClipboardToast(saying(t('toolbar.clipboard.copied'), 'copied'));
         setTimeout(() => setClipboardToast(null), 4000);
       }).catch(() => {
-        setClipboardToast(t('toolbar.clipboard.error'));
+        setClipboardToast(saying(t('toolbar.clipboard.error'), 'oops'));
         setTimeout(() => setClipboardToast(null), 4000);
       });
     }
@@ -2571,7 +2729,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // Inside inputs the shortcut keeps its normal meaning; with nothing to do at
   // either level the page's own undo still works.
   useEffect(() => {
-    const toast = (text: string) => { setClipboardToast(text); setTimeout(() => setClipboardToast(null), 2200); };
+    const toast = (text: string, reaction?: MascotReaction) => { setClipboardToast(saying(text, reaction)); setTimeout(() => setClipboardToast(null), 2200); };
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key.toLowerCase() !== 'z') return;
       const el = e.target as HTMLElement | null;
@@ -2581,7 +2739,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         e.preventDefault();
         if (redo) return; // redo inside a draft: next step
         const step = draftSteps.current.pop();
-        if (!step) { toast(t('undo.draftStart')); return; }
+        if (!step) { toast(t('undo.draftStart'), 'nothing-left'); return; }
         if (step.kind === 'panel') {
           const label = panelHistoryRef.current?.undo();
           toast(t('undo.draftStep', { what: label ?? t('undo.panel') }));
@@ -2837,12 +2995,22 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const primary = result.primary;
     let capture: ElementCapture;
     let pixelTargetId: string | undefined;
+    let holder: Element | null = null;
     if (primary) {
       capture = captureElement(primary);
       pixelTargetId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       primary.setAttribute('data-ilse-pixel-target', pixelTargetId);
     } else {
-      capture = { element: t('toolbar.sketch.empty'), styles: {}, rect };
+      // Nothing circled: anchor on the container that holds the drawing, so the
+      // agent gets its component and file:line like a click — not bare coordinates
+      holder = drawnContainer(box, { x: window.scrollX, y: window.scrollY });
+      if (holder) {
+        const held = captureElement(holder);
+        // The new thing goes inside the holder: it is the parent, the drawn spot the position
+        capture = { ...held, parent: held.element, rect };
+      } else {
+        capture = { element: t('toolbar.sketch.empty'), styles: {}, rect };
+      }
     }
     capture = { ...capture, _scrollX: window.scrollX, _scrollY: window.scrollY };
     stylePreviewCommitted.current = false;
@@ -2851,7 +3019,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       context: capture.element,
       contextLabel: primary
         ? `${t('toolbar.sketch.label')} · ${buildContextLabel(primary)}`
-        : t('toolbar.sketch.label'),
+        : holder
+          ? `${t('toolbar.sketch.label')} · ${t('toolbar.sketch.inside', { label: buildContextLabel(holder) })}`
+          : t('toolbar.sketch.label'),
       rect,
       originalRect: { ...rect },
       note: '',
@@ -2937,7 +3107,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const pos = defaultToolbarPos();
       setToolbarPos(pos);
       try { sessionStorage.removeItem(getStorageKey('ilse-toolbar-pos')); } catch { /* ignore */ }
-      setClipboardToast(t('shortcuts.recentered'));
+      setClipboardToast(saying(t('shortcuts.recentered'), 'recentered'));
       setTimeout(() => setClipboardToast(null), 1800);
     };
     window.addEventListener('keydown', onKey);
@@ -2980,8 +3150,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           pointer-events: none;
         }
         @keyframes ilse-pulse {
-          0%, 100% { box-shadow: 0 0 0 3px rgba(255,108,3,0.4), 0 0 20px rgba(255,108,3,0.3), 0 4px 16px rgba(255,108,3,0.2); }
-          50% { box-shadow: 0 0 0 6px rgba(255,108,3,0.2), 0 0 30px rgba(255,108,3,0.4), 0 4px 16px rgba(255,108,3,0.3); }
+          0%, 100% { box-shadow: 0 0 0 3px rgba(var(--ilse-accent-rgb, 255,108,3),0.4), 0 0 20px rgba(var(--ilse-accent-rgb, 255,108,3),0.3), 0 4px 16px rgba(var(--ilse-accent-rgb, 255,108,3),0.2); }
+          50% { box-shadow: 0 0 0 6px rgba(var(--ilse-accent-rgb, 255,108,3),0.2), 0 0 30px rgba(var(--ilse-accent-rgb, 255,108,3),0.4), 0 4px 16px rgba(var(--ilse-accent-rgb, 255,108,3),0.3); }
         }
         @keyframes ilse-pixel {
           0%, 100% { transform: scale(0.3); opacity: 0.2; }
@@ -3029,8 +3199,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           100% { opacity: 0; transform: scale(0.3) translateY(-8px); }
         }
         @keyframes ilse-run-pulse {
-          0%, 100% { background: rgba(255,108,3,0.1); box-shadow: 0 0 0 0 rgba(255,108,3,0.3); }
-          50% { background: rgba(255,108,3,0.25); box-shadow: 0 0 0 4px rgba(255,108,3,0); }
+          0%, 100% { background: rgba(var(--ilse-accent-rgb, 255,108,3),0.1); box-shadow: 0 0 0 0 rgba(var(--ilse-accent-rgb, 255,108,3),0.3); }
+          50% { background: rgba(var(--ilse-accent-rgb, 255,108,3),0.25); box-shadow: 0 0 0 4px rgba(var(--ilse-accent-rgb, 255,108,3),0); }
+        }
+        @keyframes ilse-scan-fill {
+          0% { clip-path: inset(0 0 100% 0); }
+          100% { clip-path: inset(0 0 0 0); }
         }
       `}</style>
 
@@ -3361,15 +3535,21 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           scope={pendingCapture.scope}
           onScope={(choice) => setPendingCapture(prev => prev?.scope ? { ...prev, scope: { ...prev.scope, choice } } : prev)}
           onRemoveSummary={takeBack}
-          onSelectParent={(() => {
-            // Same rule as clicking another element: only while nothing has been changed yet
+          {...(() => {
             const pc = pendingCapture;
-            if (pc.markerType !== 'element' || !pc.pixelTargetId) return undefined;
-            if (pc.note.trim() || hasAuto(pc.auto) || pc.styleChanges?.length || pc.imageRefs?.length || pc.sketch) return undefined;
-            const el = document.querySelector(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`);
-            const parent = el ? selectableParent(el) : null;
-            if (!el || !parent) return undefined;
-            return () => { settleElement(el); selectElement(parent); };
+            const el = pc.markerType === 'element' && pc.pixelTargetId
+              ? document.querySelector(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`)
+              : null;
+            if (!el) return {};
+            // Same rule as clicking another element: only while nothing has been changed yet
+            const touched = !!(pc.note.trim() || hasAuto(pc.auto) || pc.styleChanges?.length || pc.imageRefs?.length || pc.sketch);
+            const moveTo = touched ? undefined : (target: Element) => { settleElement(el); selectElement(target, true); };
+            const parent = selectableParent(el);
+            return {
+              treeTarget: el,
+              onSelectElement: moveTo,
+              onSelectParent: moveTo && parent ? () => moveTo(parent) : undefined,
+            };
           })()}
           styles={pendingCapture.capture.styles}
           grepPattern={pendingCapture.capture.grepPattern}
@@ -3937,7 +4117,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       })()}
 
       {/* ── Main toolbar ── */}
-      <div data-ilse-toolbar style={{ position: 'fixed', zIndex: 99999, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+      <div data-ilse-toolbar style={{ position: 'fixed', zIndex: 99999, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', ['--ilse-accent-rgb' as string]: accent.rgb }}>
 
         {/* Minimized circle button (draggable, animated border) */}
         {!isOpen && (
@@ -3946,12 +4126,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             onMouseDown={handleToolbarMouseDown}
           >
             <IlsePixelButton
+              mode={toolbarMode}
               onClick={openToolbar}
               badge={processingCount > 0 ? processingCount : pendingCount > 0 ? pendingCount : undefined}
               processing={processingCount > 0}
             />
 
             {/* Streaming log — visible near pill while agent is running */}
+            {toolbarMode === 'test' && testStream(12, 11, 280)}
             {thinkingMessages.length > 0 && processingCount > 0 && (
               <div
                 style={{
@@ -3966,38 +4148,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 }}
               >
                 {thinkingMessages.slice().reverse().map((m, idxFromBottom) => {
-                  const opacity = idxFromBottom === 0 ? 1 : idxFromBottom === 1 ? 0.45 : 0.2;
+                  // Newest at the bottom, bold, with the pulsing square; older lines fade
                   return (
-                    <div
-                      key={m.id}
-                      style={{
-                        fontSize: 11,
-                        fontFamily: font.sans,
-                        fontWeight: idxFromBottom === 0 ? 600 : 500,
-                        maxWidth: 280,
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        color: '#BABABA',
-                        mixBlendMode: 'luminosity',
-                        opacity,
-                        transition: 'opacity 0.4s ease',
-                        animation: idxFromBottom === 0 ? 'ilse-thinking-in 0.35s ease-out' : undefined,
-                      }}
-                    >
-                      {idxFromBottom === 0 && (
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            width: 5,
-                            height: 5,
-                            background: ilse.orange,
-                            marginRight: 6,
-                            verticalAlign: 'middle',
-                            animation: 'ilse-thinking-dot 1.2s ease-in-out infinite',
-                          }}
-                        />
-                      )}
+                    <div key={m.id} style={{ fontSize: 11, fontFamily: font.sans, maxWidth: 280, ...reasoningLine(idxFromBottom) }}>
+                      {idxFromBottom === 0 && <ReasoningDot mode={toolbarMode} />}
                       {m.text}
                     </div>
                   );
@@ -4026,18 +4180,45 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 position: 'absolute', bottom: 'calc(100% + 8px)', ...(extendsRight ? { left: 0 } : { right: 0 }),
                 backgroundColor: color.popover, border: `1px solid ${color.border}`,
                 borderRadius: 10, padding: 12,
-                width: connectOpen ? 340 : 200, boxShadow: shadow.lg,
+                width: connectOpen ? 340 : 240, boxShadow: shadow.lg,
                 color: color.foreground, fontSize: 12, fontFamily: font.sans,
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: connected ? '#22c55e' : '#ef4444', display: 'inline-block' }} />
-                  <span style={{ color: color.mutedForeground, fontSize: 11 }}>{connected ? t('settings.wsConnected') : t('settings.offline')}</span>
-                  {connected && wsPort && (
-                    <span style={{ marginLeft: 'auto', color: '#a1a1a1', fontSize: 10, fontFamily: 'ui-monospace, monospace' }}>:{wsPort}</span>
-                  )}
+                {/* Ilse's plan, and the bridge: dot + port, the status in the tooltip */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>Ilse</span>
+                  <span
+                    title={proTest ? t('settings.planProHint') : t('settings.planFreeHint')}
+                    style={{
+                      fontSize: 10, fontWeight: 600, lineHeight: 1, padding: '3px 6px', borderRadius: radius.full,
+                      backgroundColor: proTest ? ilse.testPale : color.muted, color: proTest ? ilse.test : color.mutedForeground,
+                    }}
+                  >
+                    {proTest ? 'Pro' : 'Free'}
+                  </span>
+                  <span
+                    title={connected ? t('settings.wsConnectedHint', { port: String(wsPort ?? '') }) : t('settings.wsOfflineHint')}
+                    style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}
+                  >
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: connected ? '#22c55e' : '#ef4444', display: 'inline-block' }} />
+                    <span style={{ color: connected ? '#a1a1a1' : '#ef4444', fontSize: 10, fontFamily: font.mono }}>
+                      {connected && wsPort ? `:${wsPort}` : t('settings.offline')}
+                    </span>
+                  </span>
                 </div>
-                {agentAccount && (
-                  <div title={t('settings.accountHint')} style={{ fontSize: 11, color: color.mutedForeground, margin: '-2px 0 8px 13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {/* Who runs the changes: the agent, its plan, its account, this session's model runs */}
+                {agentInfo?.name && (
+                  <div title={t('settings.accountHint')} style={{ marginBottom: 10, fontSize: 11, lineHeight: 1.45, color: color.mutedForeground, minWidth: 0 }}>
+                    <div style={{ color: color.foreground, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {agentInfo.name}{agentInfo.plan ? <span style={{ color: color.mutedForeground, fontWeight: 400 }}> · {agentInfo.plan}</span> : null}
+                    </div>
+                    {agentInfo.email && <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agentInfo.email}</div>}
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {agentInfo.model ?? t('settings.defaultModel')} · {t('settings.modelCalls', { count: agentInfo.calls ?? 0 })}
+                    </div>
+                  </div>
+                )}
+                {!agentInfo?.name && agentAccount && (
+                  <div title={t('settings.accountHint')} style={{ fontSize: 11, color: color.mutedForeground, marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {agentAccount}
                   </div>
                 )}
@@ -4257,6 +4438,17 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   </div>
                 )}
 
+                {/* Project memory: what Ilse remembers here, and what the agent reads */}
+                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
+                  <button
+                    onClick={openMemory}
+                    style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0 }}
+                  >
+                    <span style={{ whiteSpace: 'nowrap' }}>{t('memory.open')}</span>
+                    <span aria-hidden>›</span>
+                  </button>
+                </div>
+
                 {/* Keyboard shortcuts */}
                 <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
                   <button
@@ -4294,22 +4486,21 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               </div>
             )}
 
-            {/* Scan panel — categorized page issues */}
+            {/* Agent tester — the CLI walks the app in a real browser; the findings come back here */}
             {scanOpen && (() => {
-              // Group by category
-              const categories = ['a11y', 'contrast', 'typography', 'spacing', 'component'] as const;
-              const CATEGORY_LABELS: Record<string, string> = { a11y: 'Accessibility', contrast: 'Contrast', typography: 'Typography', spacing: 'Spacing', component: 'Components' };
-              const byCategory: Record<string, PageIssue[]> = {};
-              for (const issue of pageIssues) {
-                (byCategory[issue.category] ??= []).push(issue);
-              }
-              const activeCategories = categories.filter(c => byCategory[c]?.length);
-              const filtered = scanCategory ? (byCategory[scanCategory] ?? []) : pageIssues;
-              const preview = filtered.slice(0, 8);
-              const hasMore = filtered.length > 8;
-              const errors = pageIssues.filter(i => i.severity === 'error').length;
-              const warnings = pageIssues.filter(i => i.severity === 'warning').length;
-
+              const phase = testRun?.phase;
+              const working = phase === 'checking' || phase === 'running';
+              const elsewhere = testFindings.length - pageFindings.length;
+              // While Ilse talks (steps, login questions) her words float over the page, no card
+              const speaking = working || phase === 'login-ask' || phase === 'login-open';
+              const btn = (primary: boolean): React.CSSProperties => ({
+                flex: 1, padding: '7px 10px', borderRadius: radius.md, fontSize: 12, fontWeight: 600, fontFamily: font.sans, cursor: 'pointer',
+                border: primary ? 'none' : `1px solid ${color.border}`,
+                background: primary ? accent.hex : 'none', color: primary ? '#fff' : color.foreground,
+              });
+              const text = (body: string, tone: 'muted' | 'error' = 'muted') => (
+                <div style={{ fontSize: 11, color: tone === 'error' ? '#ef4444' : color.mutedForeground, lineHeight: 1.45, marginBottom: 10 }}>{body}</div>
+              );
               return (
               <div
                 data-ilse-toolbar
@@ -4318,148 +4509,126 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 style={{
                   position: 'absolute', bottom: 'calc(100% + 8px)',
                   ...(extendsRight ? { left: 0 } : { right: 0 }),
-                  backgroundColor: color.popover, border: `1px solid ${color.border}`,
-                  borderRadius: radius.xl, padding: 14,
-                  width: 320, maxHeight: 380, overflowY: 'auto',
-                  boxShadow: shadow.xl,
+                  ...(speaking
+                    ? { padding: '0 4px', width: 340 }
+                    : { backgroundColor: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.xl, padding: 14, width: 300, boxShadow: shadow.xl }),
+                  maxHeight: 420, overflowY: 'auto',
                   fontFamily: font.sans,
                 }}
               >
-                {/* Header */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: color.foreground }}>Page scan</span>
-                    {pageIssues.length > 0 && (
-                      <span style={{
-                        fontSize: 10, padding: '1px 6px', borderRadius: 8,
-                        backgroundColor: errors > 0 ? 'rgba(239,68,68,0.1)' : warnings > 0 ? 'rgba(245,158,11,0.1)' : 'rgba(99,102,241,0.1)',
-                        color: errors > 0 ? '#ef4444' : warnings > 0 ? '#f59e0b' : '#6366f1',
-                        fontWeight: 600,
-                      }}>
-                        {pageIssues.length}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ display: 'flex', gap: 2 }}>
-                    <button
-                      title={t('toolbar.rescan')}
-                      onClick={() => runPageScan()}
-                      style={{ background: 'none', border: 'none', color: color.mutedForeground, cursor: 'pointer', padding: 4, borderRadius: 4, lineHeight: 1, display: 'flex' }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = color.foreground; }}
-                      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = color.mutedForeground; }}
-                    >
-                      <IconRefresh size={14} stroke={1.75} />
-                    </button>
-                    {pageIssues.length > 0 && (
-                      <button
-                        title={t('toolbar.openReport')}
-                        onClick={() => { setScanReportOpen(true); setScanOpen(false); }}
-                        style={{ background: 'none', border: 'none', color: color.mutedForeground, cursor: 'pointer', padding: 4, borderRadius: 4, lineHeight: 1, display: 'flex' }}
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = color.foreground; }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = color.mutedForeground; }}
-                      >
-                        <IconMaximize size={14} stroke={1.75} />
-                      </button>
-                    )}
-                  </div>
-                </div>
+                {!speaking && <div style={{ fontSize: 12, fontWeight: 600, color: color.foreground, marginBottom: 8 }}>{t('toolbar.scan')}</div>}
 
-                {/* AI Summary */}
-                {scanAiSummary && (
-                  <div style={{
-                    fontSize: 11, color: color.mutedForeground, lineHeight: 1.4,
-                    padding: '6px 8px', backgroundColor: color.muted,
-                    borderRadius: radius.md, marginBottom: 8,
-                    whiteSpace: 'pre-wrap',
-                  }}>
-                    <span style={{ display: 'inline-block', width: 5, height: 5, backgroundColor: ilse.orange, marginRight: 6, verticalAlign: 'middle' }} />
-                    {scanAiSummary}
+                {/* Running: Ilse's thinking stack — the newest step bold with the pulsing square, older ones fading */}
+                {working && (
+                  <div>
+                    {/* The lines carry their own blend, so the words box doesn't add one */}
+                    <SpeechBubble mode="test" state="working" mascotSize={34} textStyle={{ color: undefined, mixBlendMode: 'normal', opacity: 1 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {testSteps.slice(-3).map((step, i, shown) => {
+                          const fromBottom = shown.length - 1 - i;
+                          return (
+                            <div key={`${testSteps.length - fromBottom}-${step}`} style={{ fontSize: 12, ...reasoningLine(fromBottom) }}>
+                              {fromBottom === 0 && <ReasoningDot mode="test" />}
+                              {step}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </SpeechBubble>
                   </div>
                 )}
 
-                {/* Category tabs */}
-                {activeCategories.length > 1 && (
-                  <div style={{ display: 'flex', gap: 4, marginBottom: 8, flexWrap: 'wrap' }}>
-                    <button
-                      onClick={() => setScanCategory(null)}
-                      style={{
-                        background: !scanCategory ? 'rgba(255,108,3,0.1)' : 'none',
-                        border: 'none', borderRadius: 6, padding: '3px 8px',
-                        fontSize: 10, fontWeight: 600, cursor: 'pointer',
-                        color: !scanCategory ? ilse.orange : color.mutedForeground,
-                        fontFamily: font.sans,
-                      }}
-                    >
-                      All
-                    </button>
-                    {activeCategories.map(cat => (
-                      <button
-                        key={cat}
-                        onClick={() => setScanCategory(scanCategory === cat ? null : cat)}
-                        style={{
-                          background: scanCategory === cat ? 'rgba(255,108,3,0.1)' : 'none',
-                          border: 'none', borderRadius: 6, padding: '3px 8px',
-                          fontSize: 10, fontWeight: 500, cursor: 'pointer',
-                          color: scanCategory === cat ? ilse.orange : color.mutedForeground,
-                          fontFamily: font.sans,
-                        }}
-                      >
-                        {CATEGORY_LABELS[cat] ?? cat} ({byCategory[cat].length})
-                      </button>
-                    ))}
-                  </div>
+                {phase === 'login-ask' && (
+                  <SpeechBubble mode="test" mascotSize={46} actions={<>
+                    <button style={speechButton('test', true)} onClick={() => testAction('login')}>{t('toolbar.testLoginYes')}</button>
+                    <button style={speechButton('test', false)} onClick={() => { setTestRun({ phase: 'running' }); testAction('run-anon'); }}>{t('toolbar.testLoginNo')}</button>
+                  </>}>
+                    {testRun?.expired ? t('toolbar.testLoginExpired') : t('toolbar.testLoginAsk')}
+                  </SpeechBubble>
                 )}
 
-                {pageIssues.length === 0 ? (
-                  <div style={{ color: '#16a34a', textAlign: 'center', padding: '12px 0', fontSize: 12 }}>
-                    No issues found
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    {preview.map((issue, i) => (
-                      <div
-                        key={`${issue.id}-${i}`}
-                        style={{
-                          display: 'flex', gap: 6, alignItems: 'flex-start', cursor: 'pointer',
-                          padding: '5px 8px', borderRadius: radius.md,
-                          transition: 'background-color 0.15s',
-                        }}
-                        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = color.muted; setScanHighlight(issue.rect); }}
-                        onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'; setScanHighlight(null); }}
-                        onClick={() => {
-                          const capture = captureElement(issue.element);
-                          const rect = issue.element.getBoundingClientRect();
-                          const pixelTargetId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-                          issue.element.setAttribute('data-ilse-pixel-target', pixelTargetId);
-                          const sug = analyzeElement(issue.element, capture.styles);
-                          setPendingCapture({
-                            capture, context: capture.element, contextLabel: buildContextLabel(issue.element),
-                            rect: { top: Math.round(rect.top), left: Math.round(rect.left), width: Math.round(rect.width), height: Math.round(rect.height) },
-                            originalRect: { top: Math.round(rect.top), left: Math.round(rect.left), width: Math.round(rect.width), height: Math.round(rect.height) },
-                            note: issue.message, markerType: 'element', pixelTargetId, suggestions: sug,
-                          });
-                          setScanOpen(false); setScanHighlight(null);
-                        }}
-                      >
-                        <span style={{
-                          width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 5,
-                          backgroundColor: SEVERITY_COLORS[issue.severity] ?? color.mutedForeground,
-                        }} />
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 11, color: color.foreground, lineHeight: 1.3 }}>{issue.message}</div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 1 }}>
-                            <span style={{ fontSize: 10, color: color.mutedForeground }}>{issue.selector}</span>
-                            <span style={{ fontSize: 9, color: color.mutedForeground, opacity: 0.6 }}>{issue.category}</span>
+                {phase === 'login-open' && (
+                  <SpeechBubble mode="test" mascotSize={46} actions={<>
+                    <button style={speechButton('test', true)} onClick={() => testAction('login-done')}>{t('toolbar.testLoginDone')}</button>
+                    <button style={speechButton('test', false)} onClick={() => testAction('login-cancel')}>{t('toolbar.testLoginCancel')}</button>
+                  </>}>
+                    {t('toolbar.testLoginOpen')}
+                  </SpeechBubble>
+                )}
+
+                {/* Idle: what will happen, and the one button */}
+                {(!phase || phase === 'error') && (
+                  <>
+                    {phase === 'error' && text(testRun?.error ?? '', 'error')}
+                    {testFindings.length === 0 && phase !== 'error' && text(t('toolbar.testHint'))}
+                    {pageFindings.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, margin: '0 -6px 10px' }}>
+                        {pageFindings.slice(0, 12).map(f => (
+                          <div
+                            key={f.id}
+                            title={f.detail}
+                            style={{ display: 'flex', gap: 6, alignItems: 'flex-start', cursor: 'pointer', padding: '5px 6px', borderRadius: radius.md, transition: 'background-color 0.15s' }}
+                            onMouseEnter={(e) => {
+                              (e.currentTarget as HTMLDivElement).style.backgroundColor = color.muted;
+                              const r = findingElement(f)?.getBoundingClientRect();
+                              setScanHighlight(r ? { top: r.top, left: r.left, width: r.width, height: r.height } : null);
+                            }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'; setScanHighlight(null); }}
+                            onClick={() => {
+                              const el = findingElement(f);
+                              if (el) {
+                                const capture = captureElement(el);
+                                const rect = el.getBoundingClientRect();
+                                const box = { top: Math.round(rect.top), left: Math.round(rect.left), width: Math.round(rect.width), height: Math.round(rect.height) };
+                                const pixelTargetId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+                                el.setAttribute('data-ilse-pixel-target', pixelTargetId);
+                                setPendingCapture({
+                                  capture, context: capture.element, contextLabel: buildContextLabel(el),
+                                  rect: box, originalRect: box, note: findingNote(f), markerType: 'element', pixelTargetId,
+                                  testFinding: findingRef(f),
+                                });
+                              } else {
+                                // Console errors, failed requests, mobile-only elements: a note for the page
+                                addAnnotation({ element: '', styles: {}, rect: { top: 0, left: 0, width: 0, height: 0 } }, findingNote(f), 'element', undefined, undefined, findingRef(f));
+                              }
+                              decideTestFinding(f, 'approved');
+                              setScanOpen(false); setScanHighlight(null);
+                            }}
+                          >
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 5, backgroundColor: f.severity === 'high' ? '#ef4444' : f.severity === 'medium' ? '#f59e0b' : color.mutedForeground }} />
+                            <div style={{ flex: 1, minWidth: 0, fontSize: 11, color: color.foreground, lineHeight: 1.35 }}>
+                              {f.title}
+                              {f.status === 'returned' && (
+                                <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#ef4444', whiteSpace: 'nowrap' }}>{t('toolbar.testCameBack')}</span>
+                              )}
+                            </div>
+                            <button
+                              title={t('toolbar.testDiscard')}
+                              aria-label={t('toolbar.testDiscard')}
+                              onClick={(e) => { e.stopPropagation(); decideTestFinding(f, 'discarded'); setScanHighlight(null); }}
+                              style={{ background: 'none', border: 'none', color: color.mutedForeground, cursor: 'pointer', padding: 2, borderRadius: 4, lineHeight: 1, display: 'flex', flexShrink: 0 }}
+                            >
+                              <IconX size={12} stroke={2} />
+                            </button>
                           </div>
-                        </div>
-                      </div>
-                    ))}
-                    {hasMore && (
-                      <div style={{ fontSize: 10, color: color.mutedForeground, textAlign: 'center', padding: '4px 0', opacity: 0.6 }}>
-                        +{filtered.length - 8} more
+                        ))}
                       </div>
                     )}
-                  </div>
+                    {testFindings.length > 0 && pageFindings.length === 0 && text(t('toolbar.testNoneHere'))}
+                    {elsewhere > 0 && text(t('toolbar.testElsewhere', { count: elsewhere }))}
+                    <button
+                      style={{ ...btn(testFindings.length === 0), width: '100%' }}
+                      onClick={() => { setTestSteps([]); setTestRun({ phase: 'checking' }); testAction('run'); setScanOpen(false); }}
+                    >
+                      {testFindings.length === 0 ? t('toolbar.testRun') : t('toolbar.testRunAgain')}
+                    </button>
+                    <button
+                      onClick={() => { setScanOpen(false); openMemory(); }}
+                      style={{ marginTop: 8, width: '100%', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0, fontFamily: font.sans }}
+                    >
+                      {t('memory.open')} ›
+                    </button>
+                  </>
                 )}
               </div>
               );
@@ -4601,6 +4770,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             {/* Thinking stack — chat-like history above the pill.
                 Uses #BABABA + mix-blend-mode: luminosity so the text auto-adapts
                 to any backdrop (white, cream, dark, image). Figma-tested combo. */}
+            {toolbarMode === 'test' && !scanOpen && testStream(24, 12, 360)}
             {thinkingMessages.length > 0 && !chatOpen && (
               <div
                 style={{
@@ -4615,39 +4785,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 }}
               >
                 {thinkingMessages.slice().reverse().map((m, idxFromBottom) => {
-                  // Per-position opacity fades older messages.
-                  const opacity = idxFromBottom === 0 ? 1 : idxFromBottom === 1 ? 0.45 : 0.2;
+                  // Newest at the bottom, bold, with the pulsing square; older lines fade
                   return (
-                    <div
-                      key={m.id}
-                      style={{
-                        fontSize: 12,
-                        fontFamily: font.sans,
-                        fontWeight: idxFromBottom === 0 ? 600 : 500,
-                        maxWidth: 360,
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        color: '#BABABA',
-                        mixBlendMode: 'luminosity',
-                        opacity,
-                        transition: 'opacity 0.4s ease',
-                        animation: idxFromBottom === 0 ? 'ilse-thinking-in 0.35s ease-out' : undefined,
-                      }}
-                    >
-                      {idxFromBottom === 0 && (
-                        <span
-                          style={{
-                            display: 'inline-block',
-                            width: 6,
-                            height: 6,
-                            background: ilse.orange,
-                            marginRight: 8,
-                            verticalAlign: 'middle',
-                            animation: 'ilse-thinking-dot 1.2s ease-in-out infinite',
-                          }}
-                        />
-                      )}
+                    <div key={m.id} style={{ fontSize: 12, fontFamily: font.sans, maxWidth: 360, ...reasoningLine(idxFromBottom) }}>
+                      {idxFromBottom === 0 && <ReasoningDot mode={toolbarMode} />}
                       {m.text}
                     </div>
                   );
@@ -4664,8 +4805,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 border: 'none',
                 borderRadius: 17, padding: '8px 14px',
                 boxShadow: sendFeedback || processingCount > 0
-                  ? '0 0 32px rgba(250,105,0,0.35), 0 0 12px rgba(250,105,0,0.2), 0 4px 12px rgba(0,0,0,0.05)'
-                  : '0 0 24px rgba(250,105,0,0.18), 0 0 8px rgba(250,105,0,0.1), 0 4px 12px rgba(0,0,0,0.04)',
+                  ? `0 0 32px rgba(${accent.rgb},0.35), 0 0 12px rgba(${accent.rgb},0.2), 0 4px 12px rgba(0,0,0,0.05)`
+                  : `0 0 24px rgba(${accent.rgb},0.18), 0 0 8px rgba(${accent.rgb},0.1), 0 4px 12px rgba(0,0,0,0.04)`,
                 cursor: 'grab', userSelect: 'none',
                 transition: 'box-shadow 0.3s ease',
                 animation: (sendFeedback || processingCount > 0) ? 'ilse-pulse 1s ease-in-out infinite' : undefined,
@@ -4673,7 +4814,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             >
               {/* Run / Stop — primary action in the pill */}
               {processingCount > 0 ? (
-                <PillBtn
+                <PillBtn accent={accent}
                   title={t('toolbar.stop')}
                   onClick={stopExecution}
                   danger
@@ -4684,7 +4825,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   </svg>
                 </PillBtn>
               ) : (
-                <PillBtn
+                <PillBtn accent={accent}
                   title={t('toolbar.run')}
                   onClick={sendAll}
                   disabled={pendingCount === 0}
@@ -4695,7 +4836,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               )}
 
               {/* Undo — restores the files of the last batch, no LLM involved */}
-              <PillBtn
+              <PillBtn accent={accent}
                 title={`${t('undo.button')} (${isMac ? '⌘Z' : 'Ctrl+Z'})${undo.label ? ` — ${undo.label}` : ''}${undo.redoCount ? `\n${t('redo.hint', { keys: isMac ? '⇧⌘Z' : 'Ctrl+Shift+Z' })}${undo.redoLabel ? ` — ${undo.redoLabel}` : ''}` : ''}`}
                 onClick={undoLast}
                 disabled={undo.count === 0 || processingCount > 0}
@@ -4706,8 +4847,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               {/* Separator */}
               <div style={{ width: 1, height: 18, backgroundColor: '#e0e0e0', margin: '0 6px' }} />
 
+              {toolbarMode === 'design' && (<>
               {/* Annotate / Select toggle */}
-              <PillBtn
+              <PillBtn accent={accent}
                 title={withShortcut(annotating ? t('toolbar.selectMode') : t('toolbar.annotateMode'), 'V')}
                 active={annotating}
                 onClick={() => { if (drawMode) exitDrawMode(); setAnnotating(v => !v); }}
@@ -4717,7 +4859,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
               {/* Pencil — draw on the page; its pen control sits on the button */}
               <span style={{ position: 'relative', display: 'inline-flex' }}>
-              <PillBtn
+              <PillBtn accent={accent}
                 title={t('toolbar.pencil')}
                 active={drawMode}
                 onClick={() => {
@@ -4744,7 +4886,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               </span>
 
               {/* Pause */}
-              <PillBtn
+              <PillBtn accent={accent}
                 title={paused ? t('toolbar.resumeAnimations') : t('toolbar.pauseAnimations')}
                 active={paused}
                 onClick={() => { toggleFreeze(); setPaused(isFrozen()); }}
@@ -4753,7 +4895,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               </PillBtn>
 
               {/* Visibility */}
-              <PillBtn
+              <PillBtn accent={accent}
                 title={markersVisible ? t('toolbar.hideMarkers') : t('toolbar.showMarkers')}
                 active={!markersVisible}
                 onClick={() => setMarkersVisible(v => !v)}
@@ -4763,7 +4905,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
               {/* Chat — experimental, hidden unless localStorage['ilse-experimental'] === '1' */}
               {experimental && (
-                <PillBtn
+                <PillBtn accent={accent}
                   title={t('toolbar.chat')}
                   active={chatOpen}
                   onClick={() => {
@@ -4776,26 +4918,30 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 </PillBtn>
               )}
 
-              {/* Scan — page-level design issues */}
-              <PillBtn
+              </>)}
+
+              {/* Agent tester — test mode's main action */}
+              {toolbarMode === 'test' && (
+              <PillBtn accent={accent}
                 title={t('toolbar.scan')}
                 active={scanOpen}
-                badge={pageIssues.length > 0 ? pageIssues.length : undefined}
+                badge={pageFindings.length > 0 ? pageFindings.length : undefined}
                 onClick={() => {
                   const opening = !scanOpen;
                   setScanOpen(opening);
-                  if (opening) { setShowSettings(false); setChatOpen(false); runPageScan(); }
+                  if (opening) { setShowSettings(false); setChatOpen(false); send({ type: 'findings' }); }
                   if (!opening) setScanHighlight(null);
                 }}
               >
-                <IconEyeglass2 size={18} stroke={1.75} />
+                <IconRobot size={18} stroke={1.75} />
               </PillBtn>
+              )}
 
               {/* Separator */}
               <div style={{ width: 1, height: 18, backgroundColor: '#e0e0e0', margin: '0 6px' }} />
 
               {/* Clear — far from Run, near danger zone */}
-              <PillBtn
+              <PillBtn accent={accent}
                 title={clearConfirm ? t('toolbar.clearConfirm') : t('toolbar.clearAnnotations')}
                 active={clearConfirm}
                 danger={clearConfirm}
@@ -4806,7 +4952,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               </PillBtn>
 
               {/* Settings */}
-              <PillBtn
+              <PillBtn accent={accent}
                 title={t('toolbar.settings')}
                 active={showSettings}
                 onClick={() => { setShowSettings(v => !v); if (!showSettings) { setChatOpen(false); setScanOpen(false); } }}
@@ -4814,8 +4960,68 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 <IconSettings size={18} stroke={1.75} />
               </PillBtn>
 
+              {/* Mode switch — at the end, by Close: it changes which actions come before it */}
+              <div
+                role="radiogroup"
+                aria-label={t('toolbar.mode')}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{ display: 'inline-flex', background: '#f2f2f2', borderRadius: 10, padding: 2, margin: '0 4px' }}
+              >
+                {(['design', 'test'] as const).map(mode => {
+                  const on = toolbarMode === mode;
+                  // Ilse is working: the agent applying notes, or the test running
+                  const busy = mode === 'design' ? processingCount > 0 : testRun?.phase === 'checking' || testRun?.phase === 'running';
+                  const locked = mode === 'test' && !proTest;
+                  return (
+                    <button
+                      key={mode}
+                      role="radio"
+                      aria-checked={on}
+                      aria-disabled={locked || undefined}
+                      title={t(locked ? 'toolbar.testLocked' : mode === 'design' ? 'toolbar.modeDesignHint' : 'toolbar.modeTestHint')}
+                      aria-label={t(locked ? 'toolbar.testLocked' : mode === 'design' ? 'toolbar.modeDesignHint' : 'toolbar.modeTestHint')}
+                      onClick={() => {
+                        if (on) return;
+                        if (locked) {
+                          setClipboardToast(saying(t('toolbar.testLocked'), 'say'));
+                          setTimeout(() => setClipboardToast(null), 8000);
+                          return;
+                        }
+                        setToolbarMode(mode);
+                        setShowSettings(false); setChatOpen(false);
+                        if (mode === 'test') {
+                          // Nothing to point at while testing: leave capture and drawing, open the tester
+                          if (drawMode) exitDrawMode();
+                          if (pendingCaptureRef.current) cancelCapture();
+                          setAnnotating(false);
+                          setScanOpen(true);
+                          send({ type: 'findings' });
+                        } else {
+                          setScanOpen(false); setScanHighlight(null);
+                        }
+                      }}
+                      style={{
+                        border: 'none', cursor: 'pointer', borderRadius: 8, padding: '3px 5px', lineHeight: 0,
+                        opacity: locked ? 0.55 : 1,
+                        background: on ? '#ffffff' : 'transparent',
+                        boxShadow: on ? '0 1px 2px rgba(0,0,0,0.12)' : 'none',
+                        transition: 'background 0.15s, color 0.15s',
+                      }}
+                    >
+                      <IlseMascot
+                        mode={mode} muted={!on} size={21}
+                        state={on ? (busy ? 'working' : celebrating === mode ? 'done' : 'idle') : 'asleep'}
+                        grow={on && (busy || celebrating === mode)}
+                        activity={agentActivity}
+                        focus={mode === 'design' ? annotations.find(a => a.status === 'sent' && a.capture.element)?.capture.element : undefined}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Close */}
-              <PillBtn title={withShortcut(t('toolbar.close'), 'Esc')} onClick={closeToolbar}>
+              <PillBtn accent={accent} title={withShortcut(t('toolbar.close'), 'Esc')} onClick={closeToolbar}>
                 <IconX size={18} stroke={1.75} />
               </PillBtn>
             </div>
@@ -4828,6 +5034,16 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         <TooltipLayer />
 
         {/* ── Toast — Sonner-like, in the toolbar's own look, just above the toolbar ── */}
+        {memoryOpen && (
+          <MemoryPanel
+            data={memoryData}
+            onClose={() => setMemoryOpen(false)}
+            onUndoDecision={(id) => send({ type: 'memory_undo_decision', id })}
+            onForgetTest={() => send({ type: 'memory_forget_test' })}
+            onOpenPage={(page) => { setMemoryOpen(false); if (page !== location.pathname) location.assign(page); }}
+          />
+        )}
+
         {shortcutsOpen && (
           <div
             data-ilse-toolbar
@@ -4897,6 +5113,61 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           </div>
         )}
 
+        {offPage && !clipboardToast && (() => {
+          const above = isOpen && toolbarPos.y > 90;
+          const growsRight = toolbarPos.x < 250;
+          const edge = above
+            ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
+            : { left: window.innerWidth / 2 };
+          const files = offPage.files.map(f => f.split('/').pop()).join(', ');
+          return (
+            <div
+              data-ilse-toolbar
+              role="alert"
+              style={{
+                position: 'fixed', zIndex: 100000, ...edge,
+                ...(above ? { top: toolbarPos.y - 12, transform: 'translateY(-100%)' } : { bottom: 80, transform: 'translateX(-50%)' }),
+                maxWidth: 380,
+              }}
+            >
+              <SpeechBubble mode={toolbarMode} reaction="oops" mascotSize={24} actions={<>
+                <button style={speechButton(toolbarMode, true)} onClick={() => { send({ type: 'redo-here', changeSetId: offPage.changeSetId }); setOffPage(null); }}>{t('toolbar.offPage.redoHere')}</button>
+                <button style={speechButton(toolbarMode, false)} onClick={() => { send({ type: 'undo', changeSetId: offPage.changeSetId }); setOffPage(null); }}>{t('toolbar.offPage.undo')}</button>
+                <button style={speechButton(toolbarMode, false)} onClick={() => setOffPage(null)}>{t('toolbar.offPage.keep')}</button>
+              </>}>
+                {t('toolbar.offPage.text', { files })}
+                {offPage.routes.length > 0 && ` ${t('toolbar.offPage.usedIn', { routes: offPage.routes.join(', ') })}`}
+              </SpeechBubble>
+            </div>
+          );
+        })()}
+
+        {checkFailed && !offPage && !clipboardToast && (() => {
+          const above = isOpen && toolbarPos.y > 90;
+          const growsRight = toolbarPos.x < 250;
+          const edge = above
+            ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
+            : { left: window.innerWidth / 2 };
+          return (
+            <div
+              data-ilse-toolbar
+              role="alert"
+              style={{
+                position: 'fixed', zIndex: 100000, ...edge,
+                ...(above ? { top: toolbarPos.y - 12, transform: 'translateY(-100%)' } : { bottom: 80, transform: 'translateX(-50%)' }),
+                maxWidth: 380,
+              }}
+            >
+              <SpeechBubble mode={toolbarMode} reaction="oops" mascotSize={24} actions={<>
+                <button style={speechButton(toolbarMode, true)} onClick={() => { send({ type: 'undo', changeSetId: checkFailed.changeSetId }); setCheckFailed(null); }}>{t('toolbar.offPage.undo')}</button>
+                <button style={speechButton(toolbarMode, false)} onClick={() => setCheckFailed(null)}>{t('toolbar.checkFailed.keep')}</button>
+              </>}>
+                {t('toolbar.checkFailed.text', { count: String(checkFailed.count), first: checkFailed.problems[0] ?? '' })}
+              </SpeechBubble>
+            </div>
+          );
+        })()}
+
         {clipboardToast && (() => {
           // Above the toolbar, aligned with the edge it grows from (it opens left or
           // right of the pill); centred at the bottom when the toolbar is closed
@@ -4913,17 +5184,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               style={{
                 position: 'fixed', zIndex: 100000, ...edge,
                 ...(above ? { top: toolbarPos.y - 12, transform: 'translateY(-100%)' } : { bottom: 80, transform: 'translateX(-50%)' }),
-                display: 'flex', alignItems: 'center', gap: 9, maxWidth: 360,
-                padding: '9px 14px 9px 12px', borderRadius: radius.lg,
-                backgroundColor: color.popover, color: color.foreground,
-                border: `1px solid ${color.border}`, boxShadow: shadow.lg,
-                fontFamily: font.sans, fontSize: 13, lineHeight: 1.35, fontWeight: 500,
+                maxWidth: 380,
                 animation: 'ilse-toast-in 180ms cubic-bezier(0.22, 1, 0.36, 1)',
               }}
             >
               <style>{'@keyframes ilse-toast-in{from{opacity:0;margin-top:6px}to{opacity:1;margin-top:0}}'}</style>
-              <span aria-hidden style={{ width: 7, height: 7, borderRadius: 2, flexShrink: 0, backgroundColor: ilse.brand }} />
-              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clipboardToast}</span>
+              <SpeechBubble mode={toolbarMode} reaction={clipboardToast.reaction} mascotSize={24} textStyle={{ fontWeight: 500 }}>
+                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{clipboardToast.text}</span>
+              </SpeechBubble>
             </div>
           );
         })()}
@@ -5002,7 +5270,12 @@ const CELL = 4;
 const PIXEL_DATA = generatePixelGrid(Math.floor(PILL_W / CELL), Math.floor(PILL_H / CELL));
 
 
-function IlsePixelButton({ onClick, badge, processing }: { onClick: () => void; badge?: number; processing?: boolean }) {
+// Test mode's avatar: the same field, in blue tints, with round pixels
+const TEST_COLORS: Record<string, string> = { '#FFECDE': ilse.testPale, '#FFC194': ilse.testLight, '#FF6C03': ilse.test };
+
+function IlsePixelButton({ onClick, badge, processing, mode = 'design' }: { onClick: () => void; badge?: number; processing?: boolean; mode?: 'design' | 'test' }) {
+  const test = mode === 'test';
+  const acc = modeAccent(mode);
   return (
     <button
       onClick={onClick}
@@ -5023,16 +5296,17 @@ function IlsePixelButton({ onClick, badge, processing }: { onClick: () => void; 
           left: p.x * CELL + (CELL - p.size) / 2,
           width: p.size,
           height: p.size,
-          backgroundColor: p.color,
+          backgroundColor: test ? (TEST_COLORS[p.color] ?? p.color) : p.color,
+          borderRadius: test ? '50%' : 0,
           opacity: p.brightness,
           animation: `ilse-pixel ${p.duration.toFixed(1)}s ease-in-out ${p.delay.toFixed(1)}s infinite`,
-          boxShadow: p.glow ? '0 0 6px rgba(255,108,3,0.5), 0 0 12px rgba(255,108,3,0.2)' : 'none',
+          boxShadow: p.glow ? `0 0 6px rgba(${acc.rgb},0.5), 0 0 12px rgba(${acc.rgb},0.2)` : 'none',
         }} />
       ))}
       {badge !== undefined && (
         <span style={{
           position: 'absolute', top: -4, right: -4,
-          backgroundColor: '#FF6C03', color: 'white',
+          backgroundColor: acc.hex, color: 'white',
           fontSize: 9, borderRadius: 7, minWidth: 16, height: 16,
           padding: '0 3px', boxSizing: 'border-box',
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
@@ -5049,8 +5323,9 @@ function IlsePixelButton({ onClick, badge, processing }: { onClick: () => void; 
 // ─── PillBtn helper ───────────────────────────────────────────────────────────
 
 function PillBtn({
-  children, title, onClick, active, danger, disabled, badge, pulsing,
+  children, title, onClick, active, danger, disabled, badge, pulsing, accent = modeAccent('design'),
 }: {
+  accent?: { hex: string; rgb: string };
   children: React.ReactNode;
   title?: string;
   onClick?: () => void;
@@ -5067,10 +5342,10 @@ function PillBtn({
       disabled={disabled}
       style={{
         background: pulsing
-          ? 'rgba(255,108,3,0.1)'
-          : active ? (danger ? 'rgba(239,68,68,0.08)' : 'rgba(255,108,3,0.1)') : 'none',
+          ? `rgba(${accent.rgb},0.1)`
+          : active ? (danger ? 'rgba(239,68,68,0.08)' : `rgba(${accent.rgb},0.1)`) : 'none',
         border: 'none',
-        color: disabled ? '#c0c0c0' : pulsing ? '#FF6C03' : danger ? '#ef4444' : active ? '#FF6C03' : '#2D2D2D',
+        color: disabled ? '#c0c0c0' : pulsing ? accent.hex : danger ? '#ef4444' : active ? accent.hex : '#2D2D2D',
         cursor: disabled ? 'default' : 'pointer',
         fontSize: 16,
         padding: '6px 9px',
@@ -5081,14 +5356,14 @@ function PillBtn({
         transition: 'color 0.15s, background 0.15s',
         animation: pulsing ? 'ilse-run-pulse 1.2s ease-in-out infinite' : undefined,
       }}
-      onMouseEnter={(e) => { if (!disabled && !pulsing) (e.currentTarget as HTMLElement).style.background = danger ? 'rgba(239,68,68,0.08)' : 'rgba(255,108,3,0.06)'; }}
-      onMouseLeave={(e) => { if (!pulsing) (e.currentTarget as HTMLElement).style.background = active ? (danger ? 'rgba(239,68,68,0.08)' : 'rgba(255,108,3,0.1)') : 'none'; }}
+      onMouseEnter={(e) => { if (!disabled && !pulsing) (e.currentTarget as HTMLElement).style.background = danger ? 'rgba(239,68,68,0.08)' : `rgba(${accent.rgb},0.06)`; }}
+      onMouseLeave={(e) => { if (!pulsing) (e.currentTarget as HTMLElement).style.background = active ? (danger ? 'rgba(239,68,68,0.08)' : `rgba(${accent.rgb},0.1)`) : 'none'; }}
     >
       {children}
       {badge !== undefined && (
         <span style={{
           position: 'absolute', top: -4, right: -4,
-          backgroundColor: '#FF6C03', color: 'white',
+          backgroundColor: accent.hex, color: 'white',
           fontSize: 9, borderRadius: 7, minWidth: 14, height: 14,
           padding: '0 3px', boxSizing: 'border-box',
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,

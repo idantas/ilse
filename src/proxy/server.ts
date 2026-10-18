@@ -12,7 +12,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import { t } from '../i18n/index.js';
-import { TOOLBAR_PATH, injectToolbar, serveToolbar } from './toolbar.js';
+import { TOOLBAR_PATH, PROXY_HEADER, injectToolbar, serveToolbar } from './toolbar.js';
 
 export { TOOLBAR_PATH, injectToolbar };
 
@@ -81,6 +81,7 @@ export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
           // A CSP from the dev server would block the injected script
           delete outHeaders['content-security-policy'];
           outHeaders['content-length'] = String(body.length);
+          outHeaders[PROXY_HEADER] = '1';
           res.writeHead(up.statusCode ?? 200, outHeaders);
           res.end(body);
         });

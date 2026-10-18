@@ -21,6 +21,7 @@ You open your app in the browser, point at what's wrong and say how it should be
 - **Move things around.** Drag to reorder, move into or out of a container, resize.
 - **Draw it.** Sketch on the page with the pencil, or paste a screenshot as a reference.
 - **Undo anything.** ⌘Z puts the code back exactly as it was. No need to ask the AI to revert.
+- **Keeps CI green.** After each change Ilse runs your project's typecheck and the tests that cover it. What the change broke, the agent fixes before it's called done.
 
 ## What you need
 

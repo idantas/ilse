@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 export const TOOLBAR_PATH = '/__ilse/toolbar.js';
+/** Set on every page an Ilse proxy serves: a toolbar there is that proxy's, not the app's own plugin */
+export const PROXY_HEADER = 'x-ilse-proxy';
 const TOOLBAR_TAG = `<script src="${TOOLBAR_PATH}" defer></script>`;
 
 export function defaultToolbarFile(): string {

@@ -70,6 +70,10 @@ export interface BatchRecord {
   tools: Record<string, number>;
   tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number };
   changes?: { files: number; added: number; removed: number };
+  /** Its edits rendered nothing on the page the notes were made on */
+  offPage?: boolean;
+  /** The project's checks after it: how long, how many problems the change caused (no names) */
+  check?: { ms: number; problems: number; typecheck: boolean; tests: boolean };
 }
 
 export interface SessionInfo {
@@ -90,6 +94,9 @@ export class Journal {
   private batches = new Map<string, BatchRecord>();
   private batchT0 = new Map<string, number>();
   private file?: string;
+
+  /** Called when a model run starts (agent or quick step), e.g. to update the toolbar */
+  onModelRun?: () => void;
 
   constructor(session: Omit<SessionInfo, 'startedAt' | 'node' | 'platform'>, opts: { persist?: boolean } = {}) {
     this.session = { startedAt: new Date().toISOString(), node: process.version, platform: platform(), ...session };
@@ -197,6 +204,7 @@ export class Journal {
   batchStart(id: string, ids: string[], path: RunPath, agent?: string, resumed?: boolean, run: { model?: string; escalated?: boolean } = {}): void {
     this.batchT0.set(id, Date.now());
     this.batches.set(id, { id, path, agent, size: ids.length, startedAt: new Date().toISOString(), resumed, tools: {}, ...run });
+    if (path === 'agent' || path === 'quick') this.onModelRun?.();
     for (const rid of ids) {
       const run = this.runs.get(rid);
       if (!run) continue;
@@ -251,6 +259,28 @@ export class Journal {
   }
 
   /** MCP path: the agent's own tool calls are not visible, only claim → resolve. */
+  batchOffPage(batchId: string): void {
+    const batch = this.batches.get(batchId);
+    if (batch) { batch.offPage = true; this.save(); }
+  }
+
+  /** This session's model runs (agent and quick step) and the last model used — no cost, no text */
+  modelUsage(): { calls: number; model?: string } {
+    let calls = 0;
+    let model: string | undefined;
+    for (const b of this.batches.values()) {
+      if (b.path !== 'agent' && b.path !== 'quick') continue;
+      calls++;
+      model = b.model;
+    }
+    return { calls, model };
+  }
+
+  batchCheck(batchId: string, check: { ms: number; problems: number; typecheck: boolean; tests: boolean }): void {
+    const batch = this.batches.get(batchId);
+    if (batch) { batch.check = check; this.save(); }
+  }
+
   batchChanges(batchId: string, changes: { files: number; added: number; removed: number }): void {
     const batch = this.batches.get(batchId);
     if (batch) { batch.changes = changes; this.save(); }

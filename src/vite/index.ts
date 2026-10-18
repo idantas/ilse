@@ -35,7 +35,7 @@ function samePlace(a: string, b: string): boolean {
 }
 
 /** Where to ask for the toolbar, in order. */
-export function bridgePorts(root: string, opts: IlseViteOptions = {}, info: ServerInfo | null = readServerInfo()): number[] {
+export function bridgePorts(root: string, opts: IlseViteOptions = {}, info: ServerInfo | null = readServerInfo(root)): number[] {
   const ports: number[] = [];
   if (opts.port) ports.push(opts.port);
   // ~/.ilse/server.json names the last `ilse` started — only trust it for this project

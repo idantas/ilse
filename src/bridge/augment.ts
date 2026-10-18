@@ -1,7 +1,9 @@
 import type { Annotation, AnnotationIntent } from '../types.js';
+import { testsCovering } from '../context/covering-tests.js';
 import { t } from '../i18n/index.js';
 import { historyFor, formatHistory } from '../git/ledger.js';
 import { componentCard, type ComponentCard } from '../context/locate.js';
+import { findDesignMd } from '../setup/design-md.js';
 
 export interface AugmentedAnnotation {
   note: string;
@@ -177,6 +179,14 @@ export function formatHistoryFor(annotation: Annotation, cwd = process.cwd()): s
   return file ? formatHistory(file, historyFor(cwd, file)) : undefined;
 }
 
+/** Tests that cover the located file: the agent updates the ones that pin the old look */
+export function formatTestsFor(annotation: Annotation, cwd = process.cwd()): string | undefined {
+  const file = annotation.source?.[0]?.file;
+  const tests = file ? testsCovering(file, cwd) : [];
+  if (tests.length === 0) return undefined;
+  return `**Tests:** ${tests.map(f => `\`${f}\``).join(', ')} cover this file. If your change alters what one of them checks about the look (text, class, colour, markup), update it to the new look in the same pass; never weaken or skip it.`;
+}
+
 export function historyCount(annotation: Annotation, cwd = process.cwd()): number {
   if (process.env.ILSE_HISTORY === '0') return 0;
   const file = annotation.source?.[0]?.file;
@@ -197,6 +207,17 @@ function formatStyles(styles: Record<string, string>): string {
   const entries = Object.entries(styles);
   if (entries.length === 0) return '';
   return entries.map(([k, v]) => `${k}: ${v}`).join(', ');
+}
+
+/** The page's path and query, without the dev server's origin (it is the proxy's, not the app's) */
+export function pagePath(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    return `${u.pathname}${u.search}` || '/';
+  } catch {
+    return undefined;
+  }
 }
 
 export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
@@ -253,11 +274,17 @@ export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   // Intent + severity first — agent should know these before reading details
   if (annotation.intent)   lines.push(`**Intent:** ${annotation.intent}`);
   if (annotation.severity) lines.push(`**Severity:** ${annotation.severity}`);
+  // Which screen of the app this is: without it, a request that names no element
+  // gets matched to whichever screen its words describe
+  const page = pagePath(annotation.environment?.url);
+  if (page) lines.push(`**Page:** \`${page}\` — the change belongs on this screen`);
 
   const sourceBlock = formatSource(annotation);
   if (sourceBlock) lines.push(sourceBlock);
   const historyBlock = formatHistoryFor(annotation);
   if (historyBlock) lines.push(historyBlock);
+  const testsBlock = formatTestsFor(annotation);
+  if (testsBlock) lines.push(testsBlock);
   const componentBlock = formatComponentFor(annotation);
   if (componentBlock) lines.push(componentBlock);
   const scopeBlock = formatScope(annotation);
@@ -266,6 +293,8 @@ export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   if (annotation.grepPattern && !sourceBlock) lines.push(`**Grep:** \`${annotation.grepPattern}\``);
   if (annotation.componentStack?.length) lines.push(`**Stack:** ${annotation.componentStack.join(' > ')}`);
   if (annotation.domPath) lines.push(`**DOM:** ${annotation.domPath}`);
+  const designMd = findDesignMd(process.cwd());
+  if (designMd) lines.push(`**Design contract:** \`${designMd}\` — its tokens and rules win over guesses; read the part you need.`);
   if (annotation.note) {
     const safeNote = annotation.note.replace(/[`*_~]/g, '').slice(0, 500);
     lines.push(`**Note (verbatim designer text):**\n<<<\n${safeNote}\n>>>`);
@@ -300,7 +329,12 @@ export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   // Placement: show target coordinates and nearest container
   if (annotation.placementData) {
     const { x, y, scrollY, nearestSelector } = annotation.placementData;
-    lines.push(`**Create at:** x:${x} y:${y + scrollY} (page-absolute)${nearestSelector ? ` · nearest container: \`${nearestSelector}\`` : ''}`);
+    if (nearestSelector && nearestSelector === annotation.element) {
+      // A sketch over empty space, anchored on the element that holds it (see drawnContainer)
+      lines.push(`**Create inside:** \`${nearestSelector}\` — the element above${sourceBlock ? ', at the source shown' : ''}. The new UI goes in it, at x:${x} y:${y + scrollY} (page-absolute); leave the element itself as it is unless the note says otherwise.`);
+    } else {
+      lines.push(`**Create at:** x:${x} y:${y + scrollY} (page-absolute)${nearestSelector ? ` · nearest container: \`${nearestSelector}\`` : ''}`);
+    }
   }
 
   // Style edits: exact values the designer picked in the property panel.

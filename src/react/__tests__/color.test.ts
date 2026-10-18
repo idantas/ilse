@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseHex, rgbaToHex, rgbToHsv, hsvToRgb, rgbToOklch, deltaE, formatColor,
 } from '../color.js';
-import { sortByColor, colorSections, familyRows, type ColorToken } from '../color-tokens.js';
+import { sortByColor, colorSections, familyRows, isGradient, gradientIn, type ColorToken, type GradientToken } from '../color-tokens.js';
 
 const tok = (label: string): ColorToken => ({
   name: `color.${label}`, value: '#000', type: 'color', label, rgba: { r: 0, g: 0, b: 0, a: 1 },
@@ -107,5 +107,20 @@ describe('familyRows', () => {
     expect(rows.map(r => r.name)).toEqual(['card', 'primary', 'surface']);
     expect(rows[0].tokens.map(t => t.label)).toEqual(['card', 'card-foreground']);
     expect(rows[2].tokens.map(t => t.label)).toEqual(['surface-2', 'surface-10']);
+  });
+});
+
+describe('gradient tokens', () => {
+  const ai: GradientToken = { name: 'gradient.ai-gradient', value: 'linear-gradient(135deg, oklch(0.769 0.188 70.08), oklch(0.627 0.265 303.9))', cssVar: '--ai-gradient', label: 'ai-gradient', type: 'gradient' };
+  it('tells a gradient from a colour', () => {
+    expect(isGradient('linear-gradient(90deg, red, blue)')).toBe(true);
+    expect(isGradient(' repeating-conic-gradient(red 0 10%, blue 0 20%)')).toBe(true);
+    expect(isGradient('oklch(0.7 0.1 70)')).toBe(false);
+    expect(isGradient('none')).toBe(false);
+  });
+  it("finds the token an element's background-image already is, spacing aside", () => {
+    expect(gradientIn('linear-gradient(135deg,oklch(0.769 0.188 70.08),oklch(0.627 0.265 303.9))', [ai])?.name).toBe('gradient.ai-gradient');
+    expect(gradientIn('none', [ai])).toBeUndefined();
+    expect(gradientIn('linear-gradient(red, blue)', [ai])).toBeUndefined();
   });
 });

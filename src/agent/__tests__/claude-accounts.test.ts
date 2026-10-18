@@ -22,8 +22,8 @@ describe('Claude accounts', () => {
   });
 
   it('describes an account by email, plan and team', () => {
-    expect(describeAccount({ configDir: null, email: 'me@example.com', plan: 'pro', org: "me@example.com's Organization" })).toBe('me@example.com · Pro');
-    expect(describeAccount({ configDir: '/x', email: 'me@company.com', plan: 'team', org: 'Acme' })).toBe('me@company.com · Team (Acme)');
+    expect(describeAccount({ configDir: null, email: 'me@example.com', plan: 'pro', org: "me@example.com's Organization" })).toBe('me@example.com · Claude Pro');
+    expect(describeAccount({ configDir: '/x', email: 'me@company.com', plan: 'team', org: 'Acme' })).toBe('me@company.com · Claude Team (Acme)');
   });
 
   it('keeps a saved choice only while that account is still here', () => {

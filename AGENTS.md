@@ -18,11 +18,12 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 
 ## Rules — never break these
 
-1. **The AI is always the user's.** Ilse runs the agent CLI the user already has (Claude Code, Codex, Cursor CLI, Gemini CLI) or lets it pull work over MCP. Never add API keys, accounts, servers or billing of Ilse's own.
-2. **Nothing leaves the machine.** Proxy, WebSocket and MCP bind to loopback. The journal stores timings and counts — never note text, prompts, code or file paths.
+1. **The AI is always the user's.** Ilse runs the agent CLI the user already has (Claude Code, Codex, Cursor CLI, Gemini CLI) or lets it pull work over MCP. Never add API keys, AI servers or charge for AI usage. A paid Ilse Pro license is allowed; it never stores or proxies an AI key.
+2. **Nothing leaves the machine.** Proxy, WebSocket and MCP bind to loopback. The journal stores timings and counts — never note text, prompts, code or file paths. The only exceptions: the anonymous update check, and Pro's download/activation (the only moment a license key is sent). Both have an off switch.
 3. **Cheapest step that works.** Class swap (no AI) → quick path (one fast-model call) → full agent. A step that isn't sure hands over to the next one; it never guesses.
 4. **Don't touch the user's project uninvited.** Changes land only to apply a request (always undoable), plus the one-time commit note the user agrees to.
-5. **Every shortcut has an off switch** (`ILSE_QUICK`, `ILSE_HISTORY`, `ILSE_COMPONENT_CARD`, `ILSE_RESUME`, `ILSE_MODEL`), so runs can be compared in the journal.
+5. **Every shortcut has an off switch** (`ILSE_QUICK`, `ILSE_HISTORY`, `ILSE_COMPONENT_CARD`, `ILSE_RESUME`, `ILSE_MODEL`, `ILSE_CHECK`), so runs can be compared in the journal.
+6. **Free and Pro have one written border** — `docs/free-vs-pro.md`. The core never imports Pro code; Pro plugs in through `src/pro/types.ts`.
 
 ## Map
 
@@ -44,12 +45,15 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/agent/quick-edit.ts` | Quick path: fast model → JSON `{remove, add, needsAgent}` → applied by token-swap |
 | `src/agent/claude-accounts.ts` | Finds Claude logins (`CLAUDE_CONFIG_DIR`) to pick one per project |
 | `src/agent/verify.ts` | After an agent batch: changed files that no longer parse → one repair turn, else undo |
+| `src/agent/project-check.ts` | After a change: reads tsc/test output, keeps what the change broke, the repair prompt, weakened-test and protected-path checks |
+| `src/agent/check-run.ts` | Runs the project's typecheck and the tests that cover the change, and again on a copy of the project before it (baseline) |
 | `src/agent/changeset.ts` | File snapshots before a batch → diff → undo / redo |
 | `src/git/` | `.git/ilse/changes.jsonl` ledger (`ilse changes`), commit note for the project's agent |
 | `src/mcp/` | MCP tools served by the running `ilse` at `/mcp`; stdio bridge `ilse-mcp` |
 | `src/telemetry/journal.ts` | Session journal (toolbar → Settings → Logs) |
 | `src/react/toolbar.tsx` | The toolbar: capture, card, gestures, draft history, settings |
 | `src/react/shortcuts.ts` | Keyboard shortcuts: the list behind Settings → Keyboard shortcuts and the tooltips, `I I`, typing guard |
+| `src/react/memory-panel.tsx` | Settings → Project memory: the design history (ledger) and, with Pro, test mode's memory |
 | `src/react/property-panel.tsx` | Property panel (`PROPS` lists the controls) |
 | `src/react/live-layout.ts` | Live drag/reorder/resize/move-into-container previews (DOM is never moved under React) |
 | `src/i18n/messages.ts` | Every user-facing string, English and Portuguese |

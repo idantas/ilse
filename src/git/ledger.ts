@@ -126,6 +126,29 @@ export function pendingChanges(cwd: string): LedgerEntry[] {
   return readLedger(cwd).filter(e => e.files.some(f => dirty.has(prefix + f.path)));
 }
 
+export interface LedgerSummary {
+  /** Changes Ilse made here and kept (undone ones are gone) */
+  total: number;
+  /** Of those, still waiting for a commit */
+  pending: number;
+  recent: { id: string; at: string; path: LedgerPath; text: string; files: string[]; pending: boolean }[];
+}
+
+/** The design side of the project memory: what Ilse changed, newest first */
+export function ledgerSummary(cwd: string, limit = 8): LedgerSummary {
+  const all = readLedger(cwd);
+  const pending = new Set(pendingChanges(cwd).map(e => e.id));
+  const recent = all.slice(-limit).reverse().map(e => ({
+    id: e.id,
+    at: e.at,
+    path: e.path,
+    text: e.annotations.map(a => a.note?.trim() || a.summary || '').filter(Boolean).join(' · ') || e.label || '',
+    files: e.files.map(f => f.path),
+    pending: pending.has(e.id),
+  }));
+  return { total: all.length, pending: pending.size, recent };
+}
+
 /** Markdown for the agent (or person) about to commit */
 export function formatPending(entries: LedgerEntry[]): string {
   if (entries.length === 0) return 'Nenhuma mudança da Ilse pendente de commit.';
