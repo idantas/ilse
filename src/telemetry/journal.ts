@@ -72,6 +72,8 @@ export interface BatchRecord {
   changes?: { files: number; added: number; removed: number };
   /** Its edits rendered nothing on the page the notes were made on */
   offPage?: boolean;
+  /** The project's checks after it: how long, how many problems the change caused (no names) */
+  check?: { ms: number; problems: number; typecheck: boolean; tests: boolean };
 }
 
 export interface SessionInfo {
@@ -256,6 +258,11 @@ export class Journal {
   batchOffPage(batchId: string): void {
     const batch = this.batches.get(batchId);
     if (batch) { batch.offPage = true; this.save(); }
+  }
+
+  batchCheck(batchId: string, check: { ms: number; problems: number; typecheck: boolean; tests: boolean }): void {
+    const batch = this.batches.get(batchId);
+    if (batch) { batch.check = check; this.save(); }
   }
 
   batchChanges(batchId: string, changes: { files: number; added: number; removed: number }): void {

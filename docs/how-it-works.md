@@ -47,6 +47,23 @@ Before your agent is called, Ilse does the searching for it:
 - **The code is checked after the agent.** Since the agent can't build your project, Ilse parses every file it changed. If one no longer parses, the agent gets one turn to fix exactly that error; if it is still broken, the whole batch is undone and the card shows where.
 - **Previews never touch React's DOM structure.** Drags and panel edits are shown with styles and stand-ins; cancelling a note puts the page back.
 
+## Passing CI
+
+A design change can break what CI runs: a prop used but never declared, a test that pins the old look, a "show only 10 rows" that changed the limit the backend relies on. So after every change — agent, quick step or class swap — Ilse runs the project's own checks before calling it done:
+
+1. **Typecheck.** `tsc --noEmit`, incremental (its cache lives in `.git/ilse/`). Only errors in the files the change touched, or in files that import them, count.
+2. **The tests that cover the change.** `vitest related` or `jest --findRelatedTests` on the changed files — seconds, not the whole suite.
+3. **Only what passed before.** Whatever fails is run again on the project as it was before the change — a copy outside your project (`git archive` of HEAD, your uncommitted work on top, the change's files put back, `node_modules` linked). A failure that was already there — another agent's work on the same branch, a test already red — is never blamed on the change.
+4. **The agent fixes it.** What the change broke goes back to the agent, with the designer's request it must keep. Its rules: a test that pins how something looks (text, class, colour, markup) and failed because the look changed on purpose is updated to the new look; a test of behaviour (paging, limits, permissions, requests, state) stays, and the code is fixed so the behaviour holds and the look still changes; a type error is fixed in the code.
+5. **Checked again.** Up to two repair turns. A fix that deletes, skips or loosens a test doesn't count: Ilse compares the tests and assertions before and after.
+6. **Still red?** The change stays and the toolbar says what still fails, with **Undo** and **Keep anyway**. The terminal lists each failure.
+
+Before any of that, the agent is told the tests that cover the file it's about to change, so a look change usually updates its test in the same pass. It is also told to change only the presentation — shared constants, limits, data and logic stay — and to use the project's tokens.
+
+With MCP, your agent drives its own turns: when it resolves the last annotation of a batch, `ilse_resolve` answers with what broke, and the agent fixes it and resolves again.
+
+Paths the project changes another way (a vendored copy patched by a script, generated code) can be marked in `.ilserc.json` → `protected`: the agent is told not to edit them, and an edit there counts as a failure to fix. Settings: [Reference → Project checks](reference.md#project-checks).
+
 ## Undo
 
 ⌘Z works at two levels:

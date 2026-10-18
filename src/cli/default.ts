@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 import { Journal } from '../telemetry/journal.js';
 import { detectFramework, type Framework, type FrameworkDetection } from '../setup/framework-detect.js';
 import { removeIlseComponent, type RemoveResult } from '../setup/remove-component.js';
-import { choseInjectedToolbar, saveInjectedToolbarChoice } from '../config/project-rc.js';
+import { choseInjectedToolbar, saveInjectedToolbarChoice, readProjectRc } from '../config/project-rc.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { injectIlseComponent } from '../setup/inject-component.js';
@@ -39,6 +39,9 @@ import { offPageEdits, routesImporting } from '../agent/page-check.js';
 import { quickBlocker, buildQuickPrompt, runQuick } from '../agent/quick-edit.js';
 import { recordChange, recordUndone, describeAnnotation, ledgerFile, type LedgerPath } from '../git/ledger.js';
 import { syntaxBreaks, describeBreaks, repairPrompt, type SyntaxBreak } from '../agent/verify.js';
+import { checkSetup, checkChange } from '../agent/check-run.js';
+import { hasProblems, checkRepairPrompt, describeReport, type CheckReport } from '../agent/project-check.js';
+import type { FileChange } from '../agent/changeset.js';
 import { planClassEdit } from '../context/token-swap.js';
 import { hasCommitContext, addCommitContext, commitContextChoice, saveCommitContextChoice, instructionsFile } from '../git/commit-context.js';
 
@@ -852,8 +855,14 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
 
   const handleBatchInternal = async (incoming: Annotation[]) => {
     for (const a of incoming) journal.received(a);
+    // Before swaps and quick edits too: the project's checks judge the whole batch
+    const checking = config.mode === 'automatic' && !!checkSetup(cwdRoot, readProjectRc(cwdRoot));
+    const beforeBatch = checking ? takeSnapshot(cwdRoot) : null;
     const annotations = await applyQuick(applySwaps(incoming));
-    if (annotations.length === 0) return;
+    if (annotations.length === 0) {
+      if (beforeBatch) await checkSwaps(incoming, beforeBatch);
+      return;
+    }
     if (limitActive()) { deferForLimit(annotations); return; }
 
     if (config.mode === 'mcp') {
@@ -867,8 +876,10 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
 
     const willEdit = config.mode === 'automatic' && agent.kind !== 'none';
     const snapshot = willEdit ? takeSnapshot(cwdRoot) : null;
+    let failedCheck: CheckReport | null = null;
     try {
-      await runAgentBatch(annotations, {
+      failedCheck = await runAgentBatch(annotations, {
+        changes: () => { const from = beforeBatch ?? snapshot; return from ? diffSnapshot(from, [])?.files ?? [] : []; },
         touched: () => !!snapshot && !!diffSnapshot(snapshot, []),
         broken: () => snapshot ? syntaxBreaks(diffSnapshot(snapshot, [])?.files ?? []) : [],
         revert: () => { const cs = snapshot && diffSnapshot(snapshot, []); if (cs) discardChangeSet(cs, cwdRoot); },
@@ -880,6 +891,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         recordUndo(cs, 'agent');
         if (currentBatchId) journal.batchChanges(currentBatchId, changeTotals(cs));
         warnIfOffPage(cs, annotations, currentBatchId);
+        if (failedCheck) warnCheckFailed(cs, failedCheck);
         // Findings from `ilse test` the agent just worked on: test their pages again to confirm
         const fromTest = annotations.flatMap(a => a.testFinding ? [a.testFinding] : []);
         const origin = getAllowedOrigin();
@@ -902,6 +914,78 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       + (off.routes.length ? chalk.dim(` · ${t('cli.offPageRoutes', { routes: off.routes.join(', ') })}`) : ''));
     if (batchId) journal.batchOffPage(batchId);
     broadcast({ type: 'off-page', changeSetId: cs.id, annotationIds: cs.annotationIds, files: off.files, routes: off.routes });
+  };
+
+  /**
+   * Class swaps and quick edits need no agent, but a test can still pin the class
+   * they changed. Broken: the agent fixes it like any other batch's, as its own undo step.
+   */
+  const checkSwaps = async (annotations: Annotation[], before: ReturnType<typeof takeSnapshot>) => {
+    if (!diffSnapshot(before, [])) return;
+    const since = takeSnapshot(cwdRoot);
+    const model = agent.kind !== 'none' ? resolveModel(pickTier(annotations), modelTiers(cwdRoot, agent.kind)) : undefined;
+    const { failed } = await checkAndRepair(annotations, () => diffSnapshot(before, [])?.files ?? [], { batchId: `c${++batchSeq}`, model });
+    const fix = diffSnapshot(since, annotations.map(a => a.id));
+    if (fix) { fix.label = t('cli.checkRepaired'); recordUndo(fix, 'agent'); }
+    const top = peekUndo();
+    if (failed && top) warnCheckFailed(top, failed);
+    broadcast({ type: 'thinking-end', text: failed ? t('cli.thinkingError') : fix ? t('cli.checkRepaired') : t('cli.checkOk') });
+  };
+
+  /** The checks still fail after the repair turns: the change stays, the designer decides */
+  const warnCheckFailed = (cs: ChangeSet, report: CheckReport) => {
+    const problems = describeReport(report);
+    console.log(chalk.dim('  ') + chalk.yellow('⚠') + ' ' + t('cli.checkFailed', { count: problems.length }));
+    for (const p of problems.slice(0, 8)) console.log(chalk.dim(`      ${p}`));
+    broadcast({ type: 'check-failed', changeSetId: cs.id, annotationIds: cs.annotationIds, problems: problems.slice(0, 5), count: problems.length });
+  };
+
+  /**
+   * The project's typecheck and the tests that cover the change. What the change
+   * broke goes back to the agent, up to MAX_CHECK_REPAIRS turns; what still fails
+   * after that is returned (the caller warns, the designer keeps or undoes).
+   */
+  const MAX_CHECK_REPAIRS = 2;
+  // One check at a time: a run of panel tweaks would otherwise start a typecheck and a test run each
+  let checkQueue: Promise<unknown> = Promise.resolve();
+  const checkAndRepair = (...args: Parameters<typeof checkAndRepairNow>) => {
+    const next = checkQueue.then(() => checkAndRepairNow(...args));
+    checkQueue = next.catch(() => undefined);
+    return next;
+  };
+  const checkAndRepairNow = async (annotations: Annotation[], changes: () => FileChange[], run: { batchId: string; sessionId?: string; model?: string }): Promise<{ failed: CheckReport | null; sessionId?: string; batchId: string }> => {
+    const setup = checkSetup(cwdRoot, readProjectRc(cwdRoot));
+    let { batchId, sessionId } = run;
+    if (!setup) return { failed: null, sessionId, batchId };
+    const canRepair = config.mode === 'automatic' && agent.kind !== 'none';
+    for (let turn = 0; ; turn++) {
+      const files = changes();
+      if (files.length === 0) return { failed: null, sessionId, batchId };
+      broadcast({ type: 'thinking', text: t('cli.checking'), activity: 'think' });
+      console.log(chalk.dim('  ') + chalk.cyan('◌') + chalk.dim(` ${t('cli.checking')}`));
+      const report = await checkChange(cwdRoot, files, setup);
+      const problems = describeReport(report).length;
+      journal.batchCheck(batchId, { ms: report.ms, problems, typecheck: report.ran.types, tests: report.ran.tests });
+      if (!hasProblems(report)) {
+        console.log(chalk.dim('  ') + chalk.green('✓') + chalk.dim(` ${turn > 0 ? t('cli.checkRepaired') : t('cli.checkPassed', { seconds: (report.ms / 1000).toFixed(1) })}`));
+        return { failed: null, sessionId, batchId };
+      }
+      if (turn === MAX_CHECK_REPAIRS || userStopped || !canRepair) return { failed: report, sessionId, batchId };
+      console.log(chalk.dim('  ') + chalk.yellow('⚠') + chalk.dim(` ${t('cli.checkRepair', { count: problems })}`));
+      journal.batchEnd(batchId, { ok: false, error: 'check' });
+      batchId = `b${++batchSeq}`;
+      currentBatchId = batchId;
+      journal.batchStart(batchId, annotations.map(a => a.id), 'agent', agent.kind, !!sessionId, { model: run.model });
+      const repair = await executeBatch(annotations, agent, {
+        sessionId,
+        model: run.model,
+        prompt: checkRepairPrompt(report, annotations.map(a => a.note ?? '')),
+        onEvent: (event) => journal.agentEvent(batchId, event),
+        onThinking: (text, activity) => broadcast({ type: 'thinking', text, activity }),
+      });
+      if (repair.sessionId) sessionId = repair.sessionId;
+      if (!repair.ok || userStopped) return { failed: report, sessionId, batchId };
+    }
   };
 
   const handleRedoHere = (changeSetId: string) => {
@@ -952,13 +1036,16 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   };
 
   const runAgentBatch = async (annotations: Annotation[], opts: {
+    /** What the batch has changed so far, against the files before it */
+    changes?: () => FileChange[];
     touched?: () => boolean;
     /** Files the batch left unparseable (they parsed before it) */
     broken?: () => SyntaxBreak[];
     /** Put every file back as it was before the batch */
     revert?: () => void;
-  } = {}) => {
-    if (annotations.length === 0) return;
+  } = {}): Promise<CheckReport | null> => {
+    if (annotations.length === 0) return null;
+    let failedCheck: CheckReport | null = null;
 
     // Print all headers first
     for (const ann of annotations) {
@@ -1067,6 +1154,14 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         }
       }
 
+      // It parses; does the project still pass its typecheck and the tests that cover it?
+      if (result.ok && !userStopped && !reverted && opts.changes) {
+        const checked = await checkAndRepair(annotations, opts.changes, { batchId, sessionId: result.sessionId, model });
+        batchId = checked.batchId;
+        failedCheck = checked.failed;
+        if (checked.sessionId) result = { ...result, sessionId: checked.sessionId };
+      }
+
       journal.batchEnd(batchId, { ok: result.ok, error: reverted ? 'syntax' : result.error, stopped: userStopped });
 
       // Update session ID for next invocation (only from real annotations, not chat/analyze)
@@ -1139,6 +1234,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         }, 600);
       }
     }
+    return failedCheck;
   };
 
   const handleStop = () => {
@@ -1167,6 +1263,36 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       warnIfOffPage(cs, cs.annotationIds.flatMap(id => getAnnotation(id) ?? []), currentBatchId?.startsWith('m') ? currentBatchId : undefined);
     }
   };
+  // MCP: the user's agent drives its own turns, so the checks' findings go back
+  // to it in the answer to ilse_resolve, and it resolves again once they're fixed
+  let mcpCheck: { snapshot: ReturnType<typeof takeSnapshot>; ids: string[]; since: ReturnType<typeof takeSnapshot>; turns: number } | null = null;
+  const checkMcpChange = async (): Promise<string | undefined> => {
+    const run = mcpCheck;
+    if (!run) return;
+    const setup = checkSetup(cwdRoot, readProjectRc(cwdRoot));
+    // Edits made to fix the checks are their own undo step
+    const fix = diffSnapshot(run.since, run.ids);
+    if (fix) { fix.label = t('cli.checkRepaired'); recordUndo(fix, 'mcp'); }
+    const files = diffSnapshot(run.snapshot, [])?.files ?? [];
+    if (!setup || files.length === 0) { mcpCheck = null; return; }
+    console.log(chalk.dim('  ') + chalk.cyan('◌') + chalk.dim(` ${t('cli.checking')}`));
+    const report = await checkChange(cwdRoot, files, setup);
+    if (!hasProblems(report)) {
+      mcpCheck = null;
+      console.log(chalk.dim('  ') + chalk.green('✓') + chalk.dim(` ${run.turns > 0 ? t('cli.checkRepaired') : t('cli.checkPassed', { seconds: (report.ms / 1000).toFixed(1) })}`));
+      return;
+    }
+    const top = peekUndo();
+    if (run.turns >= MAX_CHECK_REPAIRS) {
+      mcpCheck = null;
+      if (top) warnCheckFailed(top, report);
+      return 'The project\'s checks still fail; the designer was told and decides whether to keep the change. Move on.';
+    }
+    console.log(chalk.dim('  ') + chalk.yellow('⚠') + chalk.dim(` ${t('cli.checkRepair', { count: describeReport(report).length })}`));
+    mcpCheck = { ...run, since: takeSnapshot(cwdRoot), turns: run.turns + 1 };
+    return `${checkRepairPrompt(report, run.ids.map(id => getAnnotation(id)?.note ?? ""))}\n\nThen call ilse_resolve for ${run.ids[0]} again.`;
+  };
+
   const version = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
   const localToken = getLocalToken();
   const mcpHandler = createMcpHttpHandler({
@@ -1175,6 +1301,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     hooks: {
       onClaim: (anns) => {
         closeMcpClaim();
+        mcpCheck = null;
         for (const a of anns) journal.received(a);
         currentBatchId = `m${++batchSeq}`;
         journal.batchStart(currentBatchId, anns.map(a => a.id), 'mcp', 'mcp');
@@ -1182,11 +1309,18 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         console.log(chalk.dim('  ') + chalk.cyan('●') + chalk.dim(` ${t('cli.mcpClaimed', { count: anns.length })}`));
         for (const a of anns) broadcast({ type: 'status', id: a.id, status: 'sent' });
       },
-      onResolved: (a) => {
+      onResolved: async (a) => {
         journal.resolved(a.id);
         console.log(chalk.dim('  ') + chalk.green('✓') + ' ' + chalk.dim(`#${a.id}`) + ' ' + (a.resolvedSummary ?? ''));
         broadcast({ type: 'resolved', annotation: a });
-        if (mcpClaim?.open.delete(a.id) && mcpClaim.open.size === 0) closeMcpClaim();
+        if (mcpClaim?.open.delete(a.id) && mcpClaim.open.size === 0) {
+          const { snapshot, ids } = mcpClaim;
+          closeMcpClaim();
+          mcpCheck = { snapshot, ids, since: takeSnapshot(cwdRoot), turns: 0 };
+          return checkMcpChange();
+        }
+        // The agent fixed what the checks found and resolved again
+        if (mcpCheck?.ids.includes(a.id)) return checkMcpChange();
       },
     },
   });

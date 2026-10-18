@@ -1493,6 +1493,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [clipboardToast, setClipboardToast] = useState<{ text: string; reaction?: MascotReaction } | null>(null);
   /** The last run changed components that aren't on this page — it stays until the designer decides */
   const [offPage, setOffPage] = useState<{ changeSetId: string; files: string[]; routes: string[] } | null>(null);
+  // The project's typecheck or tests still fail after the agent's repair turns
+  const [checkFailed, setCheckFailed] = useState<{ changeSetId: string; problems: string[]; count: number } | null>(null);
   // Undo: what the CLI can restore (newest batch first)
   const [undo, setUndo] = useState<{ count: number; label?: string; redoCount?: number; redoLabel?: string }>({ count: 0 });
 
@@ -1787,6 +1789,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           ? saying(t('undo.toastConflicts', { files: conflicts.map(f => f.split('/').pop()).join(', ') }), 'conflict')
           : saying(t('redo.toast')));
         setTimeout(() => setClipboardToast(null), 3000);
+      }
+      if (msg.type === 'check-failed' && typeof msg.changeSetId === 'string') {
+        setCheckFailed({
+          changeSetId: msg.changeSetId,
+          problems: Array.isArray(msg.problems) ? (msg.problems as string[]) : [],
+          count: typeof msg.count === 'number' ? msg.count : 0,
+        });
       }
       if (msg.type === 'off-page' && typeof msg.changeSetId === 'string') {
         setOffPage({
@@ -5052,6 +5061,32 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               </>}>
                 {t('toolbar.offPage.text', { files })}
                 {offPage.routes.length > 0 && ` ${t('toolbar.offPage.usedIn', { routes: offPage.routes.join(', ') })}`}
+              </SpeechBubble>
+            </div>
+          );
+        })()}
+
+        {checkFailed && !offPage && !clipboardToast && (() => {
+          const above = isOpen && toolbarPos.y > 90;
+          const growsRight = toolbarPos.x < 250;
+          const edge = above
+            ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
+            : { left: window.innerWidth / 2 };
+          return (
+            <div
+              data-ilse-toolbar
+              role="alert"
+              style={{
+                position: 'fixed', zIndex: 100000, ...edge,
+                ...(above ? { top: toolbarPos.y - 12, transform: 'translateY(-100%)' } : { bottom: 80, transform: 'translateX(-50%)' }),
+                maxWidth: 380,
+              }}
+            >
+              <SpeechBubble mode={toolbarMode} reaction="oops" mascotSize={24} actions={<>
+                <button style={speechButton(toolbarMode, true)} onClick={() => { send({ type: 'undo', changeSetId: checkFailed.changeSetId }); setCheckFailed(null); }}>{t('toolbar.offPage.undo')}</button>
+                <button style={speechButton(toolbarMode, false)} onClick={() => setCheckFailed(null)}>{t('toolbar.checkFailed.keep')}</button>
+              </>}>
+                {t('toolbar.checkFailed.text', { count: String(checkFailed.count), first: checkFailed.problems[0] ?? '' })}
               </SpeechBubble>
             </div>
           );

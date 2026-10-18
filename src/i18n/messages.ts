@@ -463,6 +463,14 @@ const messages = {
     pt: 'Manter',
     en: 'Keep',
   },
+  'toolbar.checkFailed.text': {
+    pt: 'A mudança quebra checagens do projeto ({count}) e não consegui corrigir: {first}',
+    en: 'The change breaks project checks ({count}) and I couldn\'t fix it: {first}',
+  },
+  'toolbar.checkFailed.keep': {
+    pt: 'Manter mesmo assim',
+    en: 'Keep anyway',
+  },
   'cli.batchError': {
     pt: 'Erro no batch',
     en: 'Batch error',
@@ -671,6 +679,12 @@ const messages = {
   'toolbar.removeWithNote': { pt: 'Este elemento será removido junto com o pedido. Não era isso? × no comando.', en: 'This element will be removed along with the request. Not what you meant? × on the command.' },
   'cli.syntaxRepair': { pt: 'o código ficou quebrado ({where}) — pedindo ao agente para corrigir', en: 'the code no longer parses ({where}) — asking the agent to fix it' },
   'cli.syntaxRepaired': { pt: 'sintaxe corrigida', en: 'syntax fixed' },
+  'cli.checking': { pt: 'conferindo os tipos e os testes do projeto…', en: 'checking the project\'s types and tests…' },
+  'cli.checkPassed': { pt: 'tipos e testes do projeto ok ({seconds}s)', en: 'project types and tests pass ({seconds}s)' },
+  'cli.checkRepair': { pt: 'a mudança quebrou {count} checagens do projeto — pedindo ao agente para corrigir', en: 'the change broke {count} project checks — asking the agent to fix them' },
+  'cli.checkOk': { pt: 'tipos e testes do projeto ok', en: 'project types and tests pass' },
+  'cli.checkRepaired': { pt: 'checagens do projeto corrigidas', en: 'project checks fixed' },
+  'cli.checkFailed': { pt: 'a mudança ainda quebra {count} checagens do projeto (mantida — desfaça na toolbar se preferir)', en: 'the change still breaks {count} project checks (kept — undo it from the toolbar if you like)' },
   'cli.syntaxReverted': { pt: 'Desfeito: o código ficou quebrado ({where})', en: 'Undone: the code no longer parsed ({where})' },
   'settings.snapToGrid': {
     pt: 'Snap to grid',

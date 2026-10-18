@@ -1,4 +1,5 @@
 import type { Annotation, AnnotationIntent } from '../types.js';
+import { testsCovering } from '../context/covering-tests.js';
 import { t } from '../i18n/index.js';
 import { historyFor, formatHistory } from '../git/ledger.js';
 import { componentCard, type ComponentCard } from '../context/locate.js';
@@ -178,6 +179,14 @@ export function formatHistoryFor(annotation: Annotation, cwd = process.cwd()): s
   return file ? formatHistory(file, historyFor(cwd, file)) : undefined;
 }
 
+/** Tests that cover the located file: the agent updates the ones that pin the old look */
+export function formatTestsFor(annotation: Annotation, cwd = process.cwd()): string | undefined {
+  const file = annotation.source?.[0]?.file;
+  const tests = file ? testsCovering(file, cwd) : [];
+  if (tests.length === 0) return undefined;
+  return `**Tests:** ${tests.map(f => `\`${f}\``).join(', ')} cover this file. If your change alters what one of them checks about the look (text, class, colour, markup), update it to the new look in the same pass; never weaken or skip it.`;
+}
+
 export function historyCount(annotation: Annotation, cwd = process.cwd()): number {
   if (process.env.ILSE_HISTORY === '0') return 0;
   const file = annotation.source?.[0]?.file;
@@ -274,6 +283,8 @@ export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   if (sourceBlock) lines.push(sourceBlock);
   const historyBlock = formatHistoryFor(annotation);
   if (historyBlock) lines.push(historyBlock);
+  const testsBlock = formatTestsFor(annotation);
+  if (testsBlock) lines.push(testsBlock);
   const componentBlock = formatComponentFor(annotation);
   if (componentBlock) lines.push(componentBlock);
   const scopeBlock = formatScope(annotation);

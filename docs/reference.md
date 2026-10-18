@@ -120,9 +120,35 @@ These assume a global install. Without it, use `npx ilse-design@latest` instead 
 | `ILSE_MODEL=<model>` | One model for everything |
 | `ILSE_QUICK=0` | No quick step |
 | `ILSE_HISTORY=0` | No Ilse history in the prompt |
+| `ILSE_CHECK=off` | No project checks after a change; `types` runs only the typecheck |
 | `ILSE_COMPONENT_CARD=0` | No component card |
 | `ILSE_RESUME=1` | Resume the agent session between batches |
 | `ILSE_AGENT_USER_CONTEXT=1` | Let the agent load your personal `CLAUDE.md` and memory |
+
+## Project checks
+
+After each change Ilse runs the project's typecheck and the tests that cover the changed files, and the agent fixes what the change broke ([how it works](how-it-works.md#passing-ci)). It finds them on its own: `tsc` when there is a `tsconfig.json`, and `vitest` or `jest` from `package.json`. To point it elsewhere, in `.ilserc.json`:
+
+```json
+{
+  "check": {
+    "typecheck": "pnpm typecheck",
+    "test": "pnpm test --",
+    "timeoutMs": 180000
+  },
+  "protected": [
+    { "path": "components/ui/**", "note": "a copy of the prototype — change it with a patch in scripts/prototype/patches/" },
+    "src/generated/**"
+  ]
+}
+```
+
+- `typecheck`: a command whose output reads like `tsc`'s, or `false` to skip it.
+- `test`: a command that gets the changed files appended; only its exit code is read. `false` skips the tests.
+- `timeoutMs`: per command (default 3 minutes). A check that runs out of time is skipped, not failed.
+- `protected`: globs, or `{ path, note }`. The agent is told not to edit them (with the note), and an edit there is handed back to fix.
+
+`ILSE_CHECK=off` turns all of it off; `ILSE_CHECK=types` keeps only the typecheck. The journal records how long the checks took and how many problems they found — never which.
 
 ## Logs
 

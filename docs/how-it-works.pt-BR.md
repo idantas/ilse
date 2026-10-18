@@ -47,6 +47,23 @@ Antes de chamar o seu agente, a Ilse faz a busca por ele:
 - **O código é conferido depois do agente.** Como o agente não consegue fazer o build do projeto, a Ilse lê cada arquivo que ele mudou. Se algum deixou de compilar, o agente ganha um turno para corrigir exatamente aquele erro; se continuar quebrado, o lote inteiro é desfeito e o card mostra onde.
 - **As prévias não mexem na estrutura do React.** Arrastes e edições do painel aparecem com estilos e substitutos; cancelar uma nota devolve a página como estava.
 
+## Passar no CI
+
+Uma mudança de design pode quebrar o que o CI roda: uma prop usada e nunca declarada, um teste que fixa a aparência antiga, um "mostre só 10 linhas" que mudou o limite de que o backend depende. Por isso, depois de cada mudança — agente, passo rápido ou troca de classe — a Ilse roda as checagens do próprio projeto antes de dizer que terminou:
+
+1. **Typecheck.** `tsc --noEmit`, incremental (o cache fica em `.git/ilse/`). Só contam erros nos arquivos que a mudança tocou ou em arquivos que os importam.
+2. **Os testes que cobrem a mudança.** `vitest related` ou `jest --findRelatedTests` nos arquivos alterados — segundos, não a suíte inteira.
+3. **Só o que passava antes.** O que falha roda de novo no projeto como estava antes da mudança — uma cópia fora do seu projeto (`git archive` do HEAD, seu trabalho não commitado por cima, os arquivos da mudança de volta ao que eram, `node_modules` linkado). Uma falha que já existia — trabalho de outro agente na mesma branch, um teste já vermelho — nunca é atribuída à mudança.
+4. **O agente corrige.** O que a mudança quebrou volta para o agente, junto com o pedido do designer, que ele tem que manter. As regras: um teste que fixa a aparência (texto, classe, cor, marcação) e falhou porque a aparência mudou de propósito é atualizado para a nova aparência; um teste de comportamento (paginação, limites, permissões, requisições, estado) fica, e o código é corrigido para manter o comportamento e ainda entregar a aparência pedida; um erro de tipo é corrigido no código.
+5. **Confere de novo.** Até dois turnos de correção. Uma correção que apaga, pula ou afrouxa um teste não vale: a Ilse compara os testes e as asserções de antes e depois.
+6. **Continua vermelho?** A mudança fica e a barra diz o que ainda falha, com **Desfazer** e **Manter mesmo assim**. O terminal lista cada falha.
+
+Antes de tudo isso, o agente fica sabendo quais testes cobrem o arquivo que vai mudar, então uma mudança de aparência costuma atualizar o teste na mesma passada. Ele também é instruído a mudar só a apresentação — constantes compartilhadas, limites, dados e lógica ficam como estão — e a usar os tokens do projeto.
+
+Com MCP, seu agente conduz os próprios turnos: quando ele resolve a última anotação de um lote, o `ilse_resolve` responde com o que quebrou, e o agente corrige e resolve de novo.
+
+Caminhos que o projeto muda de outro jeito (uma cópia vendorizada que um script aplica patches, código gerado) podem ser marcados no `.ilserc.json` → `protected`: o agente é avisado para não editá-los, e uma edição ali conta como falha a corrigir. Configurações: [Referência → Checagens do projeto](reference.pt-BR.md#checagens-do-projeto).
+
 ## Desfazer
 
 O ⌘Z funciona em dois níveis:

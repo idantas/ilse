@@ -120,9 +120,35 @@ Isso supõe a instalação global. Sem ela, use `npx ilse-design@latest` no luga
 | `ILSE_MODEL=<modelo>` | Um modelo para tudo |
 | `ILSE_QUICK=0` | Sem o degrau rápido |
 | `ILSE_HISTORY=0` | Sem o histórico da Ilse no prompt |
+| `ILSE_CHECK=off` | Sem as checagens do projeto depois de uma mudança; `types` roda só o typecheck |
 | `ILSE_COMPONENT_CARD=0` | Sem a ficha do componente |
 | `ILSE_RESUME=1` | Retoma a sessão do agente entre lotes |
 | `ILSE_AGENT_USER_CONTEXT=1` | Deixa o agente carregar seu `CLAUDE.md` pessoal e memória |
+
+## Checagens do projeto
+
+Depois de cada mudança a Ilse roda o typecheck do projeto e os testes que cobrem os arquivos alterados, e o agente corrige o que a mudança quebrou ([como funciona](how-it-works.pt-BR.md#passar-no-ci)). Ela acha tudo sozinha: `tsc` quando existe um `tsconfig.json`, e `vitest` ou `jest` pelo `package.json`. Para apontar outro caminho, no `.ilserc.json`:
+
+```json
+{
+  "check": {
+    "typecheck": "pnpm typecheck",
+    "test": "pnpm test --",
+    "timeoutMs": 180000
+  },
+  "protected": [
+    { "path": "components/ui/**", "note": "cópia do protótipo — mude com um patch em scripts/prototype/patches/" },
+    "src/generated/**"
+  ]
+}
+```
+
+- `typecheck`: um comando cuja saída se lê como a do `tsc`, ou `false` para pular.
+- `test`: um comando que recebe os arquivos alterados no fim; só o código de saída é lido. `false` pula os testes.
+- `timeoutMs`: por comando (padrão 3 minutos). Uma checagem que estoura o tempo é pulada, não reprovada.
+- `protected`: globs, ou `{ path, note }`. O agente é avisado para não editá-los (com a nota), e uma edição ali volta para ele corrigir.
+
+`ILSE_CHECK=off` desliga tudo; `ILSE_CHECK=types` mantém só o typecheck. O journal registra quanto tempo as checagens levaram e quantos problemas acharam — nunca quais.
 
 ## Logs
 

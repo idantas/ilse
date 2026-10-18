@@ -1,4 +1,6 @@
 import { isolatedEnv, projectInstructions, DISALLOWED_TOOLS } from './agent-profile.js';
+import { readProtected } from './project-check.js';
+import { readProjectRc } from '../config/project-rc.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -262,6 +264,13 @@ function buildPrompt(annotation: Annotation, imagePaths: string[] = []): string 
   ].join('\n');
 }
 
+/** `.ilserc.json` → `protected`: paths the project changes another way (a patch, a generator) */
+function protectedRules(cwd = process.cwd()): string[] {
+  if (process.env.ILSE_CHECK === 'off') return [];
+  const paths = readProtected(readProjectRc(cwd).protected);
+  return paths.map(p => `- Do not edit \`${p.path}\` directly${p.note ? ` — ${p.note}` : ''}`);
+}
+
 export function buildBatchPrompt(
   annotations: Annotation[],
   opts?: { isResume?: boolean },
@@ -349,6 +358,7 @@ export function buildBatchPrompt(
       '- If it is a question: answer in 1-2 direct sentences.',
       '- Do NOT analyze. Do NOT ask "confirm?". Just do it.',
       '- Be surgical — edit only what is necessary.',
+      ...protectedRules(),
       ...(hasImages ? [
         '- IMPORTANT: Annotations may include reference image files. Use the Read tool to view each image FIRST — the image shows the desired result. Replicate the design.',
       ] : []),
@@ -372,7 +382,10 @@ export function buildBatchPrompt(
     ...(annotations.some(a => a.source?.length) ? [
       '- When an annotation has a **Source** location, it is exact: Read only the range it gives (offset/limit), then change it with Edit. No exploring the codebase, unless the code shown does not match',
     ] : []),
-    '- Do not re-read a file after editing it, and do not run builds or tests — the designer sees the result live',
+    '- Do not re-read a file after editing it, and do not run builds or tests — the designer sees the result live, and Ilse runs the project\'s typecheck and tests after you',
+    '- Change the presentation the designer asked for. Shared constants, limits, data, requests and logic stay as they are: when the look needs a different value (e.g. "show only 10 rows"), add it where the thing is drawn instead of changing a limit other code relies on',
+    '- Use the project\'s design tokens and classes, never raw hex or px values when a token exists',
+    ...protectedRules(),
     '- If two annotations are on the same element, consolidate',
     '- If the same pattern appears in several, fix it in the base component',
     '- If the same issue may exist in other occurrences outside the annotations, one Grep to find them, then fix all',

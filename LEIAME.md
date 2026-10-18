@@ -21,6 +21,7 @@ Você abre seu app no navegador, aponta o que está errado e diz como deveria se
 - **Mover as coisas.** Arraste para reordenar, para dentro ou para fora de um container, redimensione.
 - **Desenhar.** Rabisque na página com o lápis, ou cole um print como referência.
 - **Desfazer qualquer coisa.** ⌘Z devolve o código exatamente como estava. Não precisa pedir para a IA reverter.
+- **Mantém o CI verde.** Depois de cada mudança a Ilse roda o typecheck do projeto e os testes que cobrem o que mudou. O que a mudança quebrou, o agente corrige antes de dizer que terminou.
 
 ## O que você precisa
 
