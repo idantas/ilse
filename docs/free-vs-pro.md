@@ -15,7 +15,7 @@ Where each piece of Ilse lives, so nobody (human or agent) has to argue it again
 ## How Pro plugs in
 
 - `loadPro()` imports `~/.ilse/pro/current/index.js` (or `ILSE_PRO=<path>` in development). Missing, broken or another `pluginApi` → Ilse runs free, quietly.
-- Pro's default export is a `ProPlugin` (`src/pro/types.ts`): `registerCli(program)` adds commands, `server(ctx)` returns the hooks the bridge calls (`getFindings`, `decideFinding`, `testControl`, `retest`).
+- Pro's default export is a `ProPlugin` (`src/pro/types.ts`): `registerCli(program, core)` adds commands — `core` lends the core's strings (`t`) and how it finds the running app (`appUrl`), so Pro doesn't copy them — `server(ctx)` returns the hooks the bridge calls (`getFindings`, `decideFinding`, `testControl`, `retest`).
 - The bridge tells the toolbar `pro: { test: true }` on connect only when Pro can run the test. Otherwise the switch shows test mode asleep and a tap explains where to get it.
 - Forcing the switch on in the browser does nothing: there's no runner in this package.
 - Change a shape in `types.ts` in a way an older Pro can't handle → bump `PLUGIN_API`.

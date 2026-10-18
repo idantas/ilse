@@ -15,6 +15,7 @@ const _cfg = loadUserConfig();
 setLocale(_cfg.locale ?? detectLocale());
 
 import { loadPro } from '../pro/load.js';
+import { proCore } from '../pro/core.js';
 
 const program = new Command();
 
@@ -145,7 +146,7 @@ program
 // `ilse test` and the rest of Pro's commands come from Pro when it's installed
 const pro = await loadPro();
 if (pro?.registerCli) {
-  pro.registerCli(program);
+  pro.registerCli(program, proCore);
 } else {
   program
     .command('test [url]')

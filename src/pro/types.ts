@@ -39,11 +39,22 @@ export interface ProServer {
   retest?: (targets: RetestTarget[], origin: string) => void;
 }
 
+/**
+ * What the core lends Pro's CLI commands. Optional on purpose: a Pro written
+ * before it existed still loads (same PLUGIN_API).
+ */
+export interface ProCore {
+  /** The core's strings, in the user's language (keys like `test.summary`) */
+  t: (key: string, params?: Record<string, string | number>) => string;
+  /** The app's local address: given (URL or port), the port saved for this project, or a dev server found running */
+  appUrl: (cwd: string, given?: string) => Promise<string | null>;
+}
+
 export interface ProPlugin {
   pluginApi: number;
   version: string;
   /** Extra CLI commands (e.g. `ilse test`) */
-  registerCli?: (program: Command) => void;
+  registerCli?: (program: Command, core?: ProCore) => void;
   /** Hooks for the running `ilse` (bridge + toolbar) */
   server?: (ctx: ProContext) => ProServer;
 }
