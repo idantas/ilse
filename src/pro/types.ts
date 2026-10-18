@@ -44,6 +44,8 @@ export interface ProServer {
  * before it existed still loads (same PLUGIN_API).
  */
 export interface ProCore {
+  /** The user's language, for Pro's own strings */
+  locale: 'pt' | 'en';
   /** The core's strings, in the user's language (keys like `test.summary`) */
   t: (key: string, params?: Record<string, string | number>) => string;
   /** The app's local address: given (URL or port), the port saved for this project, or a dev server found running */

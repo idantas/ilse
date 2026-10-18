@@ -3,7 +3,7 @@
  * and how it finds the app the dev is running.
  */
 
-import { t } from '../i18n/index.js';
+import { t, getLocale } from '../i18n/index.js';
 import { loadUserConfig } from '../config/user-config.js';
 import { findDevServer } from '../proxy/find-dev-server.js';
 import type { MessageKey } from '../i18n/messages.js';
@@ -18,6 +18,7 @@ async function appUrl(cwd: string, given?: string): Promise<string | null> {
 }
 
 export const proCore: ProCore = {
+  get locale() { return getLocale() === 'pt' ? 'pt' : 'en'; },
   // Unknown keys come back as the key itself, like the core's own t()
   t: (key, params) => t(key as MessageKey, params),
   appUrl,
