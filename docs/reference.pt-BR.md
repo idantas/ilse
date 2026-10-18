@@ -57,9 +57,9 @@ Na primeira vez, a Ilse pergunta como entregar as anotações ao seu agente:
 - **Aplicar em — só neste ou todos:** quando o elemento faz parte de um componente repetido na página. Com *Todos · N*, os ajustes do painel aparecem em todas as instâncias de uma vez.
 - **Editar texto:** elementos de texto ganham um campo *Text* no topo do painel. Texto que vem de variável, prop ou tradução vai para o agente, que muda na origem.
 - **Remover um elemento:** *Remove element* no fim do painel, ou a tecla Delete (fn+⌫ no Mac) com a nota vazia — o ⌫ funciona com o foco fora da nota. Numa lista feita com `.map`, só aquele item sai, a não ser que *Aplicar em* diga todos.
-- **Mover de verdade:** arraste para reordenar, ou para dentro e para fora de containers; a página se reorganiza ao vivo.
+- **Mover de verdade:** arraste para reordenar, ou para dentro e para fora de containers; a página se reorganiza ao vivo. O arraste move o que está selecionado — a célula, não a linha; o título, não o card. Para mover o container, selecione ele antes (↰ ou a árvore).
 - **Redimensionar:** arraste as alças, com encaixe na grade.
-- **Lápis:** rabisque na página; os traços são lidos e vão junto.
+- **Lápis:** rabisque na página; os traços são lidos e vão junto. Um desenho numa área vazia se ancora no elemento que o contém, e o agente recebe o arquivo dele como num clique.
 - **Imagens de referência:** cole ou envie um print ou SVG.
 
 ### Revisar a página

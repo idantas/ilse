@@ -43,6 +43,7 @@ Before your agent is called, Ilse does the searching for it:
 ## Keeping your project safe
 
 - **The agent runs isolated.** No personal `CLAUDE.md` or memory — only the project's own instructions. No shell: it reads and edits files, nothing else.
+- **The change has to land on this page.** Every request carries the page it was made on. After the run, Ilse compares the components the agent edited with the ones rendered on the page; if none of them is there, the toolbar says which file changed and where it is used, with **Redo on this page**, **Undo** and **Keep** — instead of a plain "done".
 - **The code is checked after the agent.** Since the agent can't build your project, Ilse parses every file it changed. If one no longer parses, the agent gets one turn to fix exactly that error; if it is still broken, the whole batch is undone and the card shows where.
 - **Previews never touch React's DOM structure.** Drags and panel edits are shown with styles and stand-ins; cancelling a note puts the page back.
 

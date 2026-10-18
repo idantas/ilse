@@ -42,7 +42,10 @@ export interface WsServerOptions {
   onAnnotation?: (annotation: Annotation) => void;
   onBatch?: (annotations: Annotation[]) => void;
   onStop?: () => void;
-  onUndo?: () => void;
+  /** With a change id: only when that change is the one an undo takes back now */
+  onUndo?: (changeSetId?: string) => void;
+  /** Undo a run that landed off the page and run its notes again, pointed at this page */
+  onRedoHere?: (changeSetId: string) => void;
   onRedo?: () => void;
   /** Journal export for Settings → Logs */
   getLogs?: () => { json: unknown; markdown: string };
@@ -183,6 +186,12 @@ function parseFrames(v: unknown): LocateQuery['frames'] {
   return out.element || out.owner ? out : undefined;
 }
 
+function parseNames(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const names = v.filter((n): n is string => typeof n === 'string' && /^[A-Z][\w$]{0,79}$/.test(n)).slice(0, 600);
+  return names.length > 0 ? names : undefined;
+}
+
 function parseTextEdit(v: unknown): Annotation['textEdit'] {
   const t = v as { from?: unknown; to?: unknown } | null;
   return t && typeof t.from === 'string' && typeof t.to === 'string' && t.from !== t.to ? { from: t.from, to: t.to } : undefined;
@@ -220,6 +229,7 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
         nearbyElements: msg.nearbyElements as string[] | undefined,
         text: typeof msg.text === 'string' ? msg.text.slice(0, 80) : undefined,
         testFinding: parseTestFinding(msg.testFinding),
+        pageComponents: parseNames(msg.pageComponents),
         ...(() => {
           const t0 = performance.now();
           const source = locateForMessage(msg);
@@ -328,7 +338,11 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       break;
     }
     case 'undo': {
-      options.onUndo?.();
+      options.onUndo?.(typeof msg.changeSetId === 'string' ? msg.changeSetId : undefined);
+      break;
+    }
+    case 'redo-here': {
+      if (typeof msg.changeSetId === 'string') options.onRedoHere?.(msg.changeSetId);
       break;
     }
 

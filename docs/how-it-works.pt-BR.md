@@ -43,6 +43,7 @@ Antes de chamar o seu agente, a Ilse faz a busca por ele:
 ## Mantendo seu projeto seguro
 
 - **O agente roda isolado.** Sem o seu `CLAUDE.md` pessoal nem memória — só as instruções do próprio projeto. Sem shell: ele lê e edita arquivos, mais nada.
+- **A mudança tem que cair nesta página.** Todo pedido leva a página em que foi feito. Depois do run, a Ilse compara os componentes que o agente editou com os que aparecem na página; se nenhum estiver nela, a barra diz qual arquivo mudou e onde ele é usado, com **Refazer nesta página**, **Desfazer** e **Manter** — em vez de só "concluído".
 - **O código é conferido depois do agente.** Como o agente não consegue fazer o build do projeto, a Ilse lê cada arquivo que ele mudou. Se algum deixou de compilar, o agente ganha um turno para corrigir exatamente aquele erro; se continuar quebrado, o lote inteiro é desfeito e o card mostra onde.
 - **As prévias não mexem na estrutura do React.** Arrastes e edições do painel aparecem com estilos e substitutos; cancelar uma nota devolve a página como estava.
 

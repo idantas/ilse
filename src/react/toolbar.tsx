@@ -23,7 +23,7 @@ import {
   IconMaximize,
   IconPencil,
 } from '@tabler/icons-react';
-import { captureElement, captureTextSelection, captureArea, captureEnvironment, humanizeSelector, type ElementCapture } from './annotator.js';
+import { captureElement, captureTextSelection, captureArea, captureEnvironment, humanizeSelector, pageComponents, type ElementCapture } from './annotator.js';
 import { analyzeElement, scanPage, setDSTokens, getDSTokens, parseTokensJSON, type Suggestion, type PageIssue } from './analyze.js';
 import { connect, disconnect, send, onMessage, onStatus, isConnected } from './ws-client.js';
 import { useImageInput, InlineAttachments } from './image-input.js';
@@ -34,7 +34,7 @@ import { ElementTree } from './element-tree.js';
 import { IlseMascot, type MascotActivity, type MascotMode, type MascotReaction } from './mascot.js';
 import { SpeechBubble, speechButton, reasoningLine, ReasoningDot } from './speech-bubble.js';
 import { findingsForPage, findingNote, findingElement, findingRef, type TestFinding, type TestFindingRef } from './test-findings.js';
-import { analyzeSketch, renderSketchImage, formatSketchNote, type Stroke } from './sketch.js';
+import { analyzeSketch, renderSketchImage, formatSketchNote, drawnContainer, type Stroke } from './sketch.js';
 import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, scopeTwins, type LiveDrag, selectionTarget, selectableParent } from './live-layout.js';
 import type { StyleChange, StyleData } from '../types.js';
 import { toggleFreeze, isFrozen } from './freeze.js';
@@ -1477,6 +1477,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   /** What Ilse says above the toolbar, and what her mascot does while saying it */
   const [clipboardToast, setClipboardToast] = useState<{ text: string; reaction?: MascotReaction } | null>(null);
+  /** The last run changed components that aren't on this page — it stays until the designer decides */
+  const [offPage, setOffPage] = useState<{ changeSetId: string; files: string[]; routes: string[] } | null>(null);
   // Undo: what the CLI can restore (newest batch first)
   const [undo, setUndo] = useState<{ count: number; label?: string; redoCount?: number; redoLabel?: string }>({ count: 0 });
 
@@ -1771,7 +1773,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           : saying(t('redo.toast')));
         setTimeout(() => setClipboardToast(null), 3000);
       }
+      if (msg.type === 'off-page' && typeof msg.changeSetId === 'string') {
+        setOffPage({
+          changeSetId: msg.changeSetId,
+          files: Array.isArray(msg.files) ? (msg.files as string[]) : [],
+          routes: Array.isArray(msg.routes) ? (msg.routes as string[]) : [],
+        });
+      }
       if (msg.type === 'undone') {
+        setOffPage(null);
         const ids = new Set((msg.annotationIds as string[]) ?? []);
         for (const d of annotationsRef.current) if (d.id && ids.has(d.id)) clearStylePreview(d);
         setAnnotations(prev => prev.map(ann =>
@@ -2451,6 +2461,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       text: ann.capture.text,
       position: ann.capture.rect,
       environment: env,
+      // What renders on this page: the CLI checks the run's edits landed here
+      pageComponents: pageComponents(),
       // Schema rico
       intent: ann.intent ?? inferDraftIntent(ann.note, !!ann.capture.element),
       severity: ann.severity ?? 'important',
@@ -2937,12 +2949,22 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const primary = result.primary;
     let capture: ElementCapture;
     let pixelTargetId: string | undefined;
+    let holder: Element | null = null;
     if (primary) {
       capture = captureElement(primary);
       pixelTargetId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       primary.setAttribute('data-ilse-pixel-target', pixelTargetId);
     } else {
-      capture = { element: t('toolbar.sketch.empty'), styles: {}, rect };
+      // Nothing circled: anchor on the container that holds the drawing, so the
+      // agent gets its component and file:line like a click — not bare coordinates
+      holder = drawnContainer(box, { x: window.scrollX, y: window.scrollY });
+      if (holder) {
+        const held = captureElement(holder);
+        // The new thing goes inside the holder: it is the parent, the drawn spot the position
+        capture = { ...held, parent: held.element, rect };
+      } else {
+        capture = { element: t('toolbar.sketch.empty'), styles: {}, rect };
+      }
     }
     capture = { ...capture, _scrollX: window.scrollX, _scrollY: window.scrollY };
     stylePreviewCommitted.current = false;
@@ -2951,7 +2973,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       context: capture.element,
       contextLabel: primary
         ? `${t('toolbar.sketch.label')} · ${buildContextLabel(primary)}`
-        : t('toolbar.sketch.label'),
+        : holder
+          ? `${t('toolbar.sketch.label')} · ${t('toolbar.sketch.inside', { label: buildContextLabel(holder) })}`
+          : t('toolbar.sketch.label'),
       rect,
       originalRect: { ...rect },
       note: '',
@@ -4988,6 +5012,35 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             </div>
           </div>
         )}
+
+        {offPage && !clipboardToast && (() => {
+          const above = isOpen && toolbarPos.y > 90;
+          const growsRight = toolbarPos.x < 250;
+          const edge = above
+            ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
+            : { left: window.innerWidth / 2 };
+          const files = offPage.files.map(f => f.split('/').pop()).join(', ');
+          return (
+            <div
+              data-ilse-toolbar
+              role="alert"
+              style={{
+                position: 'fixed', zIndex: 100000, ...edge,
+                ...(above ? { top: toolbarPos.y - 12, transform: 'translateY(-100%)' } : { bottom: 80, transform: 'translateX(-50%)' }),
+                maxWidth: 380,
+              }}
+            >
+              <SpeechBubble mode={toolbarMode} reaction="oops" mascotSize={24} actions={<>
+                <button style={speechButton(toolbarMode, true)} onClick={() => { send({ type: 'redo-here', changeSetId: offPage.changeSetId }); setOffPage(null); }}>{t('toolbar.offPage.redoHere')}</button>
+                <button style={speechButton(toolbarMode, false)} onClick={() => { send({ type: 'undo', changeSetId: offPage.changeSetId }); setOffPage(null); }}>{t('toolbar.offPage.undo')}</button>
+                <button style={speechButton(toolbarMode, false)} onClick={() => setOffPage(null)}>{t('toolbar.offPage.keep')}</button>
+              </>}>
+                {t('toolbar.offPage.text', { files })}
+                {offPage.routes.length > 0 && ` ${t('toolbar.offPage.usedIn', { routes: offPage.routes.join(', ') })}`}
+              </SpeechBubble>
+            </div>
+          );
+        })()}
 
         {clipboardToast && (() => {
           // Above the toolbar, aligned with the edge it grows from (it opens left or

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { color, radius, font } from './tokens.js';
 import { fiberOf, selectableParent, type Fiber } from './live-layout.js';
-import { FRAMEWORK_INTERNALS } from './annotator.js';
+import { componentTypeName } from './annotator.js';
 import { t } from '../i18n/index.js';
 
 // ── Where the selected element sits ─────────────────────────────────────────
@@ -19,14 +19,6 @@ const CHILDREN = 8;
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT', 'LINK', 'META', 'BR']);
 
-function typeName(type: unknown): string | undefined {
-  if (!type || typeof type === 'string') return undefined;
-  const t = type as { displayName?: string; name?: string; render?: { displayName?: string; name?: string }; type?: unknown };
-  // memo() wraps the component in .type, forwardRef() in .render
-  const name = t.displayName || t.name || t.render?.displayName || t.render?.name || (t.type ? typeName(t.type) : undefined);
-  return name && /^[A-Z]/.test(name) && !FRAMEWORK_INTERNALS.has(name) ? name : undefined;
-}
-
 /**
  * The components this DOM node is the root of, outermost first: the fibers
  * between it and the DOM element above. `<Field>` rendering `<FieldRoot>`
@@ -35,7 +27,7 @@ function typeName(type: unknown): string | undefined {
 export function rootComponents(host: Fiber | null): string[] {
   const names: string[] = [];
   for (let f = host?.return ?? null; f && typeof f.type !== 'string'; f = f.return) {
-    const name = typeName(f.type);
+    const name = componentTypeName(f.type);
     if (name && !names.includes(name)) names.unshift(name);
   }
   return names;
@@ -51,13 +43,21 @@ export function htmlLabel(el: Pick<Element, 'tagName' | 'id' | 'getAttribute'>):
   return role ? `${tag}[role=${role}]` : tag;
 }
 
-function textOf(el: Element): string {
+/**
+ * The words that tell this row apart: its own text, or the first line it shows
+ * (four `KpiCard div` siblings read "Revenue", "Orders"…). Ancestors only take
+ * their own text — the first line of a whole section names a child, not it.
+ */
+function textOf(el: Element, ownOnly: boolean): string {
   let text = Array.from(el.childNodes)
     .filter(n => n.nodeType === Node.TEXT_NODE)
     .map(n => n.textContent?.trim() ?? '')
     .filter(Boolean)
     .join(' ');
-  if (!text && el.childElementCount === 0) text = el.textContent?.trim() ?? '';
+  if (!text && !ownOnly) {
+    const shown = el instanceof HTMLElement ? el.innerText : el.textContent ?? '';
+    text = shown.split('\n').map(line => line.trim()).find(Boolean) ?? '';
+  }
   return text.length > 24 ? `${text.slice(0, 24)}…` : text;
 }
 
@@ -68,7 +68,7 @@ function shown(el: Element): boolean {
 const shownChildren = (el: Element) => Array.from(el.children).filter(shown);
 
 type Row =
-  | { kind: 'node'; el: Element; depth: number; selected?: boolean; open?: boolean; count: number }
+  | { kind: 'node'; el: Element; depth: number; selected?: boolean; ancestor?: boolean; open?: boolean; count: number }
   | { kind: 'more'; depth: number; count: number }
   | { kind: 'fold'; depth: number; count: number };
 
@@ -79,7 +79,7 @@ function buildRows(sel: Element, allAncestors: boolean): Row[] {
   const rows: Row[] = [];
   const folded = ancestors.length - visible.length;
   if (folded > 0) rows.push({ kind: 'fold', depth: 0, count: folded });
-  visible.forEach((el, depth) => rows.push({ kind: 'node', el, depth, open: true, count: 0 }));
+  visible.forEach((el, depth) => rows.push({ kind: 'node', el, depth, ancestor: true, open: true, count: 0 }));
 
   const depth = visible.length;
   const siblings = sel.parentElement ? shownChildren(sel.parentElement) : [sel];
@@ -154,14 +154,15 @@ export function ElementTree({ selected, onSelect }: {
         const { el } = row;
         const names = rootComponents(fiberOf(el));
         const component = names[0];
-        const text = textOf(el);
+        const text = textOf(el, !!row.ancestor);
+        const expandable = row.open || row.count > 0;
         const locked = !onSelect && !row.selected;
         return (
           <button
             key={i}
             role="treeitem"
             aria-selected={!!row.selected}
-            aria-expanded={row.count > 0 ? !!row.open : undefined}
+            aria-expanded={expandable ? !!row.open : undefined}
             aria-disabled={locked || undefined}
             title={locked ? t('toolbar.tree.locked') : names.length > 1 ? names.join(' › ') : undefined}
             onClick={() => { if (!row.selected && onSelect) onSelect(el); }}
@@ -170,7 +171,7 @@ export function ElementTree({ selected, onSelect }: {
             style={rowStyle(indent, !!row.selected, locked)}
           >
             <span style={{ width: 10, flexShrink: 0, fontSize: 9, color: color.mutedForeground }}>
-              {row.count > 0 ? (row.open ? '▾' : '▸') : ''}
+              {expandable ? (row.open ? '▾' : '▸') : ''}
             </span>
             {component && <span style={{ fontWeight: 500, flexShrink: 0 }}>{component}</span>}
             <span style={{ color: color.mutedForeground, fontFamily: font.mono, fontSize: 11, flexShrink: component ? 1 : 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>

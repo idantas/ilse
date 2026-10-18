@@ -57,9 +57,9 @@ The first run asks how Ilse should hand annotations to your agent:
 - **Apply to — only this one or all:** when the element belongs to a component repeated on the page. With *All · N*, panel edits preview on every instance at once.
 - **Edit text:** text elements get a *Text* field at the top of the panel. Text that comes from a variable, prop or translation goes to the agent, which changes it at the source.
 - **Remove an element:** *Remove element* at the bottom of the panel, or the Delete key (fn+⌫ on a Mac) while the note is empty — ⌫ works once focus is out of the note. From a `.map` list, only that item goes unless *Apply to* says all.
-- **Move for real:** drag to reorder, or into and out of containers; the page re-flows live.
+- **Move for real:** drag to reorder, or into and out of containers; the page re-flows live. The drag moves what is selected — a cell, not its row; a title, not its card. To move the container, select it first (↰ or the tree).
 - **Resize:** drag the handles, with snap-to-grid.
-- **Pencil:** sketch on the page; the strokes are read and sent along.
+- **Pencil:** sketch on the page; the strokes are read and sent along. A sketch over empty space is anchored on the element that holds it, so the agent gets its file like a click does.
 - **Reference images:** paste or upload a screenshot or SVG.
 
 ### Review the page

@@ -70,6 +70,8 @@ export interface BatchRecord {
   tools: Record<string, number>;
   tokens?: { input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number };
   changes?: { files: number; added: number; removed: number };
+  /** Its edits rendered nothing on the page the notes were made on */
+  offPage?: boolean;
 }
 
 export interface SessionInfo {
@@ -251,6 +253,11 @@ export class Journal {
   }
 
   /** MCP path: the agent's own tool calls are not visible, only claim → resolve. */
+  batchOffPage(batchId: string): void {
+    const batch = this.batches.get(batchId);
+    if (batch) { batch.offPage = true; this.save(); }
+  }
+
   batchChanges(batchId: string, changes: { files: number; added: number; removed: number }): void {
     const batch = this.batches.get(batchId);
     if (batch) { batch.changes = changes; this.save(); }

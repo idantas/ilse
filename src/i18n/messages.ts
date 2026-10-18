@@ -234,6 +234,10 @@ const messages = {
     pt: '[desenho numa área vazia]',
     en: '[sketch over empty space]',
   },
+  'toolbar.sketch.inside': {
+    pt: 'dentro de {label}',
+    en: 'inside {label}',
+  },
   'toolbar.annotateMode': {
     pt: 'Modo anotação (clicar pra marcar)',
     en: 'Annotation mode (click to mark)',
@@ -430,6 +434,34 @@ const messages = {
   'cli.done': {
     pt: 'concluído ({seconds}s)',
     en: 'done ({seconds}s)',
+  },
+  'cli.offPage': {
+    pt: 'O agente mudou {files}, que não aparece na página da anotação',
+    en: 'The agent changed {files}, which is not on the annotated page',
+  },
+  'cli.offPageRoutes': {
+    pt: 'usado em {routes}',
+    en: 'used on {routes}',
+  },
+  'toolbar.offPage.text': {
+    pt: 'Mudei {files}, mas não aparece nesta página.',
+    en: "I changed {files}, but it isn't on this page.",
+  },
+  'toolbar.offPage.usedIn': {
+    pt: 'Fica em {routes}.',
+    en: "It's on {routes}.",
+  },
+  'toolbar.offPage.redoHere': {
+    pt: 'Refazer nesta página',
+    en: 'Redo on this page',
+  },
+  'toolbar.offPage.undo': {
+    pt: 'Desfazer',
+    en: 'Undo',
+  },
+  'toolbar.offPage.keep': {
+    pt: 'Manter',
+    en: 'Keep',
   },
   'cli.batchError': {
     pt: 'Erro no batch',

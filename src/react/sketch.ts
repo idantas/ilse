@@ -211,6 +211,29 @@ function pageElementAt(x: number, y: number): Element | null {
   return null;
 }
 
+/** The rect holds the whole box (a couple of pixels of slack for the stroke's width) */
+export function holds(r: { left: number; top: number; right: number; bottom: number }, box: Box, slack = 2): boolean {
+  return r.left <= box.left + slack && r.top <= box.top + slack
+    && r.right >= box.left + box.width - slack && r.bottom >= box.top + box.height - slack;
+}
+
+/**
+ * Where a sketch over empty space goes: the smallest element that holds the whole
+ * drawing. It reaches the agent the way a click does — component and file:line —
+ * so a circle in a blank corner lands in this page's container, not in whatever
+ * screen of the app the note happens to describe. Null at <body>: too generic to
+ * point at, and the page URL says as much.
+ */
+export function drawnContainer(box: Box, scroll: Point): Element | null {
+  const view: Box = { left: box.left - scroll.x, top: box.top - scroll.y, width: box.width, height: box.height };
+  const at = document.elementsFromPoint(view.left + view.width / 2, view.top + view.height / 2)
+    .find(el => !el.closest('[data-ilse-toolbar]') && !SKIP.has(el.tagName));
+  for (let el: Element | null = at ?? null; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    if (holds(el.getBoundingClientRect(), view)) return el;
+  }
+  return null;
+}
+
 /** Share of a rect inside a polygon, from a 4×4 sample grid. */
 function insideShare(r: DOMRect, poly: Point[]): number {
   let n = 0;

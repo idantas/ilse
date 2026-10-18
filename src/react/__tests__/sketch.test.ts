@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  holds,
   classifyStroke, readStrokes, pointInPolygon, formatSketchNote,
   SKETCH_NOTE_HEADING, type Point, type Stroke, type SketchPart,
 } from '../sketch.js';
@@ -74,5 +75,17 @@ describe('sketch note', () => {
       '3. Rabiscou por cima (vermelho): uma área vazia',
       'A imagem anexada mostra o desenho sobre os elementos da página.',
     ].join('\n'));
+  });
+});
+
+describe('holds', () => {
+  const box = { left: 100, top: 100, width: 50, height: 40 };
+  it('is true when the rect covers the drawing, with a little slack for the stroke', () => {
+    expect(holds({ left: 90, top: 90, right: 200, bottom: 200 }, box)).toBe(true);
+    expect(holds({ left: 101, top: 101, right: 149, bottom: 139 }, box)).toBe(true);
+  });
+  it('is false when part of the drawing is outside', () => {
+    expect(holds({ left: 120, top: 90, right: 200, bottom: 200 }, box)).toBe(false);
+    expect(holds({ left: 90, top: 90, right: 200, bottom: 130 }, box)).toBe(false);
   });
 });

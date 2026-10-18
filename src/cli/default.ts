@@ -4,7 +4,7 @@ import * as p from '@clack/prompts';
 import { loadUserConfig, saveUserConfig, isFirstRun, type IlseMode } from '../config/user-config.js';
 import { detectAgent, executeAnnotation, executeBatch, buildBatchPrompt, killAllActiveProcesses, type AgentDetection } from '../agent/executor.js';
 import { startServer, broadcast, getPort, getAllowedOrigin } from '../bridge/ws-server.js';
-import { resolveAnnotation, markSent, getAnnotation } from '../bridge/store.js';
+import { resolveAnnotation, markSent, getAnnotation, reopenAnnotation } from '../bridge/store.js';
 import { createMcpHttpHandler, MCP_PATH } from '../mcp/http.js';
 import { getLocalToken, writeServerInfo } from '../config/local-token.js';
 import { createRequire } from 'node:module';
@@ -28,13 +28,14 @@ import { planProject, portIsFree, nextFreePort, startHiddenDevServer, DevServerL
 import { spawn } from 'node:child_process';
 import { planTokenSwap, planTextSwap, applyTokenSwap, describeSwap, type SwapPlan } from '../context/token-swap.js';
 import {
-  takeSnapshot, diffSnapshot, discardChangeSet, reapplyChangeSet, pushUndo, popUndo, pushRedo, popRedo, undoState, summarizeChangeSet, type ChangeSet,
+  takeSnapshot, diffSnapshot, discardChangeSet, reapplyChangeSet, pushUndo, popUndo, peekUndo, pushRedo, popRedo, undoState, summarizeChangeSet, type ChangeSet,
 } from '../agent/changeset.js';
 import { isLimitError, limitResetsAt } from '../agent/executor.js';
 import { listClaudeAccounts, describeAccount, savedAccount, type ClaudeAccount } from '../agent/claude-accounts.js';
 import { setClaudeConfigDir } from '../agent/agent-profile.js';
 import { pickTier, escalateTier, resolveModel, modelTiers, expectsEdit, type Tier } from '../agent/agent-profile.js';
-import { historyCount, swapMatchesScope } from '../bridge/augment.js';
+import { historyCount, swapMatchesScope, pagePath } from '../bridge/augment.js';
+import { offPageEdits, routesImporting } from '../agent/page-check.js';
 import { quickBlocker, buildQuickPrompt, runQuick } from '../agent/quick-edit.js';
 import { recordChange, recordUndone, describeAnnotation, ledgerFile, type LedgerPath } from '../git/ledger.js';
 import { syntaxBreaks, describeBreaks, repairPrompt, type SyntaxBreak } from '../agent/verify.js';
@@ -878,6 +879,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         cs.label = annotations.map(a => a.note?.trim() || a.element).filter(Boolean).join(' · ').slice(0, 80);
         recordUndo(cs, 'agent');
         if (currentBatchId) journal.batchChanges(currentBatchId, changeTotals(cs));
+        warnIfOffPage(cs, annotations, currentBatchId);
         // Findings from `ilse test` the agent just worked on: test their pages again to confirm
         const fromTest = annotations.flatMap(a => a.testFinding ? [a.testFinding] : []);
         const origin = getAllowedOrigin();
@@ -886,7 +888,40 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     }
   };
 
-  const handleUndo = () => {
+  /**
+   * The run edited components and none of them renders on the page the notes were
+   * made on: it changed another screen. Say so — in the terminal and on the
+   * toolbar, with undo and "redo on this page" — instead of a plain "done".
+   */
+  const warnIfOffPage = (cs: ChangeSet, annotations: Annotation[], batchId: string | undefined) => {
+    const page = annotations.flatMap(a => a.pageComponents ?? []);
+    const off = offPageEdits(cs.files, page, paths => routesImporting(paths, cwdRoot));
+    if (!off) return;
+    const names = off.files.map(f => f.split('/').pop()).join(', ');
+    console.log(chalk.dim('  ') + chalk.yellow('⚠') + ' ' + t('cli.offPage', { files: names })
+      + (off.routes.length ? chalk.dim(` · ${t('cli.offPageRoutes', { routes: off.routes.join(', ') })}`) : ''));
+    if (batchId) journal.batchOffPage(batchId);
+    broadcast({ type: 'off-page', changeSetId: cs.id, annotationIds: cs.annotationIds, files: off.files, routes: off.routes });
+  };
+
+  const handleRedoHere = (changeSetId: string) => {
+    const cs = peekUndo();
+    if (!cs || cs.id !== changeSetId) return;
+    const edited = cs.files.map(f => f.path);
+    handleUndo();
+    for (const id of cs.annotationIds) {
+      const ann = getAnnotation(id);
+      if (!ann) continue;
+      const page = pagePath(ann.environment?.url);
+      // Agent-facing: what went wrong last time, so the same match isn't made twice
+      const hint = `Ilse: the last attempt edited ${edited.join(', ')} — none of it renders on this page — and was undone. Make the change on this page${page ? ` (${page})` : ''}, in the element and source given above.`;
+      const again = reopenAnnotation(id, `${ann.note}\n\n${hint}`);
+      if (again) scheduleBatch(again);
+    }
+  };
+
+  const handleUndo = (changeSetId?: string) => {
+    if (changeSetId && peekUndo()?.id !== changeSetId) return;
     const cs = popUndo();
     if (!cs) return;
     const { restored, conflicts } = discardChangeSet(cs, cwdRoot);
@@ -1129,6 +1164,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     if (cs) {
       cs.label = cs.annotationIds.map(id => getAnnotation(id)?.resolvedSummary).filter(Boolean).join(' · ').slice(0, 80) || 'MCP';
       recordUndo(cs, 'mcp');
+      warnIfOffPage(cs, cs.annotationIds.flatMap(id => getAnnotation(id) ?? []), currentBatchId?.startsWith('m') ? currentBatchId : undefined);
     }
   };
   const version = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
@@ -1181,6 +1217,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     onBatch: handleBatchInternal,
     onStop: handleStop,
     onUndo: handleUndo,
+    onRedoHere: handleRedoHere,
     onRedo: handleRedo,
     getLogs: () => ({ json: journal.toJSON(), markdown: journal.toMarkdown() }),
     // Pro's test findings, shown in the toolbar's page scan

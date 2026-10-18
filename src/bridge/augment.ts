@@ -200,6 +200,17 @@ function formatStyles(styles: Record<string, string>): string {
   return entries.map(([k, v]) => `${k}: ${v}`).join(', ');
 }
 
+/** The page's path and query, without the dev server's origin (it is the proxy's, not the app's) */
+export function pagePath(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    return `${u.pathname}${u.search}` || '/';
+  } catch {
+    return undefined;
+  }
+}
+
 export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   // Analyze: element context + static findings — for AI design review
   if (annotation.intent === 'analyze') {
@@ -254,6 +265,10 @@ export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   // Intent + severity first — agent should know these before reading details
   if (annotation.intent)   lines.push(`**Intent:** ${annotation.intent}`);
   if (annotation.severity) lines.push(`**Severity:** ${annotation.severity}`);
+  // Which screen of the app this is: without it, a request that names no element
+  // gets matched to whichever screen its words describe
+  const page = pagePath(annotation.environment?.url);
+  if (page) lines.push(`**Page:** \`${page}\` — the change belongs on this screen`);
 
   const sourceBlock = formatSource(annotation);
   if (sourceBlock) lines.push(sourceBlock);
@@ -303,7 +318,12 @@ export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   // Placement: show target coordinates and nearest container
   if (annotation.placementData) {
     const { x, y, scrollY, nearestSelector } = annotation.placementData;
-    lines.push(`**Create at:** x:${x} y:${y + scrollY} (page-absolute)${nearestSelector ? ` · nearest container: \`${nearestSelector}\`` : ''}`);
+    if (nearestSelector && nearestSelector === annotation.element) {
+      // A sketch over empty space, anchored on the element that holds it (see drawnContainer)
+      lines.push(`**Create inside:** \`${nearestSelector}\` — the element above${sourceBlock ? ', at the source shown' : ''}. The new UI goes in it, at x:${x} y:${y + scrollY} (page-absolute); leave the element itself as it is unless the note says otherwise.`);
+    } else {
+      lines.push(`**Create at:** x:${x} y:${y + scrollY} (page-absolute)${nearestSelector ? ` · nearest container: \`${nearestSelector}\`` : ''}`);
+    }
   }
 
   // Style edits: exact values the designer picked in the property panel.
