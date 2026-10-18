@@ -23,7 +23,15 @@ export interface ClaudeAccount {
   org?: string;
 }
 
-const PLAN: Record<string, string> = { pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise', free: 'Free' };
+// "Claude Pro", not "Pro": next to Ilse Pro, a bare "Pro" read as Ilse's own license
+const PLAN: Record<string, string> = { pro: 'Claude Pro', max: 'Claude Max', team: 'Claude Team', enterprise: 'Claude Enterprise', free: 'Claude Free' };
+
+/** "Claude Pro", "Claude Team (Acme)" — the plan the agent runs on */
+export function planLabel(a: ClaudeAccount): string | undefined {
+  const plan = a.plan ? PLAN[a.plan] ?? a.plan : undefined;
+  const org = a.org && a.email && !a.org.includes(a.email) ? a.org : undefined;
+  return plan && `${plan}${org ? ` (${org})` : ''}`;
+}
 
 export function describeAccount(a: ClaudeAccount): string {
   const plan = a.plan ? PLAN[a.plan] ?? a.plan : undefined;

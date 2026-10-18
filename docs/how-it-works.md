@@ -86,6 +86,13 @@ When the limit hits:
 
 To keep going before the reset: switch account (`--account`) or use the clipboard mode.
 
+## Project memory
+
+Settings → **Project memory** shows everything Ilse remembers of this project — nothing is kept out of sight:
+
+- **Design changes** (free): the changes Ilse made here and kept, newest first, with your note, the files and which ones aren't committed yet. When the agent works on one of those files, it gets the latest changes made there and why.
+- **Test mode** (Ilse Pro): how many tests ran, findings still there, fixed, and back after a fix (a click opens the page), what you asked to ignore — with **Warn me again** to take it back — and where the checks are right or noise, from your calls. **Forget test mode's memory** erases it after a confirmation (same as `ilse memory --forget`). Without Pro, the section says what it would hold.
+
 ## Commits know what Ilse changed
 
 Ilse's edits land through another process, so the session that later commits didn't make them. Ilse keeps a ledger in `.git/ilse/changes.jsonl` (per clone, never committed): for every batch, the designer's note, panel edits and files.

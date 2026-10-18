@@ -12,3 +12,6 @@ coverage/
 .npmrc
 .claude/agent-memory/
 .claude/agents/
+
+# Maintainer roadmap (private, not in the repo)
+CLAUDE.local.md

@@ -31,8 +31,29 @@ export interface ProContext {
   log: (line: string, tone?: 'dim' | 'warn') => void;
 }
 
+/** What test mode remembers of the project, for the toolbar's memory screen */
+export interface TestMemorySummary {
+  runs: number;
+  lastRunAt: string | null;
+  /** Findings seen and not fixed yet, fixed ones, and fixed ones that came back */
+  open: number;
+  fixed: number;
+  returned: { id: string; title: string; page: string }[];
+  approved: number;
+  /** What the dev asked to ignore: never shown again until they take it back */
+  ignored: { id: string; title: string; page?: string; at: string }[];
+  /** Per category: how often the dev agreed with the checks (category ids, the core names them) */
+  byCategory: { category: string; approved: number; discarded: number }[];
+}
+
 export interface ProServer {
   getFindings?: () => LiveFindings;
+  /** The memory screen. Optional: an older Pro just has no test section there */
+  getMemory?: () => TestMemorySummary;
+  /** "Voltar a avisar": forget the dev's call on one finding */
+  undoDecision?: (id: string) => boolean;
+  /** Forget everything test mode remembers of this project */
+  forgetMemory?: () => void;
   decideFinding?: (id: string, decision: Decision) => boolean;
   testControl?: (action: TestAction, origin: string) => void;
   /** After the agent worked on findings from a test: check them again */

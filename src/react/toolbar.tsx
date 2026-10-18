@@ -39,6 +39,7 @@ import { beginDrag, beginResize, settleElement, expireElement, formatReorder, fo
 import type { StyleChange, StyleData } from '../types.js';
 import { toggleFreeze, isFrozen } from './freeze.js';
 import { shieldPage } from './shield.js';
+import { MemoryPanel, type MemoryData } from './memory-panel.js';
 import { TooltipLayer } from './tooltip-layer.js';
 import { radius, color, shadow, ilse, font, modeAccent } from './tokens.js';
 import { t, detectLocale, setLocale, getLocale, type Locale } from '../i18n/index.js';
@@ -1244,6 +1245,8 @@ if (typeof navigator !== 'undefined') setLocale(detectLocale());
 
 /** A toast: what Ilse says, and what her mascot does while saying it (none when there's nothing to say) */
 const saying = (text: string | null, reaction?: MascotReaction) => (text ? { text, reaction } : null);
+type AgentInfo = { name?: string; email?: string; plan?: string; calls?: number; model?: string };
+
 export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; demoEndpoint?: string } = {}) {
   const [mounted, setMounted] = useState(false);
   const [langKey, setLangKey] = useState(0); // force re-render on locale change
@@ -1274,7 +1277,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [activeMarker, setActiveMarker] = useState<number | null>(null);
   const [markersVisible, setMarkersVisible] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  // Settings header: the agent that runs the changes, its plan, and this session's model runs
+  const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Project memory: asked from the CLI each time it opens, so it is never stale
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryData, setMemoryData] = useState<MemoryData | null>(null);
+  const openMemory = () => { setMemoryData(null); setMemoryOpen(true); send({ type: 'memory' }); };
   // Shortcut groups folded in the modal — the first one starts open
   const [shortcutGroupsOpen, setShortcutGroupsOpen] = useState<Set<string>>(() => new Set([SHORTCUT_GROUPS[0].title]));
   // "Conectar agente": MCP endpoint + token of the running ilse (like Hilo's connection settings)
@@ -1653,6 +1662,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         if (typeof msg.account === 'string') {
           setAgentAccount(msg.account);
         }
+        if (msg.agent && typeof msg.agent === 'object') setAgentInfo(msg.agent as AgentInfo);
         if (msg.undo && typeof (msg.undo as { count?: unknown }).count === 'number') {
           setUndo(msg.undo as { count: number; label?: string });
         }
@@ -1789,6 +1799,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           ? saying(t('undo.toastConflicts', { files: conflicts.map(f => f.split('/').pop()).join(', ') }), 'conflict')
           : saying(t('redo.toast')));
         setTimeout(() => setClipboardToast(null), 3000);
+      }
+      if (msg.type === 'agent-usage') {
+        setAgentInfo(prev => prev ? { ...prev, calls: typeof msg.calls === 'number' ? msg.calls : prev.calls, model: typeof msg.model === 'string' ? msg.model : prev.model } : prev);
+      }
+      if (msg.type === 'memory') {
+        setMemoryData({ design: msg.design as MemoryData['design'], pro: !!msg.pro, test: (msg.test ?? null) as MemoryData['test'] });
       }
       if (msg.type === 'check-failed' && typeof msg.changeSetId === 'string') {
         setCheckFailed({
@@ -2261,6 +2277,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   useEffect(() => { activeMarkerForEsc.current = activeMarker; }, [activeMarker]);
   useEffect(() => { showSettingsForEsc.current = showSettings; }, [showSettings]);
   useEffect(() => { shortcutsOpenForEsc.current = shortcutsOpen; }, [shortcutsOpen]);
+  const memoryOpenForEsc = useRef(false);
+  useEffect(() => { memoryOpenForEsc.current = memoryOpen; }, [memoryOpen]);
   useEffect(() => { chatOpenForEsc.current = chatOpen; }, [chatOpen]);
 
   useEffect(() => {
@@ -2287,6 +2305,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       }
       if (shortcutsOpenForEsc.current) {
         setShortcutsOpen(false);
+        return;
+      }
+      if (memoryOpenForEsc.current) {
+        setMemoryOpen(false);
         return;
       }
       if (showSettingsForEsc.current) {
@@ -4158,18 +4180,45 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 position: 'absolute', bottom: 'calc(100% + 8px)', ...(extendsRight ? { left: 0 } : { right: 0 }),
                 backgroundColor: color.popover, border: `1px solid ${color.border}`,
                 borderRadius: 10, padding: 12,
-                width: connectOpen ? 340 : 200, boxShadow: shadow.lg,
+                width: connectOpen ? 340 : 240, boxShadow: shadow.lg,
                 color: color.foreground, fontSize: 12, fontFamily: font.sans,
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: connected ? '#22c55e' : '#ef4444', display: 'inline-block' }} />
-                  <span style={{ color: color.mutedForeground, fontSize: 11 }}>{connected ? t('settings.wsConnected') : t('settings.offline')}</span>
-                  {connected && wsPort && (
-                    <span style={{ marginLeft: 'auto', color: '#a1a1a1', fontSize: 10, fontFamily: 'ui-monospace, monospace' }}>:{wsPort}</span>
-                  )}
+                {/* Ilse's plan, and the bridge: dot + port, the status in the tooltip */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>Ilse</span>
+                  <span
+                    title={proTest ? t('settings.planProHint') : t('settings.planFreeHint')}
+                    style={{
+                      fontSize: 10, fontWeight: 600, lineHeight: 1, padding: '3px 6px', borderRadius: radius.full,
+                      backgroundColor: proTest ? ilse.testPale : color.muted, color: proTest ? ilse.test : color.mutedForeground,
+                    }}
+                  >
+                    {proTest ? 'Pro' : 'Free'}
+                  </span>
+                  <span
+                    title={connected ? t('settings.wsConnectedHint', { port: String(wsPort ?? '') }) : t('settings.wsOfflineHint')}
+                    style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, cursor: 'default' }}
+                  >
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: connected ? '#22c55e' : '#ef4444', display: 'inline-block' }} />
+                    <span style={{ color: connected ? '#a1a1a1' : '#ef4444', fontSize: 10, fontFamily: font.mono }}>
+                      {connected && wsPort ? `:${wsPort}` : t('settings.offline')}
+                    </span>
+                  </span>
                 </div>
-                {agentAccount && (
-                  <div title={t('settings.accountHint')} style={{ fontSize: 11, color: color.mutedForeground, margin: '-2px 0 8px 13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {/* Who runs the changes: the agent, its plan, its account, this session's model runs */}
+                {agentInfo?.name && (
+                  <div title={t('settings.accountHint')} style={{ marginBottom: 10, fontSize: 11, lineHeight: 1.45, color: color.mutedForeground, minWidth: 0 }}>
+                    <div style={{ color: color.foreground, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {agentInfo.name}{agentInfo.plan ? <span style={{ color: color.mutedForeground, fontWeight: 400 }}> · {agentInfo.plan}</span> : null}
+                    </div>
+                    {agentInfo.email && <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agentInfo.email}</div>}
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {agentInfo.model ?? t('settings.defaultModel')} · {t('settings.modelCalls', { count: agentInfo.calls ?? 0 })}
+                    </div>
+                  </div>
+                )}
+                {!agentInfo?.name && agentAccount && (
+                  <div title={t('settings.accountHint')} style={{ fontSize: 11, color: color.mutedForeground, marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {agentAccount}
                   </div>
                 )}
@@ -4389,6 +4438,17 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   </div>
                 )}
 
+                {/* Project memory: what Ilse remembers here, and what the agent reads */}
+                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
+                  <button
+                    onClick={openMemory}
+                    style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0 }}
+                  >
+                    <span style={{ whiteSpace: 'nowrap' }}>{t('memory.open')}</span>
+                    <span aria-hidden>›</span>
+                  </button>
+                </div>
+
                 {/* Keyboard shortcuts */}
                 <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
                   <button
@@ -4561,6 +4621,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                       onClick={() => { setTestSteps([]); setTestRun({ phase: 'checking' }); testAction('run'); setScanOpen(false); }}
                     >
                       {testFindings.length === 0 ? t('toolbar.testRun') : t('toolbar.testRunAgain')}
+                    </button>
+                    <button
+                      onClick={() => { setScanOpen(false); openMemory(); }}
+                      style={{ marginTop: 8, width: '100%', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0, fontFamily: font.sans }}
+                    >
+                      {t('memory.open')} ›
                     </button>
                   </>
                 )}
@@ -4968,6 +5034,16 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         <TooltipLayer />
 
         {/* ── Toast — Sonner-like, in the toolbar's own look, just above the toolbar ── */}
+        {memoryOpen && (
+          <MemoryPanel
+            data={memoryData}
+            onClose={() => setMemoryOpen(false)}
+            onUndoDecision={(id) => send({ type: 'memory_undo_decision', id })}
+            onForgetTest={() => send({ type: 'memory_forget_test' })}
+            onOpenPage={(page) => { setMemoryOpen(false); if (page !== location.pathname) location.assign(page); }}
+          />
+        )}
+
         {shortcutsOpen && (
           <div
             data-ilse-toolbar

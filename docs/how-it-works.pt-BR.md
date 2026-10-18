@@ -86,6 +86,13 @@ Quando o limite chega:
 
 Para seguir antes da renovação: troque de conta (`--account`) ou use o modo área de transferência.
 
+## Memória do projeto
+
+Configurações → **Memória do projeto** mostra tudo o que a Ilse lembra deste projeto — nada fica guardado sem aparecer ali:
+
+- **Mudanças de design** (grátis): as mudanças que a Ilse fez aqui e ficaram, da mais nova para a mais antiga, com a sua nota, os arquivos e quais ainda estão sem commit. Quando o agente mexe num desses arquivos, ele recebe as últimas mudanças feitas ali e o motivo de cada uma.
+- **Modo teste** (Ilse Pro): quantos testes rodaram, os achados que ainda estão lá, os corrigidos e os que voltaram depois de corrigidos (um clique abre a página), o que você pediu para ignorar — com **Voltar a avisar** para desfazer — e onde as checagens acertam ou são ruído, pelas suas decisões. **Esquecer a memória do teste** apaga tudo depois de confirmar (o mesmo que `ilse memory --forget`). Sem o Pro, a seção diz o que ela guardaria.
+
 ## Os commits sabem o que a Ilse mudou
 
 As edições da Ilse chegam por outro processo, então a sessão que faz o commit depois não as fez. A Ilse mantém um registro em `.git/ilse/changes.jsonl` (por clone, nunca vai para o commit): para cada lote, a nota do designer, as edições do painel e os arquivos.

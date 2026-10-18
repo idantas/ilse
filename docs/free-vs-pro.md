@@ -10,7 +10,8 @@ Where each piece of Ilse lives, so nobody (human or agent) has to argue it again
 | MCP, proxy / same port, Vite plugin, extension, bookmarklet | `ilse test` and Pro's other commands |
 | The mascot, the Design / Test switch, test mode asleep without Pro | Project memory (approved / discarded, new / returned) |
 | Rendering findings in the toolbar (it shows what Pro sends) | Design system connected to code tokens and Figma |
-| The plugin seam: `src/pro/types.ts`, `src/pro/load.ts` | License check, activation, updates of Pro |
+| The memory screen and its design history (the ledger); its test part shows what Pro sends | License check, activation, updates of Pro |
+| The plugin seam: `src/pro/types.ts`, `src/pro/load.ts` | |
 
 ## How Pro plugs in
 

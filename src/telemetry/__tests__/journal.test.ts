@@ -97,3 +97,17 @@ describe('Journal — resumed sessions', () => {
     expect(j.toJSON().summary.tokens.costUsd).toBeCloseTo(0.88, 5);
   });
 });
+
+describe('modelUsage', () => {
+  it('counts agent and quick runs, not swaps or MCP, and keeps the last model', () => {
+    const j = new Journal({ ilseVersion: 't' }, { persist: false });
+    let told = 0;
+    j.onModelRun = () => { told++; };
+    j.batchStart('s1', [], 'swap');
+    j.batchStart('q1', [], 'quick', 'claude', false, { model: 'haiku' });
+    j.batchStart('b1', [], 'agent', 'claude', false, { model: 'sonnet' });
+    j.batchStart('m1', [], 'mcp', 'mcp');
+    expect(j.modelUsage()).toEqual({ calls: 2, model: 'sonnet' });
+    expect(told).toBe(2);
+  });
+});

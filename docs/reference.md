@@ -73,7 +73,7 @@ The first run asks how Ilse should hand annotations to your agent:
 - **Pause animations:** freeze tooltips, toasts and dropdowns to annotate them.
 - **Hide markers:** hide the annotation dots on the page.
 - **Clear annotations:** removes them all (click twice to confirm).
-- **Settings:** connection and annotation status, the Claude account in use, **Design System** (paste a W3C `tokens.json` when Ilse doesn't find your tokens), **Snap to grid**, **Connect agent** (MCP), **Logs**, **Keyboard shortcuts** and **Language** (English / Portuguese, detected automatically).
+- **Settings:** connection and annotation status, the Claude account in use, **Design System** (paste a W3C `tokens.json` when Ilse doesn't find your tokens), **Snap to grid**, **Connect agent** (MCP), **Logs**, **Project memory** ([what it shows](how-it-works.md#project-memory)), **Keyboard shortcuts** and **Language** (English / Portuguese, detected automatically).
 
 ### Keyboard shortcuts
 

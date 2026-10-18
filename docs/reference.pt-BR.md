@@ -73,7 +73,7 @@ Na primeira vez, a Ilse pergunta como entregar as anotações ao seu agente:
 - **Pausar animações:** congele tooltips, toasts e dropdowns para anotá-los.
 - **Ocultar marcadores:** esconde os pontos das anotações na página.
 - **Limpar anotações:** apaga todas (clique duas vezes para confirmar).
-- **Configurações:** estado da conexão e das anotações, a conta do Claude em uso, **Design System** (cole um `tokens.json` do W3C quando a Ilse não acha seus tokens), **Snap to grid**, **Conectar agente** (MCP), **Logs**, **Atalhos de teclado** e **Idioma** (inglês / português, detectado automaticamente).
+- **Configurações:** estado da conexão e das anotações, a conta do Claude em uso, **Design System** (cole um `tokens.json` do W3C quando a Ilse não acha seus tokens), **Snap to grid**, **Conectar agente** (MCP), **Logs**, **Memória do projeto** ([o que mostra](how-it-works.pt-BR.md#memória-do-projeto)), **Atalhos de teclado** e **Idioma** (inglês / português, detectado automaticamente).
 
 ### Atalhos de teclado
 

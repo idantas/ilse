@@ -52,6 +52,11 @@ export interface WsServerOptions {
   /** The latest `ilse test` run, minus what the dev already decided */
   getFindings?: () => LiveFindings;
   decideFinding?: (id: string, decision: Decision) => boolean;
+  /** The memory screen: the design history, and test mode's memory when Pro is there */
+  getMemory?: () => Record<string, unknown>;
+  /** "Voltar a avisar" on a finding the dev ignored */
+  undoDecision?: (id: string) => boolean;
+  forgetTestMemory?: () => void;
   /** Toolbar's test mode, on the app at this origin (the page's own, loopback only) */
   testControl?: (action: TestAction, origin: string) => void;
   /** Plain HTTP requests on the same port (the MCP endpoint). Return true when handled. */
@@ -368,6 +373,15 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
     case 'finding_decide': {
       const decision = msg.decision === 'approved' || msg.decision === 'discarded' ? msg.decision : null;
       if (typeof msg.id === 'string' && decision) options.decideFinding?.(msg.id, decision);
+      break;
+    }
+
+    case 'memory':
+    case 'memory_undo_decision':
+    case 'memory_forget_test': {
+      if (msg.type === 'memory_undo_decision' && typeof msg.id === 'string') options.undoDecision?.(msg.id);
+      if (msg.type === 'memory_forget_test') options.forgetTestMemory?.();
+      ws.send(JSON.stringify({ type: 'memory', ...(options.getMemory?.() ?? {}) }));
       break;
     }
 

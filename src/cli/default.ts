@@ -31,13 +31,15 @@ import {
   takeSnapshot, diffSnapshot, discardChangeSet, reapplyChangeSet, pushUndo, popUndo, peekUndo, pushRedo, popRedo, undoState, summarizeChangeSet, type ChangeSet,
 } from '../agent/changeset.js';
 import { isLimitError, limitResetsAt } from '../agent/executor.js';
-import { listClaudeAccounts, describeAccount, savedAccount, type ClaudeAccount } from '../agent/claude-accounts.js';
+import { listClaudeAccounts, describeAccount, planLabel, savedAccount, type ClaudeAccount } from '../agent/claude-accounts.js';
+
+const AGENT_NAMES: Record<string, string | undefined> = { claude: 'Claude Code', codex: 'Codex', 'cursor-agent': 'Cursor', gemini: 'Gemini CLI', none: undefined };
 import { setClaudeConfigDir } from '../agent/agent-profile.js';
 import { pickTier, escalateTier, resolveModel, modelTiers, expectsEdit, type Tier } from '../agent/agent-profile.js';
 import { historyCount, swapMatchesScope, pagePath } from '../bridge/augment.js';
 import { offPageEdits, routesImporting } from '../agent/page-check.js';
 import { quickBlocker, buildQuickPrompt, runQuick } from '../agent/quick-edit.js';
-import { recordChange, recordUndone, describeAnnotation, ledgerFile, type LedgerPath } from '../git/ledger.js';
+import { recordChange, recordUndone, describeAnnotation, ledgerFile, ledgerSummary, type LedgerPath } from '../git/ledger.js';
 import { syntaxBreaks, describeBreaks, repairPrompt, type SyntaxBreak } from '../agent/verify.js';
 import { checkSetup, checkChange } from '../agent/check-run.js';
 import { hasProblems, checkRepairPrompt, describeReport, type CheckReport } from '../agent/project-check.js';
@@ -666,6 +668,8 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     agent: agent.kind,
     toolbar: useProxy ? 'proxy' : 'component',
   });
+  // The settings header counts this session's model runs; keep it current
+  journal.onModelRun = () => setImmediate(() => broadcast({ type: 'agent-usage', ...journal.modelUsage() }));
   const resolveAndLog = (id: string, summary: string) => {
     const resolved = resolveAnnotation(id, summary);
     if (resolved) journal.resolved(id);
@@ -1358,12 +1362,27 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     getFindings: proServer?.getFindings,
     decideFinding: proServer?.decideFinding,
     testControl: proServer?.testControl,
+    getMemory: () => ({
+      design: ledgerSummary(cwdRoot),
+      // null: Pro is there but older than the memory screen; absent pro: test mode asleep
+      pro: !!proServer?.testControl,
+      test: proServer?.getMemory?.() ?? null,
+    }),
+    undoDecision: proServer?.undoDecision,
+    forgetTestMemory: proServer?.forgetMemory,
     connectExtras: () => ({
       // The toolbar shows test mode awake only when Pro can run it
       pro: { test: !!proServer?.testControl },
       undo: undoState(),
       mcp: { url: `http://localhost:${getPort()}${MCP_PATH}`, token: localToken },
       ...(agentAccount ? { account: describeAccount(agentAccount) } : {}),
+      // Settings header: who runs the changes, on which plan, and how much this session
+      agent: {
+        name: AGENT_NAMES[agent.kind] ?? agent.kind,
+        email: agentAccount?.email,
+        plan: agentAccount ? planLabel(agentAccount) : undefined,
+        ...journal.modelUsage(),
+      },
     }),
     tokens: detectedTokens,
     libraries: tokenResult.libraries,

@@ -80,3 +80,23 @@ describe('history for the next edit', () => {
     expect(formatHistory('Card.tsx', [])).toBeUndefined();
   });
 });
+
+import { ledgerSummary } from '../ledger.js';
+
+describe('ledgerSummary', () => {
+  it('newest first, with the designer\'s note and what is still uncommitted', () => {
+    const dir = repo();
+    recordChange(dir, cs('c1'), { path: 'swap', annotations: [{ id: 'a1', summary: 'gap-3 → gap-4' }] });
+    execFileSync('git', ['commit', '-qam', 'ship', '--allow-empty'], { cwd: dir });
+    writeFileSync(join(dir, 'Card.tsx'), 'b\n');
+    recordChange(dir, cs('c2'), { path: 'agent', annotations: [{ id: 'a2', note: 'título maior' }] });
+    const s = ledgerSummary(dir);
+    expect(s.total).toBe(2);
+    expect(s.pending).toBe(2);
+    expect(s.recent.map(r => [r.id, r.text, r.path])).toEqual([['c2', 'título maior', 'agent'], ['c1', 'gap-3 → gap-4', 'swap']]);
+    expect(s.recent[0].files).toEqual(['Card.tsx']);
+  });
+  it('is empty outside git', () => {
+    expect(ledgerSummary(mkdtempSync(join(tmpdir(), 'ilse-nogit-')))).toEqual({ total: 0, pending: 0, recent: [] });
+  });
+});
