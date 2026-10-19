@@ -75,7 +75,7 @@ const STYLE_KEYS = [
   'width', 'height', 'maxWidth', 'minWidth',
   'color', 'backgroundColor', 'borderColor', 'borderRadius',
   'borderWidth', 'borderStyle', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-  'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing',
+  'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'textAlign',
   'position', 'top', 'right', 'bottom', 'left',
   'opacity', 'overflow', 'zIndex',
 ] as const;

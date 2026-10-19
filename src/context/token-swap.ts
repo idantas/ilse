@@ -146,6 +146,11 @@ const FAMILIES: Record<string, Family> = {
     matches: c => SIZE_NAMES.some(s => c === `text-${s}`) || /^text-\[\d.*(px|rem)\]$/.test(c),
     fromValue: v => { const n = px(v); return n !== null && FONT_SIZES_PX[n] ? `text-${FONT_SIZES_PX[n]}` : null; },
   },
+  textAlign: {
+    prefix: 'text',
+    matches: c => /^text-(left|center|right|justify|start|end)$/.test(c),
+    fromValue: v => /^(left|center|right|justify|start|end)$/.test(v.trim()) ? `text-${v.trim()}` : null,
+  },
   fontWeight: {
     prefix: 'font',
     matches: c => Object.values(FONT_WEIGHTS).some(w => c === `font-${w}`) || /^font-\[\d+\]$/.test(c),

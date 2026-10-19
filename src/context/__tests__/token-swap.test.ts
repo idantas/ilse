@@ -41,6 +41,7 @@ describe('classFor', () => {
     expect(classFor({ property: 'fontWeight', from: '500', to: '600' })).toBe('font-semibold');
     expect(classFor({ property: 'fontSize', from: '16px', to: '18px' })).toBe('text-lg');
     expect(classFor({ property: 'borderRadius', from: '8px', to: '12px' })).toBe('rounded-xl');
+    expect(classFor({ property: 'textAlign', from: 'start', to: 'right' })).toBe('text-right');
   });
 
   it('maps named tokens and refuses raw colours', () => {
@@ -68,6 +69,18 @@ describe('planTokenSwap', () => {
     if (!res.ok) return;
     expect(res.plan.after).toContain('className="flex flex-col p-4 rounded-lg bg-white gap-4"');
     expect(res.plan.edits[0]).toEqual({ property: 'gap', removed: ['gap-3'], added: 'gap-4' });
+  });
+
+  it('swaps text alignment without touching the text colour or size', () => {
+    const cwd = project({ 'src/Quote.tsx': `export function Quote() {
+  return <p className="text-left text-lg text-muted">Ilse</p>;
+}
+` });
+    const res = planTokenSwap(annotation(cwd, 'p.text-left.text-lg', [{ property: 'textAlign', from: 'left', to: 'center' }], 'Ilse'), cwd);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.plan.after).toContain('className="text-lg text-muted text-center"');
+    expect(res.plan.edits[0]).toEqual({ property: 'textAlign', removed: ['text-left'], added: 'text-center' });
   });
 
   it('replaces px/py together when padding is set as one value', () => {

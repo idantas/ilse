@@ -51,7 +51,7 @@ Na primeira vez, a Ilse pergunta como entregar as anotações ao seu agente:
 
 - **3 jeitos de apontar:** clicar num elemento, selecionar texto ou desenhar uma área.
 - **Selecionar o pai:** o botão ↰ no card da nota sobe a seleção para o elemento que contém o atual (wrappers de biblioteca do mesmo tamanho são pulados). O nome do elemento no topo do card abre o lugar dele na página: alguns elementos acima, os que estão ao lado e os que estão dentro, com o nome do componente que os renderiza. Passe o mouse numa linha para vê-la na página; clique para selecioná-la. Um clique dentro de um SVG seleciona o `<svg>` inteiro; ⌘-clique (Ctrl-clique) seleciona o elemento exato, como um path de um ícone.
-- **Painel de propriedades:** texto, layout (largura/altura como Fixed · Hug · Fill, fluxo, alinhamento, gap, padding e margin por lado), tipografia, cores, borda, arredondamento e opacidade — com a escala e os tokens do seu projeto.
+- **Painel de propriedades:** texto, layout (largura/altura como Fixed · Hug · Fill, fluxo, alinhamento, gap, padding e margin por lado), tipografia (tamanho, peso, altura da linha, alinhamento à esquerda · centro · direita), cores, borda, arredondamento e opacidade — com a escala e os tokens do seu projeto.
 - **None:** as listas de espaçamento, arredondamento e espessura da borda começam com *None* (zero) — sem padding, cantos retos, sem borda.
 - **Borda:** o *+* adiciona e já mostra cor, espessura, estilo e lados; o *−* tira.
 - **Aplicar em — só neste ou todos:** quando o elemento faz parte de um componente repetido na página. Com *Todos · N*, os ajustes do painel aparecem em todas as instâncias de uma vez.

@@ -72,6 +72,8 @@ const PROPS: PropSpec[] = [
   { key: 'fontWeight',    label: 'Weight',      group: 'typography', options: ['100', '200', '300', '400', '500', '600', '700', '800', '900'] },
   { key: 'lineHeight',    label: 'Line height', group: 'typography', tokenType: 'typography' },
   { key: 'letterSpacing', label: 'Letter',      group: 'typography' },
+  // Left / center / right: a segmented row under Typography
+  { key: 'textAlign',     label: 'Align',       group: 'typography', control: true },
 
   { key: 'color',           label: 'Text',   group: 'color', tokenType: 'color' },
   { key: 'backgroundColor', label: 'Fill',   group: 'color', tokenType: 'color' },
@@ -681,6 +683,13 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                 onApply={(v) => { record(spec.label); apply(spec, v); }}
               />
             ))}
+            {group === 'typography' && styles.textAlign && (
+              <TextAlignRow
+                value={effective.textAlign ?? ''}
+                edited={'textAlign' in edits}
+                onPick={(v) => { record('Align'); apply(PROPS.find(p => p.key === 'textAlign')!, v); }}
+              />
+            )}
             {group === 'stroke' && stroke.has && (
               <StrokeControls
                 stroke={stroke}
@@ -927,6 +936,54 @@ function LayoutControls({ layout, edited, onFlow, onAlign, onBetween, onWrap, si
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const TEXT_ALIGNS = [
+  { value: 'left', title: () => t('panel.align.left'), lines: [[2, 14], [2, 10], [2, 12]] },
+  { value: 'center', title: () => t('panel.align.center'), lines: [[2, 14], [4, 12], [3, 13]] },
+  { value: 'right', title: () => t('panel.align.right'), lines: [[2, 14], [6, 14], [4, 14]] },
+] as const;
+
+/** Text alignment as the page reads it: `start`/`end` are left/right in a left-to-right page */
+export function textAlignOf(value: string, rtl = false): string {
+  const v = value.trim();
+  if (v === 'start' || v === '') return rtl ? 'right' : 'left';
+  if (v === 'end') return rtl ? 'left' : 'right';
+  return v;
+}
+
+function TextAlignRow({ value, edited, onPick }: { value: string; edited: boolean; onPick: (v: string) => void }) {
+  const current = textAlignOf(value);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+      <span style={{ width: 60, flexShrink: 0, color: color.mutedForeground }}>Align</span>
+      <div style={{ flex: 1, display: 'flex', padding: 2, gap: 2, borderRadius: radius.sm, backgroundColor: color.muted }}>
+        {TEXT_ALIGNS.map(a => {
+          const on = current === a.value;
+          return (
+            <button
+              key={a.value}
+              title={`${a.title().charAt(0).toUpperCase()}${a.title().slice(1)} · text-${a.value}`}
+              aria-pressed={on}
+              onClick={() => { if (!on) onPick(a.value); }}
+              style={{
+                flex: 1, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: 'none', borderRadius: radius.sm - 2, cursor: on ? 'default' : 'pointer',
+                backgroundColor: on ? color.background : 'transparent',
+                boxShadow: on ? shadow.xs : 'none',
+                color: on ? color.foreground : color.mutedForeground,
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                {a.lines.map(([x1, x2], i) => <line key={i} x1={x1} y1={4 + i * 4} x2={x2} y2={4 + i * 4} />)}
+              </svg>
+            </button>
+          );
+        })}
+      </div>
+      {edited && <span title={t('panel.edited')} style={{ width: 5, height: 5, flexShrink: 0, borderRadius: '50%', backgroundColor: '#E8A33D' }} />}
     </div>
   );
 }
