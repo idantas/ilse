@@ -2099,8 +2099,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (selected) settleElement(selected);
       selectElement(target, e.metaKey || e.ctrlKey);
     };
-    document.addEventListener('mousedown', onDown, true);
-    return () => document.removeEventListener('mousedown', onDown, true);
+    // pointerdown so a disabled control, which gets no mousedown, can be picked too
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
   }, [pendingCapture, annotating, selectElement]);
 
 
@@ -2235,10 +2236,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   useEffect(() => {
     if (annotating) {
-      // Annotation capture handlers (run first in capture phase)
-      document.addEventListener('mousedown', handleMouseDown, true);
+      // Annotation capture handlers (run first in capture phase). Pointer, not
+      // mouse, down/up: browsers never send mousedown/mouseup/click to a disabled
+      // button or input, but they do send pointer events, so it can be selected.
+      document.addEventListener('pointerdown', handleMouseDown, true);
       document.addEventListener('mousemove', handleMouseMove, true);
-      document.addEventListener('mouseup', handleMouseUp, true);
+      document.addEventListener('pointerup', handleMouseUp, true);
 
       // Block click-based page interactions — links, buttons, context menus
       const blocked = ['click', 'auxclick', 'dblclick', 'contextmenu'] as const;
@@ -2248,9 +2251,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
       document.body.style.cursor = 'crosshair';
       return () => {
-        document.removeEventListener('mousedown', handleMouseDown, true);
+        document.removeEventListener('pointerdown', handleMouseDown, true);
         document.removeEventListener('mousemove', handleMouseMove, true);
-        document.removeEventListener('mouseup', handleMouseUp, true);
+        document.removeEventListener('pointerup', handleMouseUp, true);
         for (const type of blocked) {
           document.removeEventListener(type, blockInteraction, { capture: true });
         }
