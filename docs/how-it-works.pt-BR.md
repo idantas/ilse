@@ -86,6 +86,10 @@ Quando o limite chega:
 
 Para seguir antes da renovação: troque de conta (`--account`) ou use o modo área de transferência.
 
+## Modo teste na barra
+
+Com o Ilse Pro, a chave Design / Teste transforma a barra no testador. **Testar de novo** (↻) faz um agente percorrer o app num navegador à parte. O que ele acha na página aberta vira marcadores azuis nos elementos, cada um com a nota já escrita. Clique num marcador para mudar a nota, enviar ou **Ignorar teste** (a Ilse não avisa mais). Passe o mouse em **Executar correções** (⚡) para ver a lista dos achados e quantos estão em outras páginas. Executar manda os achados para o seu agente, e a Ilse testa essas páginas de novo depois da correção. Achados sem elemento para apontar, como um erro no console, ficam nessa lista, mas sem marcador. O olho esconde os marcadores. Notas de design e marcadores de teste ficam separados: cada modo mostra e executa os seus.
+
 ## Memória do projeto
 
 Configurações → **Memória do projeto** mostra tudo o que a Ilse lembra deste projeto — nada fica guardado sem aparecer ali:
