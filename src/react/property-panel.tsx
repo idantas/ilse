@@ -265,15 +265,16 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   function previewText(value: string) {
     const e = getElement();
     if (!e) return;
-    textNodes.current ??= Array.from(e.childNodes).filter((n): n is Text => n.nodeType === Node.TEXT_NODE).map(node => ({ node, data: node.data }));
-    // Lines between <br>s: one per line when the count matches, else all on the first
+    const all = lineRuns(e);
+    textNodes.current ??= all.flat().map(node => ({ node, data: node.data }));
+    const original = new Map(textNodes.current.map(n => [n.node, n.data]));
+    // Lines between <br>s: one per line when the count matches, else all as one
     const lines = value.split('\n');
-    const runs = lineRuns(e);
-    const firsts = new Set(runs.map(r => r[0]).filter(Boolean));
-    const fits = lines.length === runs.length;
-    textNodes.current.forEach((n, i) => {
-      if (fits) n.node.data = firsts.has(n.node) ? lines[runs.findIndex(r => r[0] === n.node)] : '';
-      else n.node.data = i === 0 ? lines.join(' ') : '';
+    const fits = lines.length === all.length;
+    const runs = fits ? all : [all.flat()];
+    runs.forEach((run, i) => {
+      const spread = spreadText(run.map(n => original.get(n) ?? n.data), fits ? lines[i] : lines.join(' '));
+      run.forEach((n, j) => { n.data = spread[j]; });
     });
   }
   function revertText() { textNodes.current?.forEach(n => { n.node.data = n.data; }); }
@@ -1050,19 +1051,61 @@ function Toggle({ on, onClick, label, hint }: { on: boolean; onClick: () => void
  * a <b> or a <span> inside is structure the textarea can't keep.
  */
 export function editableText(el: Element | null): string | null {
-  if (!el || Array.from(el.children).some(c => c.tagName !== 'BR')) return null;
+  if (!el || !inlineOnly(el)) return null;
   const lines = lineRuns(el).map(run => run.map(n => n.data).join('').replace(/\s+/g, ' ').trim());
   return lines.join('').trim() ? lines.join('\n') : null;
 }
 
-/** The text nodes of each line, split at <br> */
+/** Formatting inside a line of text (`O que estamos <em>construindo</em>`): still one text to retype */
+const INLINE_TAGS = new Set(['BR', 'EM', 'STRONG', 'B', 'I', 'U', 'S', 'SPAN', 'A', 'CODE', 'SMALL', 'MARK', 'SUB', 'SUP', 'ABBR', 'Q', 'DEL', 'INS', 'KBD', 'TIME']);
+function inlineOnly(el: Element): boolean {
+  return Array.from(el.children).every(c => INLINE_TAGS.has(c.tagName) && inlineOnly(c));
+}
+
+/** The text nodes of each line, in reading order, split at <br> (also inside <em>, <span>…) */
 function lineRuns(el: Element): Text[][] {
   const runs: Text[][] = [[]];
-  for (const n of Array.from(el.childNodes)) {
-    if (n.nodeType === Node.TEXT_NODE) runs[runs.length - 1].push(n as Text);
-    else if ((n as Element).tagName === 'BR') runs.push([]);
-  }
+  const walk = (node: Node) => {
+    for (const n of Array.from(node.childNodes)) {
+      if (n.nodeType === Node.TEXT_NODE) runs[runs.length - 1].push(n as Text);
+      else if ((n as Element).tagName === 'BR') runs.push([]);
+      else if (n.nodeType === Node.ELEMENT_NODE) walk(n);
+    }
+  };
+  walk(el);
   return runs;
+}
+
+/**
+ * Retyped text spread back over the pieces it was made of, so `<em>` stays on
+ * the words it was on: only the stretch that changed is rewritten, inside the
+ * piece where it starts. Pieces are compared with their whitespace collapsed,
+ * as the text field shows them.
+ */
+export function spreadText(pieces: string[], next: string): string[] {
+  const segs = pieces.map(p => p.replace(/\s+/g, ' '));
+  const joined = segs.join('');
+  const lead = joined.length - joined.trimStart().length;
+  const core = joined.trim();
+  let pre = 0;
+  while (pre < core.length && pre < next.length && core[pre] === next[pre]) pre++;
+  let suf = 0;
+  while (suf < core.length - pre && suf < next.length - pre && core[core.length - 1 - suf] === next[next.length - 1 - suf]) suf++;
+  const start = lead + pre, end = lead + core.length - suf;
+  const insert = next.slice(pre, next.length - suf);
+  let at = 0, placed = false;
+  return segs.map(seg => {
+    const from = at, to = at + seg.length;
+    at = to;
+    // The piece where the change starts takes the new text (a pure insertion
+    // at a seam goes to the piece before it); later pieces only lose their part
+    if (!placed && (start < to || (start === to && end === start))) {
+      placed = true;
+      return seg.slice(0, start - from) + insert + seg.slice(Math.min(seg.length, end - from));
+    }
+    if (!placed || from >= end) return seg;
+    return seg.slice(Math.min(seg.length, end - from));
+  });
 }
 
 // ── One property row ───────────────────────────────────────────────────────
