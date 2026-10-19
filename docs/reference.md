@@ -51,7 +51,7 @@ The first run asks how Ilse should hand annotations to your agent:
 
 - **3 ways to point:** click an element, select text, or draw an area.
 - **Select the parent:** the ↰ button on the note card moves the selection up to the containing element (library wrappers of the same size are skipped). The element's label at the top of the card opens its place in the page: a couple of elements above, the ones beside it and the ones inside, named by the component that renders them. Hover a row to see it on the page; click to select it. A click inside an SVG selects the whole `<svg>`; ⌘-click (Ctrl-click) selects the exact element, such as one path of an icon.
-- **Property panel:** text, layout (width/height as Fixed · Hug · Fill, flow, alignment, gap, padding and margin per side), typography (size, weight, line height, left · center · right alignment), colors, stroke, radius and opacity — with your project's scale and tokens.
+- **Property panel:** text, layout (width/height as Fixed · Hug · Fill, flow, alignment, gap, padding and margin per side), typography (size, weight, line height, left · center · right alignment), colors, stroke, radius, opacity and effects (shadow, blur, backdrop blur — shown when the element has them, "+" adds a shadow) — with your project's scale and tokens.
 - **None:** spacing, radius and stroke-weight lists start with *None* (zero) — no padding, square corners, no stroke.
 - **Stroke:** *+* adds one and shows its color, weight, style and sides; *−* takes it away.
 - **Apply to — only this one or all:** when the element belongs to a component repeated on the page. With *All · N*, panel edits preview on every instance at once.

@@ -1,4 +1,5 @@
 import { recordScrollers, type ScrollerMark } from './scroll-anchor.js';
+import { cleanShadow } from './effects.js';
 
 export interface ElementCapture {
   element: string;      // CSS selector
@@ -78,6 +79,7 @@ const STYLE_KEYS = [
   'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'textAlign',
   'position', 'top', 'right', 'bottom', 'left',
   'opacity', 'overflow', 'zIndex',
+  'boxShadow', 'filter', 'backdropFilter',
 ] as const;
 
 /**
@@ -134,8 +136,10 @@ function getRelevantStyles(el: Element): Record<string, string> {
     const value = computed.getPropertyValue(
       key.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`)
     );
-    if (value && value !== 'none' && value !== 'normal' && value !== 'auto' && value !== '0px') {
-      styles[key] = value;
+    // Tailwind v4 fills box-shadow with empty layers (ring, inset): those aren't a shadow
+    const v = key === 'boxShadow' ? cleanShadow(value) : value;
+    if (v && v !== 'none' && v !== 'normal' && v !== 'auto' && v !== '0px') {
+      styles[key] = v;
     }
   }
 

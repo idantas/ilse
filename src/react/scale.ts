@@ -71,6 +71,9 @@ function probePx(expr: string): number | null {
 
 export interface PageScales { spacing: DSToken[]; radius: DSToken[] }
 
+/** Tailwind v4 declares one spacing base; v3 doesn't */
+export const isTailwindV4 = (): boolean => probePx('var(--spacing)') !== null;
+
 export function readPageScales(project: DSToken[]): PageScales {
   const base = probePx('var(--spacing)');
   const resolved: Partial<Record<string, number>> = {};

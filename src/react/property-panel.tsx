@@ -26,7 +26,8 @@ import { getDSTokens, type DSToken } from './analyze.js';
 import { readColor, canonicalColor, toHex, isTransparent } from './color.js';
 import { collectColorTokens, collectGradientTokens, gradientIn, withStaticTokens, byBaseness, type ColorToken, type GradientToken } from './color-tokens.js';
 import { ColorPicker } from './color-picker.js';
-import { readPageScales, onScale, type PageScales } from './scale.js';
+import { readPageScales, onScale, isTailwindV4, type PageScales } from './scale.js';
+import { readEffectScales, blurOf, withBlur, type EffectScales } from './effects.js';
 import {
   readLayout, flowStyles, alignStyles, readSize, sizeStyles, readStroke, strokeWidths, type SidesOn,
   effectiveSides, boxMode, boxStyles, withBoxLonghands,
@@ -37,7 +38,8 @@ import type { StyleChange } from '../types.js';
 
 // ── Which properties the panel exposes, and how ────────────────────────────
 
-type Group = 'layout' | 'typography' | 'color' | 'stroke' | 'appearance';
+type Group = 'layout' | 'typography' | 'color' | 'stroke' | 'appearance' | 'effects';
+type Scales = PageScales & EffectScales;
 
 interface PropSpec {
   key: string;              // camelCase CSS property
@@ -45,7 +47,7 @@ interface PropSpec {
   group: Group;
   tokenType?: DSToken['type'];  // which token family feeds the options
   options?: string[];       // fallback scale when no token family applies
-  scale?: keyof PageScales; // spacing/radius: the page's own scale feeds the options
+  scale?: keyof Scales;     // spacing/radius/effects: the page's own scale feeds the options
   /** Edited through the Layout controls, not a row of its own */
   control?: boolean;
 }
@@ -86,7 +88,18 @@ const PROPS: PropSpec[] = [
 
   { key: 'borderRadius', label: 'Radius',  group: 'appearance', scale: 'radius' },
   { key: 'opacity',      label: 'Opacity', group: 'appearance', options: ['0.25', '0.5', '0.75', '0.9', '1'] },
+
+  // Shown only when the element has them; "+" adds a shadow
+  { key: 'boxShadow',      label: 'Shadow',   group: 'effects', scale: 'shadow' },
+  { key: 'filter',         label: 'Blur',     group: 'effects', scale: 'blur' },
+  { key: 'backdropFilter', label: 'Backdrop', group: 'effects', scale: 'backdrop' },
 ];
+
+const EFFECT_KEYS = new Set(['boxShadow', 'filter', 'backdropFilter']);
+/** A blur lives inside a filter list: the row shows and edits only its blur(…) */
+const BLUR_KEYS = new Set(['filter', 'backdropFilter']);
+/** What an effect property is when the element has none */
+const restingValue = (key: string) => EFFECT_KEYS.has(key) ? 'none' : '';
 
 const GROUP_LABELS: Record<Group, string> = {
   layout: 'Layout',
@@ -94,6 +107,7 @@ const GROUP_LABELS: Record<Group, string> = {
   color: 'Colors',
   stroke: 'Stroke',
   appearance: 'Appearance',
+  effects: 'Effects',
 };
 
 /** Space between the panel's sections (Layout, Typography…) */
@@ -120,7 +134,7 @@ function sameValue(a: string, b: string, isColor: boolean): boolean {
   return isColor ? canonicalColor(a) === canonicalColor(b) : norm(a) === norm(b);
 }
 
-function tokensFor(spec: PropSpec, all: DSToken[], colors: ColorToken[], scales: PageScales): DSToken[] {
+function tokensFor(spec: PropSpec, all: DSToken[], colors: ColorToken[], scales: Scales): DSToken[] {
   if (spec.scale) return scales[spec.scale];
   if (!spec.tokenType) return [];
   if (spec.tokenType === 'color') return colors;
@@ -287,7 +301,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [colorEpoch, targetId],
   );
-  const scales = useMemo(() => readPageScales(dsTokens), [dsTokens]);
+  const scales = useMemo<Scales>(() => ({ ...readPageScales(dsTokens), ...readEffectScales(isTailwindV4()) }), [dsTokens]);
   // Computed styles + the padding/margin longhands they imply — what "no change" is compared against
   const base = useMemo(() => withBoxLonghands(styles), [styles]);
   const [picker, setPicker] = useState<{ key: string; anchor: DOMRect; anchorEl: Element } | null>(null);
@@ -396,7 +410,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     }
 
     const next = { ...editsRef.current };
-    if (!value || sameValue(value, base[spec.key] ?? '', isColor)) delete next[spec.key];
+    if (!value || sameValue(value, base[spec.key] ?? restingValue(spec.key), isColor)) delete next[spec.key];
     else next[spec.key] = value;
     editsRef.current = next;
     setEdits(next);
@@ -440,7 +454,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
       const gradient = key === 'backgroundImage';
       return {
         property: key,
-        from: gradient ? currentImage() : base[key] ?? '',
+        from: gradient ? currentImage() : base[key] ?? restingValue(key),
         to,
         token: gradient ? editTokens.current[key] : token?.name,
         offToken: family.length > 0 && !token && !onScale(to, family) && !(COLOR_PROPS.has(key) && isTransparent(to))
@@ -478,15 +492,18 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     if (textFill && p.key === 'backgroundColor') return false;
     if (p.key === 'borderColor') return stroke.has;
     if (p.key === 'gap') return layout.flow !== 'block';
+    if (BLUR_KEYS.has(p.key)) return blurOf(styles[p.key]) !== 'none' || p.key in edits;
+    if (EFFECT_KEYS.has(p.key)) return !!styles[p.key] || p.key in edits;
     return !!styles[p.key];
   };
   // The gradient token Fill shows: the one just picked, or the one the element already has
   const fillGradient = edits.backgroundImage
     ? gradientTokens.find(g => g.name === editTokens.current.backgroundImage)
     : el ? gradientIn(getComputedStyle(el).backgroundImage, gradientTokens) : undefined;
-  const groups = (['layout', 'typography', 'color', 'stroke', 'appearance'] as Group[])
+  const hasShadow = (edits.boxShadow ?? styles.boxShadow ?? 'none') !== 'none';
+  const groups = (['layout', 'typography', 'color', 'stroke', 'appearance', 'effects'] as Group[])
     .map(g => ({ group: g, specs: PROPS.filter(p => p.group === g && shown(p)) }))
-    .filter(g => g.specs.length > 0 || ((g.group === 'layout' || g.group === 'stroke') && !!styles.display));
+    .filter(g => g.specs.length > 0 || ((g.group === 'layout' || g.group === 'stroke' || g.group === 'effects') && !!styles.display));
 
   // ── History: one step per decision, so ⌘Z walks the draft back ──
   // A colour drag or a stream of the same control within half a second is one step.
@@ -640,6 +657,20 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                   {stroke.has ? '−' : '+'}
                 </IconButton>
               )}
+              {group === 'effects' && (
+                <IconButton
+                  title={hasShadow ? t('panel.shadow.remove') : t('panel.shadow.add')}
+                  onClick={() => {
+                    const spec = PROPS.find(p => p.key === 'boxShadow')!;
+                    record(spec.label);
+                    // The step a card usually gets: md (sm on v3, where md is already heavy)
+                    const add = scales.shadow.find(tk => /shadow-md$/.test(tk.name)) ?? scales.shadow[1];
+                    apply(spec, hasShadow ? 'none' : add?.value ?? 'none');
+                  }}
+                >
+                  {hasShadow ? '−' : '+'}
+                </IconButton>
+              )}
             </div>
             {group === 'layout' && (
               <LayoutControls
@@ -669,8 +700,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
               <PropertyRow
                 key={spec.key}
                 spec={textFill && spec.key === 'color' ? { ...spec, label: 'Fill' } : spec}
-                current={styles[spec.key] ?? '0px'}
-                edited={edits[spec.key] ?? (spec.key === 'backgroundColor' ? edits.backgroundImage : undefined)}
+                current={BLUR_KEYS.has(spec.key) ? blurOf(styles[spec.key]) : styles[spec.key] ?? (EFFECT_KEYS.has(spec.key) ? 'none' : '0px')}
+                edited={BLUR_KEYS.has(spec.key)
+                  ? (spec.key in edits ? blurOf(edits[spec.key]) : undefined)
+                  : edits[spec.key] ?? (spec.key === 'backgroundColor' ? edits.backgroundImage : undefined)}
                 tokens={tokensFor(spec, dsTokens, colorTokens, scales)}
                 preferredToken={editTokens.current[spec.key] ?? tokenFromClasses(getElement(), spec.key, colorTokens)}
                 gradient={spec.key === 'backgroundColor' ? fillGradient : undefined}
@@ -680,7 +713,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                   setColorEpoch(n => n + 1);
                   setPicker({ key: spec.key, anchor: (panelRef.current ?? el).getBoundingClientRect(), anchorEl: el });
                 }}
-                onApply={(v) => { record(spec.label); apply(spec, v); }}
+                onApply={(v) => { record(spec.label); apply(spec, BLUR_KEYS.has(spec.key) ? withBlur(styles[spec.key], v) : v); }}
               />
             ))}
             {group === 'typography' && styles.textAlign && (
@@ -1128,7 +1161,7 @@ function ScaleControl({ spec, value, tokens, preferredToken, onApply, prefix, co
   const isOffToken = tokens.length > 0 && !matched && !isNone && !onScale(value, tokens);
   const [custom, setCustom] = useState(false);
   const listed = tokens.length > 0
-    ? tokens.map(t => ({ label: t.label ?? t.name, value: t.value, hint: t.value }))
+    ? tokens.map(t => ({ label: t.label ?? t.name, value: t.value, hint: t.hint ?? t.value }))
     : (spec.options ?? []).map(o => ({ label: o, value: o }));
   // "None" first, where zero means something (no padding, square corners, no stroke)
   const options = none ? [{ label: 'None', value: '0px', hint: '0' }, ...listed.filter(o => !isZero(o.value))] : listed;

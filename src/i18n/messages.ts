@@ -921,6 +921,8 @@ const messages = {
 
   // ── Property panel, value lists, colour picker, pencil ────────────────────
   'panel.stroke.add': { pt: 'Adicionar stroke', en: 'Add stroke' },
+  'panel.shadow.add': { pt: 'Adicionar sombra', en: 'Add shadow' },
+  'panel.shadow.remove': { pt: 'Remover sombra', en: 'Remove shadow' },
   'panel.stroke.remove': { pt: 'Remover stroke', en: 'Remove stroke' },
   'panel.stroke.solid': { pt: 'Sólido', en: 'Solid' },
   'panel.stroke.dashed': { pt: 'Tracejado', en: 'Dashed' },

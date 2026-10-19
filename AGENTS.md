@@ -55,6 +55,7 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/react/shortcuts.ts` | Keyboard shortcuts: the list behind Settings → Keyboard shortcuts and the tooltips, `I I`, typing guard |
 | `src/react/memory-panel.tsx` | Settings → Project memory: the design history (ledger) and, with Pro, test mode's memory |
 | `src/react/property-panel.tsx` | Property panel (`PROPS` lists the controls) |
+| `src/react/effects.ts` | Effects in the panel: shadow / blur / backdrop-blur scales read through the browser, Tailwind v4's empty shadow layers dropped |
 | `src/react/scroll-anchor.ts` | Markers inside a list or panel that scrolls on its own follow their element and hide when it scrolls out |
 | `src/react/live-layout.ts` | Live drag/reorder/resize/move-into-container previews (DOM is never moved under React) |
 | `src/i18n/messages.ts` | Every user-facing string, English and Portuguese |

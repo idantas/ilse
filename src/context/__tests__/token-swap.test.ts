@@ -83,6 +83,30 @@ describe('planTokenSwap', () => {
     expect(res.plan.edits[0]).toEqual({ property: 'textAlign', removed: ['text-left'], added: 'text-center' });
   });
 
+  it('swaps a shadow step and drops the class when the shadow is removed', () => {
+    const src = `export function Box() {
+  return <div className="rounded-xl shadow-sm shadow-black/20 p-4">Ilse</div>;
+}
+`;
+    const cwd = project({ 'src/Box.tsx': src });
+    const up = planTokenSwap(annotation(cwd, 'div.rounded-xl.shadow-sm', [{ property: 'boxShadow', from: 'a', to: 'b', token: 'effect.shadow-lg' }], 'Ilse'), cwd);
+    expect(up.ok && up.plan.after).toContain('className="rounded-xl shadow-black/20 p-4 shadow-lg"');
+    const off = planTokenSwap(annotation(cwd, 'div.rounded-xl.shadow-sm', [{ property: 'boxShadow', from: 'a', to: 'none', token: 'effect.shadow-none' }], 'Ilse'), cwd);
+    expect(off.ok && off.plan.after).toContain('className="rounded-xl shadow-black/20 p-4"');
+  });
+
+  it('writes a blur and a backdrop blur step', () => {
+    const cwd = project({ 'src/Glass.tsx': `export function Glass() {
+  return <div className="backdrop-blur-sm blur">Ilse</div>;
+}
+` });
+    const res = planTokenSwap(annotation(cwd, 'div.backdrop-blur-sm.blur', [
+      { property: 'backdropFilter', from: 'blur(8px)', to: 'blur(16px)', token: 'effect.backdrop-blur-lg' },
+      { property: 'filter', from: 'blur(8px)', to: 'blur(5px)' },
+    ], 'Ilse'), cwd);
+    expect(res.ok && res.plan.after).toContain('className="backdrop-blur-lg blur-[5px]"');
+  });
+
   it('replaces px/py together when padding is set as one value', () => {
     const cwd = project({ 'src/Card.tsx': CARD });
     const ann = annotation(cwd, 'button.px-4.py-2.font-medium', [{ property: 'padding', from: '8px 16px', to: '12px' }], 'Comprar');
