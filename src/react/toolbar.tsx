@@ -34,7 +34,8 @@ import { ElementTree } from './element-tree.js';
 import { IlseMascot, type MascotActivity, type MascotMode, type MascotReaction } from './mascot.js';
 import { SpeechBubble, speechButton, reasoningLine, ReasoningDot } from './speech-bubble.js';
 import { findingsForPage, findingNote, findingElement, findingRef, type TestFinding, type TestFindingRef } from './test-findings.js';
-import { analyzeSketch, renderSketchImage, formatSketchNote, drawnContainer, type Stroke } from './sketch.js';
+import { analyzeSketch, renderSketchImage, formatSketchNote, drawnContainer, pageElementAt, type Stroke } from './sketch.js';
+import { recordScrollers, scrollShift, scrollerNow, visibleIn } from './scroll-anchor.js';
 import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, scopeTwins, type LiveDrag, selectionTarget, selectableParent } from './live-layout.js';
 import type { StyleChange, StyleData } from '../types.js';
 import { toggleFreeze, isFrozen } from './freeze.js';
@@ -1276,6 +1277,30 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   }, [annotations]);
   const [activeMarker, setActiveMarker] = useState<number | null>(null);
   const [markersVisible, setMarkersVisible] = useState(true);
+  // Markers inside a box that scrolls on its own (a list, an app shell's <main>)
+  // follow it: redraw when any such box scrolls. Window scroll needs nothing —
+  // markers are absolute on the page.
+  const [, setScrollTick] = useState(0);
+  const anchored = annotations.some(a => a.capture._scrollers?.length);
+  useEffect(() => {
+    if (!anchored) return;
+    let frame = 0;
+    const onScroll = (e: Event) => {
+      if (e.target === document || frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; setScrollTick(n => n + 1); });
+    };
+    document.addEventListener('scroll', onScroll, true);
+    return () => { document.removeEventListener('scroll', onScroll, true); cancelAnimationFrame(frame); };
+  }, [anchored]);
+  /** Where an annotation's element is now: capture position + how far its boxes scrolled, and whether they still show it */
+  const anchorOf = (ann: AnnotationDraft) => {
+    const r = ann.capture.rect;
+    const sh = scrollShift(ann.capture._scrollers, scrollerNow);
+    const top = r.top + (ann.capture._scrollY ?? 0) + sh.dy;
+    const left = r.left + (ann.capture._scrollX ?? 0) + sh.dx;
+    const visible = visibleIn(sh.clip, left - window.scrollX + Math.min(r.width / 2, 8), top - window.scrollY + r.height / 2);
+    return { top, left, visible };
+  };
   const [showSettings, setShowSettings] = useState(false);
   // Settings header: the agent that runs the changes, its plan, and this session's model runs
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
@@ -2180,7 +2205,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         const area = captureArea(rect);
         const isEmpty = area.elementCount === 0;
         setPendingCapture({
-          capture: { element: `[área: ${area.elementCount} elementos]`, styles: {}, rect: area.region, _scrollX: window.scrollX, _scrollY: window.scrollY },
+          capture: { element: `[área: ${area.elementCount} elementos]`, styles: {}, rect: area.region, _scrollX: window.scrollX, _scrollY: window.scrollY, _scrollers: recordScrollers(pageElementAt(rect.left + rect.width / 2, rect.top + rect.height / 2)) },
           context: isEmpty ? t('toolbar.area.empty') : t('toolbar.area.elements', { count: area.elementCount }),
           contextLabel: isEmpty ? t('toolbar.area.empty') : t('toolbar.area.elements', { count: area.elementCount }),
           rect,
@@ -2208,6 +2233,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           componentStack: textCapture.componentStack,
           _scrollX: window.scrollX,
           _scrollY: window.scrollY,
+          _scrollers: recordScrollers(window.getSelection()?.anchorNode?.parentElement),
         },
         context: textCapture.element,
         contextLabel: `text: "${textCapture.text.length > 32 ? textCapture.text.slice(0, 32) + '...' : textCapture.text}"`,
@@ -2910,8 +2936,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const ann = annotations[i];
     if (!ann) return;
     const r = ann.capture.rect;
-    const scrollX = ann.capture._scrollX ?? 0;
-    const scrollY = ann.capture._scrollY ?? 0;
+    // Where the element is now (its list or panel may have scrolled since the capture)
+    const at = anchorOf(ann);
+    const scrollX = at.left - r.left;
+    const scrollY = at.top - r.top;
     const { dx: origDx, dy: origDy } = markerDragOffset(ann);
     const startX = e.clientX;
     const startY = e.clientY;
@@ -3645,8 +3673,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           .filter(({ ann }) => ann.status === 'pending');
         return pendingList.map(({ ann, originalIndex }, visibleIndex) => {
           const r = ann.capture.rect;
-          const scrollX = ann.capture._scrollX ?? 0;
-          const scrollY = ann.capture._scrollY ?? 0;
+          const at = anchorOf(ann);
+          if (!at.visible) return null; // scrolled out of its list or panel
           const isArea = ann.markerType === 'area';
           const markerColor = ann.intent === 'create' ? '#22c55e' : '#FF6C03';
           return (
@@ -3659,8 +3687,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               onMouseDown={(e) => startMarkerDrag(originalIndex, e)}
               style={{
                 position: 'absolute',
-                top: isArea ? (r.top + scrollY) - 6 : (r.top + scrollY) + r.height / 2 - 11,
-                left: (r.left + scrollX) - 6,
+                top: isArea ? at.top - 6 : at.top + r.height / 2 - 11,
+                left: at.left - 6,
                 width: 22, height: 22,
                 borderRadius: 7,
                 backgroundColor: markerColor,
@@ -3685,15 +3713,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       {isOpen && markersVisible && !annotating && annotations.map((ann, i) => {
         if (ann.status !== 'pending' || i === activeMarker || moveHoverIndex !== i) return null;
         const r = ann.capture.rect;
-        const scrollX = ann.capture._scrollX ?? 0;
-        const scrollY = ann.capture._scrollY ?? 0;
+        const at = anchorOf(ann);
+        if (!at.visible) return null;
         const off = markerDragOffset(ann);
         const isCreate = ann.intent === 'create';
         return (
           <div
             key={`move-${i}`}
             style={{
-              position: 'absolute', top: r.top + scrollY + off.dy, left: r.left + scrollX + off.dx,
+              position: 'absolute', top: at.top + off.dy, left: at.left + off.dx,
               width: r.width, height: r.height,
               border: `2px dashed ${isCreate ? '#22c55e' : '#FF6C03'}`,
               backgroundColor: isCreate ? 'rgba(34,197,94,0.06)' : 'rgba(255,108,3,0.06)',
@@ -3708,10 +3736,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       {activeMarker !== null && annotations[activeMarker] && (() => {
         const ann = annotations[activeMarker];
         const r = ann.capture.rect;
-        const scrollX = ann.capture._scrollX ?? 0;
-        const scrollY = ann.capture._scrollY ?? 0;
-        const absTop = r.top + scrollY;
-        const absLeft = r.left + scrollX;
+        const { top: absTop, left: absLeft } = anchorOf(ann);
         const cardWidth = 280;
         let cardTop = absTop - 90;
         let cardLeft = absLeft;
@@ -3887,13 +3912,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       {activeMarker !== null && annotations[activeMarker]?.status === 'pending' && (() => {
         const ann = annotations[activeMarker];
         const r = ann.capture.rect;
-        const scrollX = ann.capture._scrollX ?? 0;
-        const scrollY = ann.capture._scrollY ?? 0;
+        const at = anchorOf(ann);
         const dragOffset = ann.rearrangeData
           ? { dx: ann.rearrangeData.currentRect.x - ann.rearrangeData.originalRect.x, dy: ann.rearrangeData.currentRect.y - ann.rearrangeData.originalRect.y }
           : { dx: 0, dy: 0 };
-        const top = r.top + scrollY + dragOffset.dy;
-        const left = r.left + scrollX + dragOffset.dx;
+        const top = at.top + dragOffset.dy;
+        const left = at.left + dragOffset.dx;
         return (
           <div
             data-ilse-toolbar

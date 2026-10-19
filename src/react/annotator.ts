@@ -1,3 +1,5 @@
+import { recordScrollers, type ScrollerMark } from './scroll-anchor.js';
+
 export interface ElementCapture {
   element: string;      // CSS selector
   component?: string;   // data-component attr or React fiber
@@ -8,6 +10,7 @@ export interface ElementCapture {
   componentStack?: string[];   // parent component hierarchy
   _scrollX?: number;           // window.scrollX at capture time (for absolute positioning)
   _scrollY?: number;           // window.scrollY at capture time
+  _scrollers?: ScrollerMark[]; // boxes scrolling around it (a list, an app shell's <main>) and their scroll then
   domPath?: string;            // full DOM path (body > main > div.container > ...)
   nearbyElements?: string[];   // siblings / neighbors
   text?: string;               // own visible text, short — lets the CLI find the JSX node
@@ -478,6 +481,7 @@ export function captureElement(el: Element): ElementCapture {
     componentStack,
     _scrollX: window.scrollX,
     _scrollY: window.scrollY,
+    _scrollers: recordScrollers(el),
     domPath: buildDomPath(el),
     nearbyElements: getNearbyElements(el),
     text: getOwnText(el),

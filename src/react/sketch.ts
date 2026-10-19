@@ -200,7 +200,7 @@ export function pointInPolygon(p: Point, poly: Point[]): boolean {
 const SKIP = new Set(['HTML', 'BODY', 'svg', 'path', 'g', 'SCRIPT', 'STYLE']);
 
 /** The page element at a client point, looking through Ilse's own layers. */
-function pageElementAt(x: number, y: number): Element | null {
+export function pageElementAt(x: number, y: number): Element | null {
   for (const el of document.elementsFromPoint(x, y)) {
     if (el.closest('[data-ilse-toolbar]')) continue;
     // An icon's path/svg says less than the button it sits in
