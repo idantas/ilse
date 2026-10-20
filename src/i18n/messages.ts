@@ -921,6 +921,7 @@ const messages = {
 
   // ── Property panel, value lists, colour picker, pencil ────────────────────
   'panel.stroke.add': { pt: 'Adicionar stroke', en: 'Add stroke' },
+  'panel.position.ignoreLayout': { pt: 'Ignorar o layout do pai (absolute): move livre', en: 'Ignore the parent layout (absolute): move freely' },
   'panel.shadow.add': { pt: 'Adicionar sombra', en: 'Add shadow' },
   'panel.shadow.remove': { pt: 'Remover sombra', en: 'Remove shadow' },
   'panel.stroke.remove': { pt: 'Remover stroke', en: 'Remove stroke' },

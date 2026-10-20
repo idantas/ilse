@@ -226,6 +226,14 @@ const FAMILIES: Record<string, Family> = {
     matches: c => /^(flex-1|flex-auto|flex-none|flex-initial|(flex-)?grow(-0)?)$/.test(c),
     fromValue: v => v.trim() === '1' ? 'flex-1' : v.trim() === '0' ? 'grow-0' : null,
   },
+  // Position: the keyword is the class; X/Y on the spacing scale or arbitrary
+  position: {
+    prefix: '',
+    matches: c => /^(static|relative|absolute|fixed|sticky)$/.test(c),
+    fromValue: v => /^(static|relative|absolute|fixed|sticky)$/.test(v.trim()) ? v.trim() : null,
+  },
+  top: boxFamily('top', /^-?top-/, true),
+  left: boxFamily('left', /^-?left-/, true),
   // Effects: the panel picks a step of the scale (the token is the class); a typed blur is arbitrary
   boxShadow: {
     prefix: 'shadow',

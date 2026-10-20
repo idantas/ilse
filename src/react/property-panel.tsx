@@ -38,7 +38,7 @@ import type { StyleChange } from '../types.js';
 
 // ── Which properties the panel exposes, and how ────────────────────────────
 
-type Group = 'layout' | 'typography' | 'color' | 'stroke' | 'appearance' | 'effects';
+type Group = 'position' | 'layout' | 'typography' | 'color' | 'stroke' | 'appearance' | 'effects';
 type Scales = PageScales & EffectScales;
 
 interface PropSpec {
@@ -54,7 +54,15 @@ interface PropSpec {
 
 const SPACING_FALLBACK = ['0px', '4px', '8px', '12px', '16px', '24px', '32px'];
 
+const CSS_POSITIONS = ['static', 'relative', 'absolute', 'fixed', 'sticky'];
+/** Taken out of the flow: dragged anywhere, X/Y are where it sits */
+const FREE_POSITIONS = /^(absolute|fixed)$/;
+
 const PROPS: PropSpec[] = [
+  // Position: where the element itself sits (Layout is how it arranges what's inside)
+  { key: 'position', label: 'Position', group: 'position', options: CSS_POSITIONS },
+  { key: 'left',     label: 'X',        group: 'position' },
+  { key: 'top',      label: 'Y',        group: 'position' },
   { key: 'display',        label: 'Display',   group: 'layout', control: true },
   { key: 'flexDirection',  label: 'Direction', group: 'layout', control: true },
   { key: 'flexWrap',       label: 'Wrap',      group: 'layout', control: true },
@@ -102,6 +110,7 @@ const BLUR_KEYS = new Set(['filter', 'backdropFilter']);
 const restingValue = (key: string) => EFFECT_KEYS.has(key) ? 'none' : '';
 
 const GROUP_LABELS: Record<Group, string> = {
+  position: 'Position',
   layout: 'Layout',
   typography: 'Typography',
   color: 'Colors',
@@ -185,6 +194,8 @@ export interface PanelHistory {
   resetText: () => void;
   /** The preview outlives the panel (the draft was added): how to put the page back later */
   detachPreview: () => () => void;
+  /** Write several properties as one step — the toolbar's drag of a positioned element */
+  setStyles: (values: Record<string, string>, label: string) => void;
 }
 
 export interface TextEdit { from: string; to: string }
@@ -493,6 +504,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     if (textFill && p.key === 'backgroundColor') return false;
     if (p.key === 'borderColor') return stroke.has;
     if (p.key === 'gap') return layout.flow !== 'block';
+    if (p.group === 'position') return !textSelection && (p.key === 'position' || (effective.position ?? 'static') !== 'static');
     if (BLUR_KEYS.has(p.key)) return blurOf(styles[p.key]) !== 'none' || p.key in edits;
     if (EFFECT_KEYS.has(p.key)) return !!styles[p.key] || p.key in edits;
     return !!styles[p.key];
@@ -502,7 +514,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     ? gradientTokens.find(g => g.name === editTokens.current.backgroundImage)
     : el ? gradientIn(getComputedStyle(el).backgroundImage, gradientTokens) : undefined;
   const hasShadow = (edits.boxShadow ?? styles.boxShadow ?? 'none') !== 'none';
-  const groups = (['layout', 'typography', 'color', 'stroke', 'appearance', 'effects'] as Group[])
+  const groups = (['position', 'layout', 'typography', 'color', 'stroke', 'appearance', 'effects'] as Group[])
     .map(g => ({ group: g, specs: PROPS.filter(p => p.group === g && shown(p)) }))
     .filter(g => g.specs.length > 0 || ((g.group === 'layout' || g.group === 'stroke' || g.group === 'effects') && !!styles.display));
 
@@ -547,8 +559,33 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
       texts.forEach(n => { n.node.data = n.data; });
     };
   }
-  if (historyRef) historyRef.current = { undo, size: () => history.current.length, resetText: () => setTextValue(textOriginal), detachPreview };
+  if (historyRef) historyRef.current = { undo, size: () => history.current.length, resetText: () => setTextValue(textOriginal), detachPreview, setStyles: (v, label) => applyMany(v, label) };
   const [front, bringToFront] = useFrontLayer('panel', false);
+
+  /**
+   * Position change. Out of the flow (absolute/fixed) the element keeps the spot
+   * and the width it had, so it doesn't jump: X/Y are measured, not guessed.
+   * Back in the flow, X/Y go.
+   */
+  function setPosition(next: string) {
+    const spec = (key: string) => PROPS.find(p => p.key === key)!;
+    const el = getElement();
+    record('Position');
+    if (!el || !FREE_POSITIONS.test(next)) {
+      apply(spec('position'), next);
+      apply(spec('top'), '');
+      apply(spec('left'), '');
+      return;
+    }
+    const before = el.getBoundingClientRect();
+    apply(spec('position'), next);
+    apply(spec('left'), '0px');
+    apply(spec('top'), '0px');
+    const at = el.getBoundingClientRect();
+    apply(spec('left'), `${Math.round(before.left - at.left)}px`);
+    apply(spec('top'), `${Math.round(before.top - at.top)}px`);
+    if (Math.abs(el.getBoundingClientRect().width - before.width) > 1) apply(spec('width'), `${Math.round(before.width)}px`);
+  }
 
   function applyMany(values: Record<string, string>, label = PROPS.find(p => p.key === Object.keys(values)[0])?.label ?? 'Layout') {
     record(label);
@@ -658,6 +695,20 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                   {stroke.has ? '−' : '+'}
                 </IconButton>
               )}
+              {group === 'position' && parentFlow && (
+                <IconButton
+                  title={t('panel.position.ignoreLayout')}
+                  active={FREE_POSITIONS.test(effective.position ?? '')}
+                  onClick={() => setPosition(FREE_POSITIONS.test(effective.position ?? '')
+                    ? (styles.position && !FREE_POSITIONS.test(styles.position) ? styles.position : 'static')
+                    : 'absolute')}
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                    <path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3" />
+                    <rect x="5.5" y="5.5" width="5" height="5" rx="1" />
+                  </svg>
+                </IconButton>
+              )}
               {group === 'effects' && (
                 <IconButton
                   title={hasShadow ? t('panel.shadow.remove') : t('panel.shadow.add')}
@@ -701,7 +752,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
               <PropertyRow
                 key={spec.key}
                 spec={textFill && spec.key === 'color' ? { ...spec, label: 'Fill' } : spec}
-                current={BLUR_KEYS.has(spec.key) ? blurOf(styles[spec.key]) : styles[spec.key] ?? (EFFECT_KEYS.has(spec.key) ? 'none' : '0px')}
+                current={BLUR_KEYS.has(spec.key) ? blurOf(styles[spec.key]) : styles[spec.key] ?? (EFFECT_KEYS.has(spec.key) ? 'none' : spec.key === 'position' ? 'static' : '0px')}
                 edited={BLUR_KEYS.has(spec.key)
                   ? (spec.key in edits ? blurOf(edits[spec.key]) : undefined)
                   : edits[spec.key] ?? (spec.key === 'backgroundColor' ? edits.backgroundImage : undefined)}
@@ -714,7 +765,13 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                   setColorEpoch(n => n + 1);
                   setPicker({ key: spec.key, anchor: (panelRef.current ?? el).getBoundingClientRect(), anchorEl: el });
                 }}
-                onApply={(v) => { record(spec.label); apply(spec, BLUR_KEYS.has(spec.key) ? withBlur(styles[spec.key], v) : v); }}
+                onApply={(v) => {
+                  if (spec.key === 'position') { setPosition(v); return; }
+                  record(spec.label);
+                  // X/Y typed as a bare number are pixels
+                  const value = (spec.key === 'top' || spec.key === 'left') && /^-?\d+(\.\d+)?$/.test(v.trim()) ? `${v.trim()}px` : v;
+                  apply(spec, BLUR_KEYS.has(spec.key) ? withBlur(styles[spec.key], value) : value);
+                }}
               />
             ))}
             {group === 'typography' && styles.textAlign && (

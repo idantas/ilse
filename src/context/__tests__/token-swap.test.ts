@@ -95,6 +95,19 @@ describe('planTokenSwap', () => {
     expect(off.ok && off.plan.after).toContain('className="rounded-xl shadow-black/20 p-4"');
   });
 
+  it('takes an element out of the flow: absolute with X/Y', () => {
+    const cwd = project({ 'src/Stamp.tsx': `export function Stamp() {
+  return <p className="relative text-xs">Dados</p>;
+}
+` });
+    const res = planTokenSwap(annotation(cwd, 'p.relative.text-xs', [
+      { property: 'position', from: 'relative', to: 'absolute' },
+      { property: 'top', from: 'auto', to: '88px' },
+      { property: 'left', from: 'auto', to: '97px' },
+    ], 'Dados'), cwd);
+    expect(res.ok && res.plan.after).toContain('className="text-xs absolute top-22 left-[97px]"');
+  });
+
   it('writes a blur and a backdrop blur step', () => {
     const cwd = project({ 'src/Glass.tsx': `export function Glass() {
   return <div className="backdrop-blur-sm blur">Ilse</div>;

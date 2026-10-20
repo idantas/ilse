@@ -2418,6 +2418,51 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const liveEl = pcLive?.markerType === 'element' && pcLive.pixelTargetId
         ? document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pcLive.pixelTargetId}"]`)
         : null;
+      // Out of the flow (absolute/fixed, e.g. set in the panel's Position): it goes
+      // wherever it's dropped — no list, no drop zones — and the move is its X/Y
+      if (liveEl && /^(absolute|fixed)$/.test(getComputedStyle(liveEl).position)) {
+        const cs = getComputedStyle(liveEl);
+        const left0 = parseFloat(cs.left) || 0;
+        const top0 = parseFloat(cs.top) || 0;
+        const inline = { left: liveEl.style.left, top: liveEl.style.top };
+        let moved = false;
+        const at = (mv: MouseEvent) => ({ left: `${Math.round(left0 + mv.clientX - startX)}px`, top: `${Math.round(top0 + mv.clientY - startY)}px` });
+        const onMoveFree = (mv: MouseEvent) => {
+          if (!moved) {
+            if (Math.abs(mv.clientX - startX) < 4 && Math.abs(mv.clientY - startY) < 4) return;
+            moved = true;
+            document.body.style.cursor = 'grabbing';
+            setShowGrid(true);
+            snapRectsRef.current = collectSnapRects();
+            contentRectsRef.current = collectContentRects();
+          }
+          const next = at(mv);
+          liveEl.style.left = next.left;
+          liveEl.style.top = next.top;
+          const b = liveEl.getBoundingClientRect();
+          const rect = { top: Math.round(b.top), left: Math.round(b.left), width: Math.round(b.width), height: Math.round(b.height) };
+          setGuides(computeGuides(rect, snapRectsRef.current));
+          setSpacings(computeSpacings(rect, contentRectsRef.current, Math.abs(mv.clientY - startY) > Math.abs(mv.clientX - startX) ? 'y' : 'x'));
+          setPendingCapture(prev => prev ? { ...prev, rect, capture: { ...prev.capture, rect } } : null);
+        };
+        const onUpFree = (mv: MouseEvent) => {
+          document.removeEventListener('mousemove', onMoveFree);
+          document.removeEventListener('mouseup', onUpFree);
+          document.body.style.cursor = '';
+          if (!moved) return;
+          setGuides([]);
+          setSpacings([]);
+          setShowGrid(false);
+          const next = at(mv);
+          // Back to the inline style the panel knows, so it records the right "before"
+          liveEl.style.left = inline.left;
+          liveEl.style.top = inline.top;
+          panelHistoryRef.current?.setStyles(next, t('undo.move'));
+        };
+        document.addEventListener('mousemove', onMoveFree);
+        document.addEventListener('mouseup', onUpFree);
+        return;
+      }
       if (liveEl) {
         let drag: LiveDrag | null = null;
         const onMoveLive = (mv: MouseEvent) => {
