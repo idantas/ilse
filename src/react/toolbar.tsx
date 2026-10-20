@@ -10,7 +10,6 @@ import {
   IconTrash,
   IconBolt,
   IconEyeglass2,
-  IconRobot,
   IconSettings,
   IconArrowBackUp,
   IconX,
@@ -34,7 +33,8 @@ import { ElementTree } from './element-tree.js';
 import { IlseMascot, type MascotActivity, type MascotMode, type MascotReaction } from './mascot.js';
 import { SpeechBubble, speechButton, reasoningLine, ReasoningDot } from './speech-bubble.js';
 import { findingsForPage, findingNote, findingElement, findingRef, type TestFinding, type TestFindingRef } from './test-findings.js';
-import { analyzeSketch, renderSketchImage, formatSketchNote, drawnContainer, type Stroke } from './sketch.js';
+import { analyzeSketch, renderSketchImage, formatSketchNote, drawnContainer, pageElementAt, type Stroke } from './sketch.js';
+import { recordScrollers, scrollShift, scrollerNow, visibleIn } from './scroll-anchor.js';
 import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, scopeTwins, type LiveDrag, selectionTarget, selectableParent } from './live-layout.js';
 import type { StyleChange, StyleData } from '../types.js';
 import { toggleFreeze, isFrozen } from './freeze.js';
@@ -1276,6 +1276,30 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   }, [annotations]);
   const [activeMarker, setActiveMarker] = useState<number | null>(null);
   const [markersVisible, setMarkersVisible] = useState(true);
+  // Markers inside a box that scrolls on its own (a list, an app shell's <main>)
+  // follow it: redraw when any such box scrolls. Window scroll needs nothing —
+  // markers are absolute on the page.
+  const [, setScrollTick] = useState(0);
+  const anchored = annotations.some(a => a.capture._scrollers?.length);
+  useEffect(() => {
+    if (!anchored) return;
+    let frame = 0;
+    const onScroll = (e: Event) => {
+      if (e.target === document || frame) return;
+      frame = requestAnimationFrame(() => { frame = 0; setScrollTick(n => n + 1); });
+    };
+    document.addEventListener('scroll', onScroll, true);
+    return () => { document.removeEventListener('scroll', onScroll, true); cancelAnimationFrame(frame); };
+  }, [anchored]);
+  /** Where an annotation's element is now: capture position + how far its boxes scrolled, and whether they still show it */
+  const anchorOf = (ann: AnnotationDraft) => {
+    const r = ann.capture.rect;
+    const sh = scrollShift(ann.capture._scrollers, scrollerNow);
+    const top = r.top + (ann.capture._scrollY ?? 0) + sh.dy;
+    const left = r.left + (ann.capture._scrollX ?? 0) + sh.dx;
+    const visible = visibleIn(sh.clip, left - window.scrollX + Math.min(r.width / 2, 8), top - window.scrollY + r.height / 2);
+    return { top, left, visible };
+  };
   const [showSettings, setShowSettings] = useState(false);
   // Settings header: the agent that runs the changes, its plan, and this session's model runs
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
@@ -1429,6 +1453,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [proTest, setProTest] = useState(false);
   const [pageIssues, setPageIssues] = useState<PageIssue[]>([]);
   const [scanHighlight, setScanHighlight] = useState<PopoverRect | null>(null);
+  // Test mode: hovering Run lists the findings its markers hold
+  const [runListOpen, setRunListOpen] = useState(false);
+  const runListTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdRunList = (open: boolean) => {
+    if (runListTimer.current) clearTimeout(runListTimer.current);
+    // A short grace on leave, so the pointer can travel from the button to the list
+    if (open) setRunListOpen(true);
+    else runListTimer.current = setTimeout(() => { setRunListOpen(false); setScanHighlight(null); }, 220);
+  };
   const [scanAiSummary, setScanAiSummary] = useState<string | null>(null);
   const [scanCategory, setScanCategory] = useState<string | null>(null); // null = all
   const [scanReportOpen, setScanReportOpen] = useState(false);
@@ -1486,10 +1519,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const pageFindings = findingsForPage(testFindings, location.pathname, location.search);
 
   /** Fix → the finding becomes a note, like one the dev wrote; discard → never shown again */
-  const decideTestFinding = useCallback((f: TestFinding, decision: 'approved' | 'discarded') => {
+  const decideTestFinding = useCallback((f: Pick<TestFinding, 'id'>, decision: 'approved' | 'discarded') => {
     send({ type: 'finding_decide', id: f.id, decision });
     setTestFindings(prev => prev.filter(x => x.id !== f.id));
   }, []);
+  /** Each mode keeps its own notes: design shows the dev's, test shows the findings' */
+  const inMode = (a: { testFinding?: TestFindingRef }) => (toolbarMode === 'test') === !!a.testFinding;
+  /** Findings whose markers the dev cleared this session: not put back until the next run */
+  const clearedFindings = useRef(new Set<string>());
 
   const runPageScan = useCallback(() => {
     const issues = scanPage(500);
@@ -1757,9 +1794,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setTestRun(null);
         celebrate('test');
         if (Array.isArray(msg.findings)) setTestFindings(msg.findings as TestFinding[]);
-        // In test mode the results open in the tester; otherwise a toast says it's done
-        if (toolbarModeRef.current === 'test' && isOpenRef.current) setScanOpen(true);
-        else setClipboardToast(saying(t('toolbar.testDone', { count: typeof msg.count === 'number' ? msg.count : 0, pages: typeof msg.pages === 'number' ? msg.pages : 0 })));
+        // The findings land on their markers by themselves; a toast says how many
+        setScanOpen(false);
+        const here = Array.isArray(msg.findings) ? findingsForPage(msg.findings as TestFinding[], location.pathname, location.search).length : 0;
+        clearedFindings.current.clear();
+        setClipboardToast(saying(toolbarModeRef.current === 'test' && here > 0
+          ? t('toolbar.testFoundHere', { count: here })
+          : t('toolbar.testDone', { count: typeof msg.count === 'number' ? msg.count : 0, pages: typeof msg.pages === 'number' ? msg.pages : 0 })));
         setTimeout(() => setClipboardToast(null), 5000);
       }
       // After the agent fixed findings from the test, the CLI tests their pages again
@@ -1937,6 +1978,35 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     }]);
   }, []);
 
+  // Test mode: every finding on this page is already a marker on its element,
+  // with the note written — the dev opens it to change it, ignores it, or runs the fixes.
+  const pageFindingIds = pageFindings.map(f => f.id).join('|');
+  const [findingRetry, setFindingRetry] = useState(0);
+  useEffect(() => {
+    if (toolbarMode !== 'test' || !pageFindings.length) return;
+    const have = new Set(annotationsRef.current.flatMap(a => a.testFinding ? [a.testFinding.id] : []));
+    let missing = false;
+    for (const f of pageFindings) {
+      if (have.has(f.id) || clearedFindings.current.has(f.id)) continue;
+      const el = findingElement(f);
+      const rect = el?.getBoundingClientRect();
+      if (el && rect && (rect.width > 0 || rect.height > 0)) {
+        const pixelTargetId = el.getAttribute('data-ilse-pixel-target') ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        el.setAttribute('data-ilse-pixel-target', pixelTargetId);
+        addAnnotation(captureElement(el), findingNote(f), 'element', pixelTargetId, undefined, findingRef(f));
+      } else if (f.selector && findingRetry < 3) {
+        missing = true; // the page may still be rendering: look again shortly
+      } else {
+        // Console errors, failed requests, mobile-only elements: a note for the page, listed under Run
+        addAnnotation({ element: '', styles: {}, rect: { top: 0, left: 0, width: 0, height: 0 } }, findingNote(f), 'element', undefined, undefined, findingRef(f));
+      }
+    }
+    if (!missing) return;
+    const timer = setTimeout(() => setFindingRetry(n => n + 1), 1000);
+    return () => clearTimeout(timer);
+  }, [toolbarMode, pageFindingIds, findingRetry, addAnnotation]);
+  useEffect(() => { setFindingRetry(0); }, [pageFindingIds]);
+
   const confirmCapture = useCallback(() => {
     if (!pendingCapture) return;
     const hasElement = pendingCapture.markerType === 'area'
@@ -2099,8 +2169,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (selected) settleElement(selected);
       selectElement(target, e.metaKey || e.ctrlKey);
     };
-    document.addEventListener('mousedown', onDown, true);
-    return () => document.removeEventListener('mousedown', onDown, true);
+    // pointerdown so a disabled control, which gets no mousedown, can be picked too
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
   }, [pendingCapture, annotating, selectElement]);
 
 
@@ -2179,7 +2250,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         const area = captureArea(rect);
         const isEmpty = area.elementCount === 0;
         setPendingCapture({
-          capture: { element: `[área: ${area.elementCount} elementos]`, styles: {}, rect: area.region, _scrollX: window.scrollX, _scrollY: window.scrollY },
+          capture: { element: `[área: ${area.elementCount} elementos]`, styles: {}, rect: area.region, _scrollX: window.scrollX, _scrollY: window.scrollY, _scrollers: recordScrollers(pageElementAt(rect.left + rect.width / 2, rect.top + rect.height / 2)) },
           context: isEmpty ? t('toolbar.area.empty') : t('toolbar.area.elements', { count: area.elementCount }),
           contextLabel: isEmpty ? t('toolbar.area.empty') : t('toolbar.area.elements', { count: area.elementCount }),
           rect,
@@ -2207,6 +2278,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           componentStack: textCapture.componentStack,
           _scrollX: window.scrollX,
           _scrollY: window.scrollY,
+          _scrollers: recordScrollers(window.getSelection()?.anchorNode?.parentElement),
         },
         context: textCapture.element,
         contextLabel: `text: "${textCapture.text.length > 32 ? textCapture.text.slice(0, 32) + '...' : textCapture.text}"`,
@@ -2234,11 +2306,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   }, []);
 
   useEffect(() => {
-    if (annotating) {
-      // Annotation capture handlers (run first in capture phase)
-      document.addEventListener('mousedown', handleMouseDown, true);
+    if (annotating && isOpen) { // never selecting with the toolbar closed
+      // Annotation capture handlers (run first in capture phase). Pointer, not
+      // mouse, down/up: browsers never send mousedown/mouseup/click to a disabled
+      // button or input, but they do send pointer events, so it can be selected.
+      document.addEventListener('pointerdown', handleMouseDown, true);
       document.addEventListener('mousemove', handleMouseMove, true);
-      document.addEventListener('mouseup', handleMouseUp, true);
+      document.addEventListener('pointerup', handleMouseUp, true);
 
       // Block click-based page interactions — links, buttons, context menus
       const blocked = ['click', 'auxclick', 'dblclick', 'contextmenu'] as const;
@@ -2248,9 +2322,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
       document.body.style.cursor = 'crosshair';
       return () => {
-        document.removeEventListener('mousedown', handleMouseDown, true);
+        document.removeEventListener('pointerdown', handleMouseDown, true);
         document.removeEventListener('mousemove', handleMouseMove, true);
-        document.removeEventListener('mouseup', handleMouseUp, true);
+        document.removeEventListener('pointerup', handleMouseUp, true);
         for (const type of blocked) {
           document.removeEventListener(type, blockInteraction, { capture: true });
         }
@@ -2264,7 +2338,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       setHoverLabelRect(null);
       return undefined;
     }
-  }, [annotating, handleMouseDown, handleMouseMove, handleMouseUp, blockInteraction]);
+  }, [annotating, isOpen, handleMouseDown, handleMouseMove, handleMouseUp, blockInteraction]);
 
   // ── Escape: close everything ───────────────────────────────────────────────
 
@@ -2344,6 +2418,51 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const liveEl = pcLive?.markerType === 'element' && pcLive.pixelTargetId
         ? document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pcLive.pixelTargetId}"]`)
         : null;
+      // Out of the flow (absolute/fixed, e.g. set in the panel's Position): it goes
+      // wherever it's dropped — no list, no drop zones — and the move is its X/Y
+      if (liveEl && /^(absolute|fixed)$/.test(getComputedStyle(liveEl).position)) {
+        const cs = getComputedStyle(liveEl);
+        const left0 = parseFloat(cs.left) || 0;
+        const top0 = parseFloat(cs.top) || 0;
+        const inline = { left: liveEl.style.left, top: liveEl.style.top };
+        let moved = false;
+        const at = (mv: MouseEvent) => ({ left: `${Math.round(left0 + mv.clientX - startX)}px`, top: `${Math.round(top0 + mv.clientY - startY)}px` });
+        const onMoveFree = (mv: MouseEvent) => {
+          if (!moved) {
+            if (Math.abs(mv.clientX - startX) < 4 && Math.abs(mv.clientY - startY) < 4) return;
+            moved = true;
+            document.body.style.cursor = 'grabbing';
+            setShowGrid(true);
+            snapRectsRef.current = collectSnapRects();
+            contentRectsRef.current = collectContentRects();
+          }
+          const next = at(mv);
+          liveEl.style.left = next.left;
+          liveEl.style.top = next.top;
+          const b = liveEl.getBoundingClientRect();
+          const rect = { top: Math.round(b.top), left: Math.round(b.left), width: Math.round(b.width), height: Math.round(b.height) };
+          setGuides(computeGuides(rect, snapRectsRef.current));
+          setSpacings(computeSpacings(rect, contentRectsRef.current, Math.abs(mv.clientY - startY) > Math.abs(mv.clientX - startX) ? 'y' : 'x'));
+          setPendingCapture(prev => prev ? { ...prev, rect, capture: { ...prev.capture, rect } } : null);
+        };
+        const onUpFree = (mv: MouseEvent) => {
+          document.removeEventListener('mousemove', onMoveFree);
+          document.removeEventListener('mouseup', onUpFree);
+          document.body.style.cursor = '';
+          if (!moved) return;
+          setGuides([]);
+          setSpacings([]);
+          setShowGrid(false);
+          const next = at(mv);
+          // Back to the inline style the panel knows, so it records the right "before"
+          liveEl.style.left = inline.left;
+          liveEl.style.top = inline.top;
+          panelHistoryRef.current?.setStyles(next, t('undo.move'));
+        };
+        document.addEventListener('mousemove', onMoveFree);
+        document.addEventListener('mouseup', onUpFree);
+        return;
+      }
       if (liveEl) {
         let drag: LiveDrag | null = null;
         const onMoveLive = (mv: MouseEvent) => {
@@ -2481,6 +2600,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const sendAnnotation = useCallback((index: number) => {
     const ann = annotations[index];
     if (!ann) return;
+    // A finding sent to the agent is one the dev approved (test memory counts it)
+    if (ann.testFinding && ann.status === 'pending') decideTestFinding(ann.testFinding, 'approved');
     // Exit annotation mode on send — user gets normal cursor while agent works
     setAnnotating(false);
     const env = captureEnvironment();
@@ -2605,7 +2726,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     setAnnotating(false);
     if (isConnected() || demoMode) {
       // WS connected or demo mode — send each individually
-      annotations.forEach((ann, i) => { if (ann.status === 'pending') sendAnnotation(i); });
+      annotations.forEach((ann, i) => { if (ann.status === 'pending' && inMode(ann)) sendAnnotation(i); });
     } else {
       // WS not connected — copy all as markdown
       const markdown = formatAllAsMarkdown(annotations);
@@ -2618,7 +2739,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setTimeout(() => setClipboardToast(null), 4000);
       });
     }
-  }, [annotations, sendAnnotation]);
+  }, [annotations, sendAnnotation, toolbarMode]);
 
   // ── Remove the selected element ──
   // Preview: hidden in place (display:none on React's own node — never removed
@@ -2907,8 +3028,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const ann = annotations[i];
     if (!ann) return;
     const r = ann.capture.rect;
-    const scrollX = ann.capture._scrollX ?? 0;
-    const scrollY = ann.capture._scrollY ?? 0;
+    // Where the element is now (its list or panel may have scrolled since the capture)
+    const at = anchorOf(ann);
+    const scrollX = at.left - r.left;
+    const scrollY = at.top - r.top;
     const { dx: origDx, dy: origDy } = markerDragOffset(ann);
     const startX = e.clientX;
     const startY = e.clientY;
@@ -2954,11 +3077,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     if (clearConfirm) {
       // Unsent drafts take their on-screen previews with them
       for (const a of annotationsRef.current) {
+        if (!inMode(a)) continue;
+        if (a.testFinding) clearedFindings.current.add(a.testFinding.id);
         if (!a.pixelTargetId) continue;
         if (a.status === 'pending') { previewReverts.current.get(a.pixelTargetId)?.(); unhide(a.pixelTargetId); }
         previewReverts.current.delete(a.pixelTargetId);
       }
-      setAnnotations([]);
+      setAnnotations(prev => prev.filter(a => !inMode(a)));
       setActiveMarker(null);
       setClearConfirm(false);
       if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
@@ -2968,7 +3093,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     }
   };
 
-  const pendingCount = annotations.filter(a => a.status === 'pending').length;
+  const pendingCount = annotations.filter(a => a.status === 'pending' && inMode(a)).length;
+  /** Ignore a test finding: Ilse stops warning about it, and its marker goes */
+  const ignoreFinding = (index: number) => {
+    const ann = annotationsRef.current[index];
+    if (ann?.testFinding) decideTestFinding(ann.testFinding, 'discarded');
+    removeAnnotation(index);
+  };
   const processingCount = annotations.filter(a => a.status === 'sent').length;
 
   // ── Toolbar open/close ─────────────────────────────────────────────────────
@@ -3115,11 +3246,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   }, []);
 
   const closeToolbar = () => {
+    // The draft first: cancelling it turns selection back on, closing turns it off
+    if (pendingCaptureRef.current) cancelCapture();
     setIsOpen(false);
     setAnnotating(false);
     setDrawMode(false);
     setStrokes([]);
-    if (pendingCaptureRef.current) cancelCapture();
     setActiveMarker(null);
     setShowSettings(false);
     setChatOpen(false);
@@ -3639,13 +3771,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         // Only show pending annotations, numbered from 1 based on visible index
         const pendingList = annotations
           .map((ann, i) => ({ ann, originalIndex: i }))
-          .filter(({ ann }) => ann.status === 'pending');
+          .filter(({ ann }) => ann.status === 'pending' && inMode(ann));
         return pendingList.map(({ ann, originalIndex }, visibleIndex) => {
           const r = ann.capture.rect;
-          const scrollX = ann.capture._scrollX ?? 0;
-          const scrollY = ann.capture._scrollY ?? 0;
+          const at = anchorOf(ann);
+          if (!at.visible) return null; // scrolled out of its list or panel
+          // A finding with nothing to point at (a console error) is listed under Run, not pinned
+          if (!ann.capture.element && !r.width && !r.height) return null;
           const isArea = ann.markerType === 'area';
-          const markerColor = ann.intent === 'create' ? '#22c55e' : '#FF6C03';
+          const markerColor = ann.testFinding ? modeAccent('test').hex : ann.intent === 'create' ? '#22c55e' : '#FF6C03';
           return (
             <div
               key={originalIndex}
@@ -3656,8 +3790,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               onMouseDown={(e) => startMarkerDrag(originalIndex, e)}
               style={{
                 position: 'absolute',
-                top: isArea ? (r.top + scrollY) - 6 : (r.top + scrollY) + r.height / 2 - 11,
-                left: (r.left + scrollX) - 6,
+                top: isArea ? at.top - 6 : at.top + r.height / 2 - 11,
+                left: at.left - 6,
                 width: 22, height: 22,
                 borderRadius: 7,
                 backgroundColor: markerColor,
@@ -3680,20 +3814,21 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
            hovered or dragged. Visual only: the page underneath stays clickable,
            otherwise every annotated element would be dead until the note is sent. */}
       {isOpen && markersVisible && !annotating && annotations.map((ann, i) => {
-        if (ann.status !== 'pending' || i === activeMarker || moveHoverIndex !== i) return null;
+        if (ann.status !== 'pending' || !inMode(ann) || i === activeMarker || moveHoverIndex !== i) return null;
         const r = ann.capture.rect;
-        const scrollX = ann.capture._scrollX ?? 0;
-        const scrollY = ann.capture._scrollY ?? 0;
+        const at = anchorOf(ann);
+        if (!at.visible) return null;
         const off = markerDragOffset(ann);
         const isCreate = ann.intent === 'create';
+        const zone = ann.testFinding ? modeAccent('test') : null;
         return (
           <div
             key={`move-${i}`}
             style={{
-              position: 'absolute', top: r.top + scrollY + off.dy, left: r.left + scrollX + off.dx,
+              position: 'absolute', top: at.top + off.dy, left: at.left + off.dx,
               width: r.width, height: r.height,
-              border: `2px dashed ${isCreate ? '#22c55e' : '#FF6C03'}`,
-              backgroundColor: isCreate ? 'rgba(34,197,94,0.06)' : 'rgba(255,108,3,0.06)',
+              border: `2px dashed ${zone ? zone.hex : isCreate ? '#22c55e' : '#FF6C03'}`,
+              backgroundColor: zone ? `rgba(${zone.rgb},0.06)` : isCreate ? 'rgba(34,197,94,0.06)' : 'rgba(255,108,3,0.06)',
               borderRadius: 4, zIndex: 99995, boxSizing: 'border-box',
               pointerEvents: 'none',
             }}
@@ -3705,10 +3840,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       {activeMarker !== null && annotations[activeMarker] && (() => {
         const ann = annotations[activeMarker];
         const r = ann.capture.rect;
-        const scrollX = ann.capture._scrollX ?? 0;
-        const scrollY = ann.capture._scrollY ?? 0;
-        const absTop = r.top + scrollY;
-        const absLeft = r.left + scrollX;
+        const { top: absTop, left: absLeft } = anchorOf(ann);
         const cardWidth = 280;
         let cardTop = absTop - 90;
         let cardLeft = absLeft;
@@ -3716,8 +3848,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         if (cardLeft + cardWidth > window.scrollX + window.innerWidth - 8) cardLeft = window.scrollX + window.innerWidth - cardWidth - 8;
         if (cardLeft < window.scrollX + 8) cardLeft = window.scrollX + 8;
 
-        // Simple title: component name > tag name > first part of selector
-        const simpleTitle = ann.capture.component
+        // A test finding is titled by what the test found; otherwise the component name > tag name > selector
+        const finding = ann.testFinding ? testFindings.find(f => f.id === ann.testFinding!.id) : undefined;
+        const simpleTitle = finding?.title || ann.capture.component
           || humanizeSelector(ann.capture.element).split(/[.#\[:]/)[0]
           || 'element';
         const fullSelector = humanizeSelector(ann.capture.element);
@@ -3847,12 +3980,22 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   </button>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+                  {ann.testFinding ? (
+                    <button
+                      onClick={() => ignoreFinding(activeMarker)}
+                      title={t('toolbar.testDiscard')}
+                      style={{ background: 'none', border: 'none', color: color.mutedForeground, cursor: 'pointer', fontSize: 11, padding: '2px 4px' }}
+                    >
+                      {t('toolbar.testIgnore')}
+                    </button>
+                  ) : (
                   <button
                     onClick={() => removeAnnotation(activeMarker)}
                     style={{ background: 'none', border: 'none', color: color.destructive, cursor: 'pointer', fontSize: 11, padding: '2px 4px' }}
                   >
                     remover
                   </button>
+                  )}
                 </div>
               </>
             )}
@@ -3884,13 +4027,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       {activeMarker !== null && annotations[activeMarker]?.status === 'pending' && (() => {
         const ann = annotations[activeMarker];
         const r = ann.capture.rect;
-        const scrollX = ann.capture._scrollX ?? 0;
-        const scrollY = ann.capture._scrollY ?? 0;
+        const at = anchorOf(ann);
         const dragOffset = ann.rearrangeData
           ? { dx: ann.rearrangeData.currentRect.x - ann.rearrangeData.originalRect.x, dy: ann.rearrangeData.currentRect.y - ann.rearrangeData.originalRect.y }
           : { dx: 0, dy: 0 };
-        const top = r.top + scrollY + dragOffset.dy;
-        const left = r.left + scrollX + dragOffset.dx;
+        const top = at.top + dragOffset.dy;
+        const left = at.left + dragOffset.dx;
         return (
           <div
             data-ilse-toolbar
@@ -4486,6 +4628,83 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               </div>
             )}
 
+            {/* Test mode, hovering Run: the findings on this page's markers, and what is elsewhere */}
+            {runListOpen && toolbarMode === 'test' && !scanOpen && (() => {
+              const items = annotations
+                .map((ann, i) => ({ ann, i }))
+                .filter(({ ann }) => ann.status === 'pending' && ann.testFinding);
+              const elsewhere = testFindings.length - pageFindings.length;
+              const targetOf = (ann: AnnotationDraft) => ann.pixelTargetId ? document.querySelector(`[data-ilse-pixel-target="${ann.pixelTargetId}"]`) : null;
+              return (
+                <div
+                  data-ilse-toolbar
+                  className="ilse-hidden-scroll"
+                  onMouseEnter={() => holdRunList(true)}
+                  onMouseLeave={() => holdRunList(false)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    position: 'absolute', bottom: 'calc(100% + 8px)',
+                    ...(extendsRight ? { left: 0 } : { right: 0 }),
+                    backgroundColor: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.xl,
+                    padding: 14, width: 300, boxShadow: shadow.xl, maxHeight: 420, overflowY: 'auto', fontFamily: font.sans,
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 600, color: color.foreground, marginBottom: 8 }}>
+                    {t('toolbar.runFixes')}{items.length > 0 ? ` · ${items.length}` : ''}
+                  </div>
+                  {items.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, margin: '0 -6px' }}>
+                      {items.slice(0, 12).map(({ ann, i }) => {
+                        const f = testFindings.find(x => x.id === ann.testFinding!.id);
+                        const severity = f?.severity ?? 'low';
+                        return (
+                          <div
+                            key={ann.testFinding!.id}
+                            title={f?.detail}
+                            style={{ display: 'flex', gap: 6, alignItems: 'flex-start', cursor: 'pointer', padding: '5px 6px', borderRadius: radius.md, transition: 'background-color 0.15s' }}
+                            onMouseEnter={(e) => {
+                              (e.currentTarget as HTMLDivElement).style.backgroundColor = color.muted;
+                              const r = targetOf(ann)?.getBoundingClientRect();
+                              setScanHighlight(r ? { top: r.top, left: r.left, width: r.width, height: r.height } : null);
+                            }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'; setScanHighlight(null); }}
+                            onClick={() => {
+                              // Open its marker's card, where the note can be changed or the test ignored
+                              targetOf(ann)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                              setRunListOpen(false); setScanHighlight(null);
+                              setActiveMarker(i);
+                            }}
+                          >
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 5, backgroundColor: severity === 'high' ? '#ef4444' : severity === 'medium' ? '#f59e0b' : color.mutedForeground }} />
+                            <div style={{ flex: 1, minWidth: 0, fontSize: 11, color: color.foreground, lineHeight: 1.35 }}>
+                              {f?.title ?? ann.note}
+                              {f?.status === 'returned' && (
+                                <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#ef4444', whiteSpace: 'nowrap' }}>{t('toolbar.testCameBack')}</span>
+                              )}
+                            </div>
+                            <button
+                              title={t('toolbar.testDiscard')}
+                              aria-label={t('toolbar.testDiscard')}
+                              onClick={(e) => { e.stopPropagation(); ignoreFinding(i); setScanHighlight(null); }}
+                              style={{ background: 'none', border: 'none', color: color.mutedForeground, cursor: 'pointer', padding: 2, borderRadius: 4, lineHeight: 1, display: 'flex', flexShrink: 0 }}
+                            >
+                              <IconX size={12} stroke={2} />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {items.length === 0 && (
+                    <div style={{ fontSize: 11, color: color.mutedForeground, lineHeight: 1.45 }}>{t('toolbar.testNoneHere')}</div>
+                  )}
+                  {elsewhere > 0 && (
+                    <div style={{ fontSize: 11, color: color.mutedForeground, lineHeight: 1.45, marginTop: 8 }}>{t('toolbar.testElsewhere', { count: elsewhere })}</div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Agent tester — the CLI walks the app in a real browser; the findings come back here */}
             {scanOpen && (() => {
               const phase = testRun?.phase;
@@ -4556,77 +4775,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   </SpeechBubble>
                 )}
 
-                {/* Idle: what will happen, and the one button */}
-                {(!phase || phase === 'error') && (
+                {/* The run failed: why, and try again (findings live on the markers, listed under Run) */}
+                {phase === 'error' && (
                   <>
-                    {phase === 'error' && text(testRun?.error ?? '', 'error')}
-                    {testFindings.length === 0 && phase !== 'error' && text(t('toolbar.testHint'))}
-                    {pageFindings.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, margin: '0 -6px 10px' }}>
-                        {pageFindings.slice(0, 12).map(f => (
-                          <div
-                            key={f.id}
-                            title={f.detail}
-                            style={{ display: 'flex', gap: 6, alignItems: 'flex-start', cursor: 'pointer', padding: '5px 6px', borderRadius: radius.md, transition: 'background-color 0.15s' }}
-                            onMouseEnter={(e) => {
-                              (e.currentTarget as HTMLDivElement).style.backgroundColor = color.muted;
-                              const r = findingElement(f)?.getBoundingClientRect();
-                              setScanHighlight(r ? { top: r.top, left: r.left, width: r.width, height: r.height } : null);
-                            }}
-                            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'; setScanHighlight(null); }}
-                            onClick={() => {
-                              const el = findingElement(f);
-                              if (el) {
-                                const capture = captureElement(el);
-                                const rect = el.getBoundingClientRect();
-                                const box = { top: Math.round(rect.top), left: Math.round(rect.left), width: Math.round(rect.width), height: Math.round(rect.height) };
-                                const pixelTargetId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-                                el.setAttribute('data-ilse-pixel-target', pixelTargetId);
-                                setPendingCapture({
-                                  capture, context: capture.element, contextLabel: buildContextLabel(el),
-                                  rect: box, originalRect: box, note: findingNote(f), markerType: 'element', pixelTargetId,
-                                  testFinding: findingRef(f),
-                                });
-                              } else {
-                                // Console errors, failed requests, mobile-only elements: a note for the page
-                                addAnnotation({ element: '', styles: {}, rect: { top: 0, left: 0, width: 0, height: 0 } }, findingNote(f), 'element', undefined, undefined, findingRef(f));
-                              }
-                              decideTestFinding(f, 'approved');
-                              setScanOpen(false); setScanHighlight(null);
-                            }}
-                          >
-                            <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 5, backgroundColor: f.severity === 'high' ? '#ef4444' : f.severity === 'medium' ? '#f59e0b' : color.mutedForeground }} />
-                            <div style={{ flex: 1, minWidth: 0, fontSize: 11, color: color.foreground, lineHeight: 1.35 }}>
-                              {f.title}
-                              {f.status === 'returned' && (
-                                <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#ef4444', whiteSpace: 'nowrap' }}>{t('toolbar.testCameBack')}</span>
-                              )}
-                            </div>
-                            <button
-                              title={t('toolbar.testDiscard')}
-                              aria-label={t('toolbar.testDiscard')}
-                              onClick={(e) => { e.stopPropagation(); decideTestFinding(f, 'discarded'); setScanHighlight(null); }}
-                              style={{ background: 'none', border: 'none', color: color.mutedForeground, cursor: 'pointer', padding: 2, borderRadius: 4, lineHeight: 1, display: 'flex', flexShrink: 0 }}
-                            >
-                              <IconX size={12} stroke={2} />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {testFindings.length > 0 && pageFindings.length === 0 && text(t('toolbar.testNoneHere'))}
-                    {elsewhere > 0 && text(t('toolbar.testElsewhere', { count: elsewhere }))}
+                    {text(testRun?.error ?? '', 'error')}
                     <button
-                      style={{ ...btn(testFindings.length === 0), width: '100%' }}
+                      style={{ ...btn(true), width: '100%' }}
                       onClick={() => { setTestSteps([]); setTestRun({ phase: 'checking' }); testAction('run'); setScanOpen(false); }}
                     >
-                      {testFindings.length === 0 ? t('toolbar.testRun') : t('toolbar.testRunAgain')}
-                    </button>
-                    <button
-                      onClick={() => { setScanOpen(false); openMemory(); }}
-                      style={{ marginTop: 8, width: '100%', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0, fontFamily: font.sans }}
-                    >
-                      {t('memory.open')} ›
+                      {t('toolbar.testRunAgain')}
                     </button>
                   </>
                 )}
@@ -4825,14 +4982,21 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   </svg>
                 </PillBtn>
               ) : (
+                <span
+                  style={{ display: 'inline-flex' }}
+                  onMouseEnter={() => { if (toolbarMode === 'test' && testFindings.length + pendingCount > 0) holdRunList(true); }}
+                  onMouseLeave={() => holdRunList(false)}
+                >
                 <PillBtn accent={accent}
-                  title={t('toolbar.run')}
-                  onClick={sendAll}
+                  // In test mode the list under the pointer names the action; with nothing to list, the tooltip does
+                  title={toolbarMode === 'test' ? (testFindings.length + pendingCount > 0 ? undefined : t('toolbar.runFixes')) : t('toolbar.run')}
+                  onClick={() => { setRunListOpen(false); setScanHighlight(null); sendAll(); }}
                   disabled={pendingCount === 0}
                   badge={pendingCount > 0 ? pendingCount : undefined}
                 >
                   <IconBolt size={18} stroke={1.75} />
                 </PillBtn>
+                </span>
               )}
 
               {/* Undo — restores the files of the last batch, no LLM involved */}
@@ -4920,22 +5084,28 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
               </>)}
 
-              {/* Agent tester — test mode's main action */}
-              {toolbarMode === 'test' && (
-              <PillBtn accent={accent}
-                title={t('toolbar.scan')}
-                active={scanOpen}
-                badge={pageFindings.length > 0 ? pageFindings.length : undefined}
-                onClick={() => {
-                  const opening = !scanOpen;
-                  setScanOpen(opening);
-                  if (opening) { setShowSettings(false); setChatOpen(false); send({ type: 'findings' }); }
-                  if (!opening) setScanHighlight(null);
-                }}
-              >
-                <IconRobot size={18} stroke={1.75} />
-              </PillBtn>
-              )}
+              {/* Test mode: test the app again; the findings land on their markers */}
+              {toolbarMode === 'test' && (() => {
+                const testing = testRun?.phase === 'checking' || testRun?.phase === 'running';
+                return (<>
+                  <PillBtn accent={accent}
+                    title={t('toolbar.testRunAgain')}
+                    active={testing}
+                    pulsing={testing}
+                    disabled={testing}
+                    onClick={() => { setShowSettings(false); setChatOpen(false); setTestSteps([]); setTestRun({ phase: 'checking' }); testAction('run'); }}
+                  >
+                    <IconRefresh size={18} stroke={1.75} />
+                  </PillBtn>
+                  <PillBtn accent={accent}
+                    title={markersVisible ? t('toolbar.hideMarkers') : t('toolbar.showMarkers')}
+                    active={!markersVisible}
+                    onClick={() => setMarkersVisible(v => !v)}
+                  >
+                    {markersVisible ? <IconEye size={18} stroke={1.75} /> : <IconEyeOff size={18} stroke={1.75} />}
+                  </PillBtn>
+                </>);
+              })()}
 
               {/* Separator */}
               <div style={{ width: 1, height: 18, backgroundColor: '#e0e0e0', margin: '0 6px' }} />
@@ -4988,13 +5158,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                           return;
                         }
                         setToolbarMode(mode);
-                        setShowSettings(false); setChatOpen(false);
+                        setShowSettings(false); setChatOpen(false); setActiveMarker(null); setRunListOpen(false);
                         if (mode === 'test') {
-                          // Nothing to point at while testing: leave capture and drawing, open the tester
+                          // Nothing to point at while testing: leave capture and drawing; the findings come as markers
                           if (drawMode) exitDrawMode();
                           if (pendingCaptureRef.current) cancelCapture();
                           setAnnotating(false);
-                          setScanOpen(true);
                           send({ type: 'findings' });
                         } else {
                           setScanOpen(false); setScanHighlight(null);

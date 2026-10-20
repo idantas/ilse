@@ -116,6 +116,22 @@ function sizeFamily(p: 'w' | 'h'): Family {
   };
 }
 
+/** blur-* / backdrop-blur-*: only a lone `blur(…)` is written without AI */
+function blurFamily(prefix: string): Family {
+  return {
+    prefix,
+    matches: c => new RegExp(`^${prefix}(-(xs|sm|md|lg|xl|2xl|3xl|none|\\[.+\\]))?$`).test(c),
+    fromValue: v => {
+      const k = v.trim();
+      if (k === 'none') return `${prefix}-none`;
+      const m = k.match(/^blur\((\d+(?:\.\d+)?px)\)$/);
+      return m ? `${prefix}-[${m[1]}]` : null;
+    },
+  };
+}
+
+const EFFECTS = new Set(['boxShadow', 'filter', 'backdropFilter']);
+
 const FAMILIES: Record<string, Family> = {
   padding: {
     prefix: 'p',
@@ -145,6 +161,11 @@ const FAMILIES: Record<string, Family> = {
     prefix: 'text',
     matches: c => SIZE_NAMES.some(s => c === `text-${s}`) || /^text-\[\d.*(px|rem)\]$/.test(c),
     fromValue: v => { const n = px(v); return n !== null && FONT_SIZES_PX[n] ? `text-${FONT_SIZES_PX[n]}` : null; },
+  },
+  textAlign: {
+    prefix: 'text',
+    matches: c => /^text-(left|center|right|justify|start|end)$/.test(c),
+    fromValue: v => /^(left|center|right|justify|start|end)$/.test(v.trim()) ? `text-${v.trim()}` : null,
   },
   fontWeight: {
     prefix: 'font',
@@ -205,6 +226,22 @@ const FAMILIES: Record<string, Family> = {
     matches: c => /^(flex-1|flex-auto|flex-none|flex-initial|(flex-)?grow(-0)?)$/.test(c),
     fromValue: v => v.trim() === '1' ? 'flex-1' : v.trim() === '0' ? 'grow-0' : null,
   },
+  // Position: the keyword is the class; X/Y on the spacing scale or arbitrary
+  position: {
+    prefix: '',
+    matches: c => /^(static|relative|absolute|fixed|sticky)$/.test(c),
+    fromValue: v => /^(static|relative|absolute|fixed|sticky)$/.test(v.trim()) ? v.trim() : null,
+  },
+  top: boxFamily('top', /^-?top-/, true),
+  left: boxFamily('left', /^-?left-/, true),
+  // Effects: the panel picks a step of the scale (the token is the class); a typed blur is arbitrary
+  boxShadow: {
+    prefix: 'shadow',
+    matches: c => /^shadow(-(2xs|xs|sm|md|lg|xl|2xl|inner|none|\[.+\]))?$/.test(c),
+    fromValue: v => v.trim() === 'none' ? 'shadow-none' : null,
+  },
+  filter: blurFamily('blur'),
+  backdropFilter: blurFamily('backdrop-blur'),
   // Colours only move with a named token — a raw colour would be a hardcoded value
   color: {
     prefix: 'text',
@@ -249,6 +286,8 @@ export function tokenSuffix(token: string, property: string): string | null {
 export function classFor(change: StyleChange): string | null {
   const family = FAMILIES[change.property];
   if (!family) return null;
+  // Effect steps are named by their class already (`effect.shadow-md`)
+  if (change.token?.startsWith('effect.')) return change.token.slice('effect.'.length);
   if (change.token) {
     const suffix = tokenSuffix(change.token, change.property);
     if (suffix) return `${family.prefix}-${suffix}`;
@@ -411,8 +450,10 @@ export function planTokenSwap(annotation: Annotation, cwd: string): SwapResult {
     const target = withMatch[0] ?? 0;
     const removed = owners[target] ?? [];
     lists[target] = lists[target].filter(c => !removed.includes(c));
-    if (!lists[target].includes(next)) lists[target].push(next);
-    edits.push({ property: change.property, removed, added: next });
+    // Removing an effect the class gave: dropping the class is enough, no `shadow-none`
+    const dropOnly = EFFECTS.has(change.property) && next.endsWith('-none') && removed.length > 0;
+    if (!dropOnly && !lists[target].includes(next)) lists[target].push(next);
+    edits.push({ property: change.property, removed, added: dropOnly ? '' : next });
   }
 
   const after = rewrite(code, literals, lists);
@@ -426,7 +467,7 @@ export function applyTokenSwap(plan: SwapPlan, cwd: string): void {
 }
 
 export function describeSwap(plan: SwapPlan): string {
-  const parts = plan.edits.map(e => `${e.removed.length ? e.removed.join(' ') : '∅'} → ${e.added}`);
+  const parts = plan.edits.map(e => `${e.removed.length ? e.removed.join(' ') : '∅'} → ${e.added || '∅'}`);
   return t('swap.summary', { edits: parts.join(', '), file: plan.file, line: plan.line });
 }
 

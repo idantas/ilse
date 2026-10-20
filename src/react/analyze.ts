@@ -323,6 +323,8 @@ export interface DSToken {
   type: 'color' | 'spacing' | 'typography';
   /** How the panel lists it, when the name alone isn't how a designer reads it ("2 · 8px") */
   label?: string;
+  /** What the dropdown shows beside the label (defaults to the value), e.g. the class `shadow-md` */
+  hint?: string;
 }
 
 let loadedTokens: DSToken[] = [];

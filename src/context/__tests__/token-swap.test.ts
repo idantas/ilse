@@ -41,6 +41,7 @@ describe('classFor', () => {
     expect(classFor({ property: 'fontWeight', from: '500', to: '600' })).toBe('font-semibold');
     expect(classFor({ property: 'fontSize', from: '16px', to: '18px' })).toBe('text-lg');
     expect(classFor({ property: 'borderRadius', from: '8px', to: '12px' })).toBe('rounded-xl');
+    expect(classFor({ property: 'textAlign', from: 'start', to: 'right' })).toBe('text-right');
   });
 
   it('maps named tokens and refuses raw colours', () => {
@@ -68,6 +69,55 @@ describe('planTokenSwap', () => {
     if (!res.ok) return;
     expect(res.plan.after).toContain('className="flex flex-col p-4 rounded-lg bg-white gap-4"');
     expect(res.plan.edits[0]).toEqual({ property: 'gap', removed: ['gap-3'], added: 'gap-4' });
+  });
+
+  it('swaps text alignment without touching the text colour or size', () => {
+    const cwd = project({ 'src/Quote.tsx': `export function Quote() {
+  return <p className="text-left text-lg text-muted">Ilse</p>;
+}
+` });
+    const res = planTokenSwap(annotation(cwd, 'p.text-left.text-lg', [{ property: 'textAlign', from: 'left', to: 'center' }], 'Ilse'), cwd);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.plan.after).toContain('className="text-lg text-muted text-center"');
+    expect(res.plan.edits[0]).toEqual({ property: 'textAlign', removed: ['text-left'], added: 'text-center' });
+  });
+
+  it('swaps a shadow step and drops the class when the shadow is removed', () => {
+    const src = `export function Box() {
+  return <div className="rounded-xl shadow-sm shadow-black/20 p-4">Ilse</div>;
+}
+`;
+    const cwd = project({ 'src/Box.tsx': src });
+    const up = planTokenSwap(annotation(cwd, 'div.rounded-xl.shadow-sm', [{ property: 'boxShadow', from: 'a', to: 'b', token: 'effect.shadow-lg' }], 'Ilse'), cwd);
+    expect(up.ok && up.plan.after).toContain('className="rounded-xl shadow-black/20 p-4 shadow-lg"');
+    const off = planTokenSwap(annotation(cwd, 'div.rounded-xl.shadow-sm', [{ property: 'boxShadow', from: 'a', to: 'none', token: 'effect.shadow-none' }], 'Ilse'), cwd);
+    expect(off.ok && off.plan.after).toContain('className="rounded-xl shadow-black/20 p-4"');
+  });
+
+  it('takes an element out of the flow: absolute with X/Y', () => {
+    const cwd = project({ 'src/Stamp.tsx': `export function Stamp() {
+  return <p className="relative text-xs">Dados</p>;
+}
+` });
+    const res = planTokenSwap(annotation(cwd, 'p.relative.text-xs', [
+      { property: 'position', from: 'relative', to: 'absolute' },
+      { property: 'top', from: 'auto', to: '88px' },
+      { property: 'left', from: 'auto', to: '97px' },
+    ], 'Dados'), cwd);
+    expect(res.ok && res.plan.after).toContain('className="text-xs absolute top-22 left-[97px]"');
+  });
+
+  it('writes a blur and a backdrop blur step', () => {
+    const cwd = project({ 'src/Glass.tsx': `export function Glass() {
+  return <div className="backdrop-blur-sm blur">Ilse</div>;
+}
+` });
+    const res = planTokenSwap(annotation(cwd, 'div.backdrop-blur-sm.blur', [
+      { property: 'backdropFilter', from: 'blur(8px)', to: 'blur(16px)', token: 'effect.backdrop-blur-lg' },
+      { property: 'filter', from: 'blur(8px)', to: 'blur(5px)' },
+    ], 'Ilse'), cwd);
+    expect(res.ok && res.plan.after).toContain('className="backdrop-blur-lg blur-[5px]"');
   });
 
   it('replaces px/py together when padding is set as one value', () => {

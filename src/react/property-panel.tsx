@@ -26,7 +26,8 @@ import { getDSTokens, type DSToken } from './analyze.js';
 import { readColor, canonicalColor, toHex, isTransparent } from './color.js';
 import { collectColorTokens, collectGradientTokens, gradientIn, withStaticTokens, byBaseness, type ColorToken, type GradientToken } from './color-tokens.js';
 import { ColorPicker } from './color-picker.js';
-import { readPageScales, onScale, type PageScales } from './scale.js';
+import { readPageScales, onScale, isTailwindV4, type PageScales } from './scale.js';
+import { readEffectScales, blurOf, withBlur, type EffectScales } from './effects.js';
 import {
   readLayout, flowStyles, alignStyles, readSize, sizeStyles, readStroke, strokeWidths, type SidesOn,
   effectiveSides, boxMode, boxStyles, withBoxLonghands,
@@ -37,7 +38,8 @@ import type { StyleChange } from '../types.js';
 
 // ── Which properties the panel exposes, and how ────────────────────────────
 
-type Group = 'layout' | 'typography' | 'color' | 'stroke' | 'appearance';
+type Group = 'position' | 'layout' | 'typography' | 'color' | 'stroke' | 'appearance' | 'effects';
+type Scales = PageScales & EffectScales;
 
 interface PropSpec {
   key: string;              // camelCase CSS property
@@ -45,14 +47,22 @@ interface PropSpec {
   group: Group;
   tokenType?: DSToken['type'];  // which token family feeds the options
   options?: string[];       // fallback scale when no token family applies
-  scale?: keyof PageScales; // spacing/radius: the page's own scale feeds the options
+  scale?: keyof Scales;     // spacing/radius/effects: the page's own scale feeds the options
   /** Edited through the Layout controls, not a row of its own */
   control?: boolean;
 }
 
 const SPACING_FALLBACK = ['0px', '4px', '8px', '12px', '16px', '24px', '32px'];
 
+const CSS_POSITIONS = ['static', 'relative', 'absolute', 'fixed', 'sticky'];
+/** Taken out of the flow: dragged anywhere, X/Y are where it sits */
+const FREE_POSITIONS = /^(absolute|fixed)$/;
+
 const PROPS: PropSpec[] = [
+  // Position: where the element itself sits (Layout is how it arranges what's inside)
+  { key: 'position', label: 'Position', group: 'position', options: CSS_POSITIONS },
+  { key: 'left',     label: 'X',        group: 'position' },
+  { key: 'top',      label: 'Y',        group: 'position' },
   { key: 'display',        label: 'Display',   group: 'layout', control: true },
   { key: 'flexDirection',  label: 'Direction', group: 'layout', control: true },
   { key: 'flexWrap',       label: 'Wrap',      group: 'layout', control: true },
@@ -72,6 +82,8 @@ const PROPS: PropSpec[] = [
   { key: 'fontWeight',    label: 'Weight',      group: 'typography', options: ['100', '200', '300', '400', '500', '600', '700', '800', '900'] },
   { key: 'lineHeight',    label: 'Line height', group: 'typography', tokenType: 'typography' },
   { key: 'letterSpacing', label: 'Letter',      group: 'typography' },
+  // Left / center / right: a segmented row under Typography
+  { key: 'textAlign',     label: 'Align',       group: 'typography', control: true },
 
   { key: 'color',           label: 'Text',   group: 'color', tokenType: 'color' },
   { key: 'backgroundColor', label: 'Fill',   group: 'color', tokenType: 'color' },
@@ -84,14 +96,27 @@ const PROPS: PropSpec[] = [
 
   { key: 'borderRadius', label: 'Radius',  group: 'appearance', scale: 'radius' },
   { key: 'opacity',      label: 'Opacity', group: 'appearance', options: ['0.25', '0.5', '0.75', '0.9', '1'] },
+
+  // Shown only when the element has them; "+" adds a shadow
+  { key: 'boxShadow',      label: 'Shadow',   group: 'effects', scale: 'shadow' },
+  { key: 'filter',         label: 'Blur',     group: 'effects', scale: 'blur' },
+  { key: 'backdropFilter', label: 'Backdrop', group: 'effects', scale: 'backdrop' },
 ];
 
+const EFFECT_KEYS = new Set(['boxShadow', 'filter', 'backdropFilter']);
+/** A blur lives inside a filter list: the row shows and edits only its blur(…) */
+const BLUR_KEYS = new Set(['filter', 'backdropFilter']);
+/** What an effect property is when the element has none */
+const restingValue = (key: string) => EFFECT_KEYS.has(key) ? 'none' : '';
+
 const GROUP_LABELS: Record<Group, string> = {
+  position: 'Position',
   layout: 'Layout',
   typography: 'Typography',
   color: 'Colors',
   stroke: 'Stroke',
   appearance: 'Appearance',
+  effects: 'Effects',
 };
 
 /** Space between the panel's sections (Layout, Typography…) */
@@ -118,7 +143,7 @@ function sameValue(a: string, b: string, isColor: boolean): boolean {
   return isColor ? canonicalColor(a) === canonicalColor(b) : norm(a) === norm(b);
 }
 
-function tokensFor(spec: PropSpec, all: DSToken[], colors: ColorToken[], scales: PageScales): DSToken[] {
+function tokensFor(spec: PropSpec, all: DSToken[], colors: ColorToken[], scales: Scales): DSToken[] {
   if (spec.scale) return scales[spec.scale];
   if (!spec.tokenType) return [];
   if (spec.tokenType === 'color') return colors;
@@ -169,6 +194,8 @@ export interface PanelHistory {
   resetText: () => void;
   /** The preview outlives the panel (the draft was added): how to put the page back later */
   detachPreview: () => () => void;
+  /** Write several properties as one step — the toolbar's drag of a positioned element */
+  setStyles: (values: Record<string, string>, label: string) => void;
 }
 
 export interface TextEdit { from: string; to: string }
@@ -249,15 +276,16 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   function previewText(value: string) {
     const e = getElement();
     if (!e) return;
-    textNodes.current ??= Array.from(e.childNodes).filter((n): n is Text => n.nodeType === Node.TEXT_NODE).map(node => ({ node, data: node.data }));
-    // Lines between <br>s: one per line when the count matches, else all on the first
+    const all = lineRuns(e);
+    textNodes.current ??= all.flat().map(node => ({ node, data: node.data }));
+    const original = new Map(textNodes.current.map(n => [n.node, n.data]));
+    // Lines between <br>s: one per line when the count matches, else all as one
     const lines = value.split('\n');
-    const runs = lineRuns(e);
-    const firsts = new Set(runs.map(r => r[0]).filter(Boolean));
-    const fits = lines.length === runs.length;
-    textNodes.current.forEach((n, i) => {
-      if (fits) n.node.data = firsts.has(n.node) ? lines[runs.findIndex(r => r[0] === n.node)] : '';
-      else n.node.data = i === 0 ? lines.join(' ') : '';
+    const fits = lines.length === all.length;
+    const runs = fits ? all : [all.flat()];
+    runs.forEach((run, i) => {
+      const spread = spreadText(run.map(n => original.get(n) ?? n.data), fits ? lines[i] : lines.join(' '));
+      run.forEach((n, j) => { n.data = spread[j]; });
     });
   }
   function revertText() { textNodes.current?.forEach(n => { n.node.data = n.data; }); }
@@ -285,7 +313,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [colorEpoch, targetId],
   );
-  const scales = useMemo(() => readPageScales(dsTokens), [dsTokens]);
+  const scales = useMemo<Scales>(() => ({ ...readPageScales(dsTokens), ...readEffectScales(isTailwindV4()) }), [dsTokens]);
   // Computed styles + the padding/margin longhands they imply — what "no change" is compared against
   const base = useMemo(() => withBoxLonghands(styles), [styles]);
   const [picker, setPicker] = useState<{ key: string; anchor: DOMRect; anchorEl: Element } | null>(null);
@@ -394,7 +422,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     }
 
     const next = { ...editsRef.current };
-    if (!value || sameValue(value, base[spec.key] ?? '', isColor)) delete next[spec.key];
+    if (!value || sameValue(value, base[spec.key] ?? restingValue(spec.key), isColor)) delete next[spec.key];
     else next[spec.key] = value;
     editsRef.current = next;
     setEdits(next);
@@ -438,7 +466,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
       const gradient = key === 'backgroundImage';
       return {
         property: key,
-        from: gradient ? currentImage() : base[key] ?? '',
+        from: gradient ? currentImage() : base[key] ?? restingValue(key),
         to,
         token: gradient ? editTokens.current[key] : token?.name,
         offToken: family.length > 0 && !token && !onScale(to, family) && !(COLOR_PROPS.has(key) && isTransparent(to))
@@ -476,15 +504,19 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     if (textFill && p.key === 'backgroundColor') return false;
     if (p.key === 'borderColor') return stroke.has;
     if (p.key === 'gap') return layout.flow !== 'block';
+    if (p.group === 'position') return !textSelection && (p.key === 'position' || (effective.position ?? 'static') !== 'static');
+    if (BLUR_KEYS.has(p.key)) return blurOf(styles[p.key]) !== 'none' || p.key in edits;
+    if (EFFECT_KEYS.has(p.key)) return !!styles[p.key] || p.key in edits;
     return !!styles[p.key];
   };
   // The gradient token Fill shows: the one just picked, or the one the element already has
   const fillGradient = edits.backgroundImage
     ? gradientTokens.find(g => g.name === editTokens.current.backgroundImage)
     : el ? gradientIn(getComputedStyle(el).backgroundImage, gradientTokens) : undefined;
-  const groups = (['layout', 'typography', 'color', 'stroke', 'appearance'] as Group[])
+  const hasShadow = (edits.boxShadow ?? styles.boxShadow ?? 'none') !== 'none';
+  const groups = (['position', 'layout', 'typography', 'color', 'stroke', 'appearance', 'effects'] as Group[])
     .map(g => ({ group: g, specs: PROPS.filter(p => p.group === g && shown(p)) }))
-    .filter(g => g.specs.length > 0 || ((g.group === 'layout' || g.group === 'stroke') && !!styles.display));
+    .filter(g => g.specs.length > 0 || ((g.group === 'layout' || g.group === 'stroke' || g.group === 'effects') && !!styles.display));
 
   // ── History: one step per decision, so ⌘Z walks the draft back ──
   // A colour drag or a stream of the same control within half a second is one step.
@@ -527,8 +559,33 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
       texts.forEach(n => { n.node.data = n.data; });
     };
   }
-  if (historyRef) historyRef.current = { undo, size: () => history.current.length, resetText: () => setTextValue(textOriginal), detachPreview };
+  if (historyRef) historyRef.current = { undo, size: () => history.current.length, resetText: () => setTextValue(textOriginal), detachPreview, setStyles: (v, label) => applyMany(v, label) };
   const [front, bringToFront] = useFrontLayer('panel', false);
+
+  /**
+   * Position change. Out of the flow (absolute/fixed) the element keeps the spot
+   * and the width it had, so it doesn't jump: X/Y are measured, not guessed.
+   * Back in the flow, X/Y go.
+   */
+  function setPosition(next: string) {
+    const spec = (key: string) => PROPS.find(p => p.key === key)!;
+    const el = getElement();
+    record('Position');
+    if (!el || !FREE_POSITIONS.test(next)) {
+      apply(spec('position'), next);
+      apply(spec('top'), '');
+      apply(spec('left'), '');
+      return;
+    }
+    const before = el.getBoundingClientRect();
+    apply(spec('position'), next);
+    apply(spec('left'), '0px');
+    apply(spec('top'), '0px');
+    const at = el.getBoundingClientRect();
+    apply(spec('left'), `${Math.round(before.left - at.left)}px`);
+    apply(spec('top'), `${Math.round(before.top - at.top)}px`);
+    if (Math.abs(el.getBoundingClientRect().width - before.width) > 1) apply(spec('width'), `${Math.round(before.width)}px`);
+  }
 
   function applyMany(values: Record<string, string>, label = PROPS.find(p => p.key === Object.keys(values)[0])?.label ?? 'Layout') {
     record(label);
@@ -638,6 +695,34 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                   {stroke.has ? '−' : '+'}
                 </IconButton>
               )}
+              {group === 'position' && parentFlow && (
+                <IconButton
+                  title={t('panel.position.ignoreLayout')}
+                  active={FREE_POSITIONS.test(effective.position ?? '')}
+                  onClick={() => setPosition(FREE_POSITIONS.test(effective.position ?? '')
+                    ? (styles.position && !FREE_POSITIONS.test(styles.position) ? styles.position : 'static')
+                    : 'absolute')}
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                    <path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3" />
+                    <rect x="5.5" y="5.5" width="5" height="5" rx="1" />
+                  </svg>
+                </IconButton>
+              )}
+              {group === 'effects' && (
+                <IconButton
+                  title={hasShadow ? t('panel.shadow.remove') : t('panel.shadow.add')}
+                  onClick={() => {
+                    const spec = PROPS.find(p => p.key === 'boxShadow')!;
+                    record(spec.label);
+                    // The step a card usually gets: md (sm on v3, where md is already heavy)
+                    const add = scales.shadow.find(tk => /shadow-md$/.test(tk.name)) ?? scales.shadow[1];
+                    apply(spec, hasShadow ? 'none' : add?.value ?? 'none');
+                  }}
+                >
+                  {hasShadow ? '−' : '+'}
+                </IconButton>
+              )}
             </div>
             {group === 'layout' && (
               <LayoutControls
@@ -667,8 +752,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
               <PropertyRow
                 key={spec.key}
                 spec={textFill && spec.key === 'color' ? { ...spec, label: 'Fill' } : spec}
-                current={styles[spec.key] ?? '0px'}
-                edited={edits[spec.key] ?? (spec.key === 'backgroundColor' ? edits.backgroundImage : undefined)}
+                current={BLUR_KEYS.has(spec.key) ? blurOf(styles[spec.key]) : styles[spec.key] ?? (EFFECT_KEYS.has(spec.key) ? 'none' : spec.key === 'position' ? 'static' : '0px')}
+                edited={BLUR_KEYS.has(spec.key)
+                  ? (spec.key in edits ? blurOf(edits[spec.key]) : undefined)
+                  : edits[spec.key] ?? (spec.key === 'backgroundColor' ? edits.backgroundImage : undefined)}
                 tokens={tokensFor(spec, dsTokens, colorTokens, scales)}
                 preferredToken={editTokens.current[spec.key] ?? tokenFromClasses(getElement(), spec.key, colorTokens)}
                 gradient={spec.key === 'backgroundColor' ? fillGradient : undefined}
@@ -678,9 +765,22 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                   setColorEpoch(n => n + 1);
                   setPicker({ key: spec.key, anchor: (panelRef.current ?? el).getBoundingClientRect(), anchorEl: el });
                 }}
-                onApply={(v) => { record(spec.label); apply(spec, v); }}
+                onApply={(v) => {
+                  if (spec.key === 'position') { setPosition(v); return; }
+                  record(spec.label);
+                  // X/Y typed as a bare number are pixels
+                  const value = (spec.key === 'top' || spec.key === 'left') && /^-?\d+(\.\d+)?$/.test(v.trim()) ? `${v.trim()}px` : v;
+                  apply(spec, BLUR_KEYS.has(spec.key) ? withBlur(styles[spec.key], value) : value);
+                }}
               />
             ))}
+            {group === 'typography' && styles.textAlign && (
+              <TextAlignRow
+                value={effective.textAlign ?? ''}
+                edited={'textAlign' in edits}
+                onPick={(v) => { record('Align'); apply(PROPS.find(p => p.key === 'textAlign')!, v); }}
+              />
+            )}
             {group === 'stroke' && stroke.has && (
               <StrokeControls
                 stroke={stroke}
@@ -931,6 +1031,54 @@ function LayoutControls({ layout, edited, onFlow, onAlign, onBetween, onWrap, si
   );
 }
 
+const TEXT_ALIGNS = [
+  { value: 'left', title: () => t('panel.align.left'), lines: [[2, 14], [2, 10], [2, 12]] },
+  { value: 'center', title: () => t('panel.align.center'), lines: [[2, 14], [4, 12], [3, 13]] },
+  { value: 'right', title: () => t('panel.align.right'), lines: [[2, 14], [6, 14], [4, 14]] },
+] as const;
+
+/** Text alignment as the page reads it: `start`/`end` are left/right in a left-to-right page */
+export function textAlignOf(value: string, rtl = false): string {
+  const v = value.trim();
+  if (v === 'start' || v === '') return rtl ? 'right' : 'left';
+  if (v === 'end') return rtl ? 'left' : 'right';
+  return v;
+}
+
+function TextAlignRow({ value, edited, onPick }: { value: string; edited: boolean; onPick: (v: string) => void }) {
+  const current = textAlignOf(value);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
+      <span style={{ width: 60, flexShrink: 0, color: color.mutedForeground }}>Align</span>
+      <div style={{ flex: 1, display: 'flex', padding: 2, gap: 2, borderRadius: radius.sm, backgroundColor: color.muted }}>
+        {TEXT_ALIGNS.map(a => {
+          const on = current === a.value;
+          return (
+            <button
+              key={a.value}
+              title={`${a.title().charAt(0).toUpperCase()}${a.title().slice(1)} · text-${a.value}`}
+              aria-pressed={on}
+              onClick={() => { if (!on) onPick(a.value); }}
+              style={{
+                flex: 1, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: 'none', borderRadius: radius.sm - 2, cursor: on ? 'default' : 'pointer',
+                backgroundColor: on ? color.background : 'transparent',
+                boxShadow: on ? shadow.xs : 'none',
+                color: on ? color.foreground : color.mutedForeground,
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+                {a.lines.map(([x1, x2], i) => <line key={i} x1={x1} y1={4 + i * 4} x2={x2} y2={4 + i * 4} />)}
+              </svg>
+            </button>
+          );
+        })}
+      </div>
+      {edited && <span title={t('panel.edited')} style={{ width: 5, height: 5, flexShrink: 0, borderRadius: '50%', backgroundColor: '#E8A33D' }} />}
+    </div>
+  );
+}
+
 function Toggle({ on, onClick, label, hint }: { on: boolean; onClick: () => void; label: string; hint: string }) {
   return (
     <button
@@ -960,19 +1108,61 @@ function Toggle({ on, onClick, label, hint }: { on: boolean; onClick: () => void
  * a <b> or a <span> inside is structure the textarea can't keep.
  */
 export function editableText(el: Element | null): string | null {
-  if (!el || Array.from(el.children).some(c => c.tagName !== 'BR')) return null;
+  if (!el || !inlineOnly(el)) return null;
   const lines = lineRuns(el).map(run => run.map(n => n.data).join('').replace(/\s+/g, ' ').trim());
   return lines.join('').trim() ? lines.join('\n') : null;
 }
 
-/** The text nodes of each line, split at <br> */
+/** Formatting inside a line of text (`O que estamos <em>construindo</em>`): still one text to retype */
+const INLINE_TAGS = new Set(['BR', 'EM', 'STRONG', 'B', 'I', 'U', 'S', 'SPAN', 'A', 'CODE', 'SMALL', 'MARK', 'SUB', 'SUP', 'ABBR', 'Q', 'DEL', 'INS', 'KBD', 'TIME']);
+function inlineOnly(el: Element): boolean {
+  return Array.from(el.children).every(c => INLINE_TAGS.has(c.tagName) && inlineOnly(c));
+}
+
+/** The text nodes of each line, in reading order, split at <br> (also inside <em>, <span>…) */
 function lineRuns(el: Element): Text[][] {
   const runs: Text[][] = [[]];
-  for (const n of Array.from(el.childNodes)) {
-    if (n.nodeType === Node.TEXT_NODE) runs[runs.length - 1].push(n as Text);
-    else if ((n as Element).tagName === 'BR') runs.push([]);
-  }
+  const walk = (node: Node) => {
+    for (const n of Array.from(node.childNodes)) {
+      if (n.nodeType === Node.TEXT_NODE) runs[runs.length - 1].push(n as Text);
+      else if ((n as Element).tagName === 'BR') runs.push([]);
+      else if (n.nodeType === Node.ELEMENT_NODE) walk(n);
+    }
+  };
+  walk(el);
   return runs;
+}
+
+/**
+ * Retyped text spread back over the pieces it was made of, so `<em>` stays on
+ * the words it was on: only the stretch that changed is rewritten, inside the
+ * piece where it starts. Pieces are compared with their whitespace collapsed,
+ * as the text field shows them.
+ */
+export function spreadText(pieces: string[], next: string): string[] {
+  const segs = pieces.map(p => p.replace(/\s+/g, ' '));
+  const joined = segs.join('');
+  const lead = joined.length - joined.trimStart().length;
+  const core = joined.trim();
+  let pre = 0;
+  while (pre < core.length && pre < next.length && core[pre] === next[pre]) pre++;
+  let suf = 0;
+  while (suf < core.length - pre && suf < next.length - pre && core[core.length - 1 - suf] === next[next.length - 1 - suf]) suf++;
+  const start = lead + pre, end = lead + core.length - suf;
+  const insert = next.slice(pre, next.length - suf);
+  let at = 0, placed = false;
+  return segs.map(seg => {
+    const from = at, to = at + seg.length;
+    at = to;
+    // The piece where the change starts takes the new text (a pure insertion
+    // at a seam goes to the piece before it); later pieces only lose their part
+    if (!placed && (start < to || (start === to && end === start))) {
+      placed = true;
+      return seg.slice(0, start - from) + insert + seg.slice(Math.min(seg.length, end - from));
+    }
+    if (!placed || from >= end) return seg;
+    return seg.slice(Math.min(seg.length, end - from));
+  });
 }
 
 // ── One property row ───────────────────────────────────────────────────────
@@ -1071,7 +1261,7 @@ function ScaleControl({ spec, value, tokens, preferredToken, onApply, prefix, co
   const isOffToken = tokens.length > 0 && !matched && !isNone && !onScale(value, tokens);
   const [custom, setCustom] = useState(false);
   const listed = tokens.length > 0
-    ? tokens.map(t => ({ label: t.label ?? t.name, value: t.value, hint: t.value }))
+    ? tokens.map(t => ({ label: t.label ?? t.name, value: t.value, hint: t.hint ?? t.value }))
     : (spec.options ?? []).map(o => ({ label: o, value: o }));
   // "None" first, where zero means something (no padding, square corners, no stroke)
   const options = none ? [{ label: 'None', value: '0px', hint: '0' }, ...listed.filter(o => !isZero(o.value))] : listed;

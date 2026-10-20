@@ -56,6 +56,22 @@ const messages = {
     pt: 'Um agente abre o seu app num navegador à parte, passa pelas páginas no computador e no celular e lista o que encontrou: acessibilidade, erros, links quebrados, layout, e o que atrapalha agentes de IA. Nada sai da sua máquina.',
     en: 'An agent opens your app in a separate browser, goes through its pages on desktop and mobile, and lists what it found: accessibility, errors, broken links, layout, and what gets in the way of AI agents. Nothing leaves your machine.',
   },
+  'toolbar.testIgnore': {
+    pt: 'Ignorar teste',
+    en: 'Ignore test',
+  },
+  'toolbar.runFixes': {
+    pt: 'Executar correções',
+    en: 'Run fixes',
+  },
+  'toolbar.testFoundHere': {
+    pt: '{count} achados nesta página: já estão nos marcadores',
+    en: '{count} findings on this page: they are on the markers',
+  },
+  'toolbar.testFindingsList': {
+    pt: 'Achados nesta página',
+    en: 'Findings on this page',
+  },
   'toolbar.testRunAgain': {
     pt: 'Testar de novo',
     en: 'Test again',
@@ -905,6 +921,9 @@ const messages = {
 
   // ── Property panel, value lists, colour picker, pencil ────────────────────
   'panel.stroke.add': { pt: 'Adicionar stroke', en: 'Add stroke' },
+  'panel.position.ignoreLayout': { pt: 'Ignorar o layout do pai (absolute): move livre', en: 'Ignore the parent layout (absolute): move freely' },
+  'panel.shadow.add': { pt: 'Adicionar sombra', en: 'Add shadow' },
+  'panel.shadow.remove': { pt: 'Remover sombra', en: 'Remove shadow' },
   'panel.stroke.remove': { pt: 'Remover stroke', en: 'Remove stroke' },
   'panel.stroke.solid': { pt: 'Sólido', en: 'Solid' },
   'panel.stroke.dashed': { pt: 'Tracejado', en: 'Dashed' },

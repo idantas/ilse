@@ -86,6 +86,10 @@ When the limit hits:
 
 To keep going before the reset: switch account (`--account`) or use the clipboard mode.
 
+## Test mode in the toolbar
+
+With Ilse Pro, the Design / Test switch turns the toolbar into the tester. **Test again** (↻) has an agent walk the app in a separate browser. What it finds on the page you're on lands as blue markers on the elements, each with its note already written. Click a marker to change the note, send it, or **Ignore test** (Ilse stops warning about it). Hover **Run fixes** (⚡) to see the list of findings, and how many are on other pages. Run fixes sends them to your agent, and Ilse tests those pages again after the fix. Findings with nothing to point at, like a console error, are in that list but get no marker. The eye hides the markers. Design notes and test markers stay apart: each mode shows and runs its own.
+
 ## Project memory
 
 Settings → **Project memory** shows everything Ilse remembers of this project — nothing is kept out of sight:
