@@ -2306,7 +2306,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   }, []);
 
   useEffect(() => {
-    if (annotating) {
+    if (annotating && isOpen) { // never selecting with the toolbar closed
       // Annotation capture handlers (run first in capture phase). Pointer, not
       // mouse, down/up: browsers never send mousedown/mouseup/click to a disabled
       // button or input, but they do send pointer events, so it can be selected.
@@ -2338,7 +2338,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       setHoverLabelRect(null);
       return undefined;
     }
-  }, [annotating, handleMouseDown, handleMouseMove, handleMouseUp, blockInteraction]);
+  }, [annotating, isOpen, handleMouseDown, handleMouseMove, handleMouseUp, blockInteraction]);
 
   // ── Escape: close everything ───────────────────────────────────────────────
 
@@ -3201,11 +3201,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   }, []);
 
   const closeToolbar = () => {
+    // The draft first: cancelling it turns selection back on, closing turns it off
+    if (pendingCaptureRef.current) cancelCapture();
     setIsOpen(false);
     setAnnotating(false);
     setDrawMode(false);
     setStrokes([]);
-    if (pendingCaptureRef.current) cancelCapture();
     setActiveMarker(null);
     setShowSettings(false);
     setChatOpen(false);
