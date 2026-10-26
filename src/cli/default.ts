@@ -1,9 +1,16 @@
 import chalk from 'chalk';
+import { canViewAsFree, readViewAsFree, writeViewAsFree } from '../pro/view-as.js';
 import { loadPro } from '../pro/load.js';
+import { askAgent } from '../agent/ask.js';
+import { buildCatalog } from '../design-context/catalog.js';
+import { createCatalogFile } from '../design-context/catalog-file.js';
+import { planPropSwap } from '../context/prop-swap.js';
+import { planInsert } from '../context/insert-component.js';
+import { checkConsistency } from '../design-context/consistency.js';
 import * as p from '@clack/prompts';
 import { loadUserConfig, saveUserConfig, isFirstRun, type IlseMode } from '../config/user-config.js';
 import { detectAgent, executeAnnotation, executeBatch, buildBatchPrompt, killAllActiveProcesses, type AgentDetection } from '../agent/executor.js';
-import { startServer, broadcast, getPort, getAllowedOrigin } from '../bridge/ws-server.js';
+import { startServer, broadcast, getPort, getAllowedOrigin, setOwnPorts } from '../bridge/ws-server.js';
 import { resolveAnnotation, markSent, getAnnotation, reopenAnnotation } from '../bridge/store.js';
 import { createMcpHttpHandler, MCP_PATH } from '../mcp/http.js';
 import { getLocalToken, writeServerInfo } from '../config/local-token.js';
@@ -16,7 +23,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { injectIlseComponent } from '../setup/inject-component.js';
 import { detectTokens } from '../setup/token-detect.js';
-import { t, detectLocale, setLocale } from '../i18n/index.js';
+import { t, detectLocale, setLocale, getLocale } from '../i18n/index.js';
 import type { Annotation } from '../types.js';
 import { checkForUpdate } from './update-check.js';
 import { startProxy, type DevTarget } from '../proxy/server.js';
@@ -28,7 +35,7 @@ import { planProject, portIsFree, nextFreePort, startHiddenDevServer, DevServerL
 import { spawn } from 'node:child_process';
 import { planTokenSwap, planTextSwap, applyTokenSwap, describeSwap, type SwapPlan } from '../context/token-swap.js';
 import {
-  takeSnapshot, diffSnapshot, discardChangeSet, reapplyChangeSet, pushUndo, popUndo, peekUndo, pushRedo, popRedo, undoState, summarizeChangeSet, type ChangeSet,
+  takeSnapshot, diffSnapshot, discardChangeSet, reapplyChangeSet, persistUndoAt, pushUndo, popUndo, peekUndo, pushRedo, popRedo, undoState, summarizeChangeSet, type ChangeSet,
 } from '../agent/changeset.js';
 import { isLimitError, limitResetsAt } from '../agent/executor.js';
 import { listClaudeAccounts, describeAccount, planLabel, savedAccount, type ClaudeAccount } from '../agent/claude-accounts.js';
@@ -39,11 +46,12 @@ import { pickTier, escalateTier, resolveModel, modelTiers, expectsEdit, type Tie
 import { historyCount, swapMatchesScope, pagePath } from '../bridge/augment.js';
 import { offPageEdits, routesImporting } from '../agent/page-check.js';
 import { quickBlocker, buildQuickPrompt, runQuick } from '../agent/quick-edit.js';
-import { recordChange, recordUndone, describeAnnotation, ledgerFile, ledgerSummary, type LedgerPath } from '../git/ledger.js';
+import { recordChange, recordUndone, describeAnnotation, ledgerFile, ledgerSummary, appliedAnnotationIds, type LedgerPath } from '../git/ledger.js';
 import { syntaxBreaks, describeBreaks, repairPrompt, type SyntaxBreak } from '../agent/verify.js';
 import { checkSetup, checkChange } from '../agent/check-run.js';
 import { hasProblems, checkRepairPrompt, describeReport, type CheckReport } from '../agent/project-check.js';
 import type { FileChange } from '../agent/changeset.js';
+import { projectDir } from '../config/project-dir.js';
 import { planClassEdit } from '../context/token-swap.js';
 import { hasCommitContext, addCommitContext, commitContextChoice, saveCommitContextChoice, instructionsFile } from '../git/commit-context.js';
 
@@ -187,15 +195,17 @@ async function removeLegacyComponent(framework: FrameworkDetection): Promise<Fra
 
 function printAnnotationHeader(a: Annotation, index: number): void {
   console.log('');
-  console.log(chalk.dim('  ─── anotação #' + (index + 1) + ' ─────────────────────────'));
+  console.log(chalk.dim(`  ─── ${t('cli.annotationN', { n: String(index + 1) })} ─────────────────────────`));
   console.log(chalk.white('  ' + a.element) + (a.component ? chalk.dim(' · ' + a.component) : ''));
   if (a.intent) console.log(chalk.dim('  intent: ') + chalk.magenta(a.intent));
-  if (a.note) console.log(chalk.yellow('  "' + a.note + '"'));
+  // The designer's words; Ilse's own instructions to the agent only with ILSE_DEBUG (they're long)
+  const shown = process.env.ILSE_DEBUG ? a.note : a.designerNote?.trim() || a.note.split('\n')[0];
+  if (shown) console.log(chalk.yellow('  "' + shown + '"'));
   if (a.rearrangeData) {
     const { selector, originalRect: o, currentRect: c } = a.rearrangeData;
     console.log(chalk.dim('  move: ') + chalk.cyan(`${selector}`) + chalk.dim(` from (${o.x},${o.y}) → (${c.x},${c.y}) Δx:${c.x - o.x} Δy:${c.y - o.y}`));
   }
-  if (a.grepPattern) console.log(chalk.dim('  grep: ') + chalk.dim(a.grepPattern));
+  if (a.grepPattern && process.env.ILSE_DEBUG) console.log(chalk.dim('  grep: ') + chalk.dim(a.grepPattern));
 }
 
 // ── Main default command ────────────────────────────────────────────────────
@@ -448,6 +458,7 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
     const proxy = onAppPort
       ? await startProxy({ target, port: plan.appPort, maxPort: plan.appPort, bridgePort, dualStack: true })
       : await startProxy({ target, port: options.proxyPort, bridgePort });
+    setOwnPorts([proxy.port, target.port]);
     url = `http://localhost:${proxy.port}`;
   } catch (err) {
     dev?.stop();
@@ -489,6 +500,7 @@ async function startToolbarProxy(options: DefaultOptions, bridgePort: number): P
   }
   try {
     const proxy = await startProxy({ target, port: options.proxyPort, bridgePort });
+    setOwnPorts([proxy.port, target.port]);
     const url = `http://localhost:${proxy.port}`;
     console.log('');
     console.log(chalk.dim(`  ${t('proxy.open')} `) + chalk.bold.cyan(url) + chalk.dim(`  (${t('proxy.target')} :${target.port})`));
@@ -659,6 +671,8 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   };
 
   const cwdRoot = process.cwd();
+  // Undo survives a restart: the stacks live in Ilse's folder for this project
+  if (process.env.ILSE_UNDO_SAVE !== '0') persistUndoAt(join(projectDir(cwdRoot), 'undo.json'));
 
   // Journal: timings, tokens and outcomes per annotation (Settings → Logs)
   const journal = new Journal({
@@ -735,6 +749,8 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   const recordUndo = (cs: ChangeSet, path: LedgerPath) => {
     pushUndo(cs);
     broadcast({ type: 'undo-state', ...undoState() });
+    // The code changed: the toolbar watches whether the page repaints, and asks for a reload if it doesn't
+    broadcast({ type: 'code-changed', changeSetId: cs.id, annotationIds: cs.annotationIds, files: cs.files.map(f => f.path) });
     // For whoever commits next: what changed, and the designer's reason (.git/ilse/changes.jsonl)
     recordChange(cwdRoot, cs, {
       path,
@@ -749,6 +765,26 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   const applySwaps = (annotations: Annotation[]): Annotation[] => {
     const rest: Annotation[] = [];
     for (const ann of annotations) {
+      // A component dropped from the catalog: written next to its anchor when nothing is left to decide
+      if (ann.insert) {
+        // Dropping components is the catalog's (Pro); without it the agent still gets the request
+        if (!proServer?.catalog) { journal.swap(ann.id, false, 'catálogo é do Pro'); rest.push(ann); continue; }
+        const alone = !ann.designerNote && !ann.styleData?.changes.length && !ann.textEdit && !ann.propEdit && !ann.remove && !ann.rearrangeData;
+        const res = alone ? planInsert(ann, cwdRoot) : { ok: false as const, reason: 'inserir com outros pedidos' };
+        if (!res.ok) { journal.swap(ann.id, false, res.reason); rest.push(ann); continue; }
+        commitSwap(ann, res.plan);
+        continue;
+      }
+      // A variant picked in the Component section: the prop rewritten where this instance is written
+      if (ann.propEdit) {
+        const alone = !ann.designerNote && !ann.styleData?.changes.length && !ann.textEdit && !ann.remove && !ann.rearrangeData;
+        const res = !alone ? { ok: false as const, reason: 'props com outros pedidos' }
+          : ann.scope && !swapMatchesScope(ann) ? { ok: false as const, reason: `escopo: ${ann.scope.choice}` }
+          : planPropSwap(ann.propEdit, cwdRoot);
+        if (!res.ok) { journal.swap(ann.id, false, res.reason); rest.push(ann); continue; }
+        commitSwap(ann, res.plan);
+        continue;
+      }
       // Text only (no panel styles, nothing written): straight into the JSX when it's literal there
       if (ann.textEdit) {
         const simple = !ann.designerNote && !ann.styleData?.changes.length && !ann.remove && !ann.rearrangeData
@@ -1331,19 +1367,30 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
 
   // Test mode from the toolbar is Ilse Pro's: the page asks, Pro runs it. Without Pro, none of these hooks exist
   const pro = await loadPro();
-  const proServer = pro?.server?.({
+  const loadedPro = pro?.server?.({
     cwd: process.cwd(),
+    locale: getLocale() === 'pt' ? 'pt' : 'en',
+    askAgent: (prompt, opts) => askAgent(process.cwd(), prompt, opts),
+    consistency: () => checkConsistency(process.cwd()),
     send: broadcast,
     log: (line, tone) => {
       const retest = /^retest:(\d+):(\d+)$/.exec(line);
       const summary = /^summary:(\d+):(\d+):(.*)$/.exec(line);
+      const journey = /^journey:(.*):(\w+)(?:\/(\w+))?$/.exec(line);
       const text = line === 'no-browser' ? `${t('test.noBrowser')} npx playwright install chromium`
         : line === 'login-saved' ? `✓ ${t('test.loginSaved')}`
         : retest ? t('test.retest', { fixed: retest[1], still: retest[2] })
-        : summary ? `${t('test.summary', { count: summary[1], pages: summary[2] })} · ${summary[3]}` : line;
+        : summary ? `${t('test.summary', { count: summary[1], pages: summary[2] })} · ${summary[3]}`
+        // journey:<goal>:<desktop>[/<mobile>]
+        : journey ? `${journey[2] !== 'stuck' && journey[3] !== 'stuck' ? '✓' : '✗'} ${t('test.journey')} ${journey[1]}` : line;
       console.log(tone === 'warn' ? chalk.yellow(`  ${text}`) : chalk.dim(`  ${text}`));
     },
   });
+  // The owner can switch Pro off (toolbar → settings badge) to see what Free gets on this machine
+  const ownerCanSwitch = canViewAsFree(loadedPro?.plan);
+  let viewAsFree = ownerCanSwitch && readViewAsFree();
+  // Read on every use, so the switch takes effect without restarting
+  let proServer = viewAsFree ? undefined : loadedPro;
 
   const server = await startServer({
     // The toolbar for pages that load it from this port rather than the proxy:
@@ -1359,20 +1406,40 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     onRedo: handleRedo,
     getLogs: () => ({ json: journal.toJSON(), markdown: journal.toMarkdown() }),
     // Pro's test findings, shown in the toolbar's page scan
-    getFindings: proServer?.getFindings,
-    decideFinding: proServer?.decideFinding,
-    testControl: proServer?.testControl,
+    getFindings: () => proServer?.getFindings?.() ?? { at: null, findings: [] },
+    decideFinding: (id, decision) => proServer?.decideFinding?.(id, decision) ?? false,
+    testControl: (action, origin, options) => proServer?.testControl?.(action, origin, options),
+    journeys: (action, origin) => proServer?.journeys?.(action, origin),
     getMemory: () => ({
       design: ledgerSummary(cwdRoot),
       // null: Pro is there but older than the memory screen; absent pro: test mode asleep
       pro: !!proServer?.testControl,
       test: proServer?.getMemory?.() ?? null,
     }),
-    undoDecision: proServer?.undoDecision,
-    forgetTestMemory: proServer?.forgetMemory,
+    // The code's components are read for everyone (the Component section); copies are Pro's
+    getCatalog: () => ({ entries: buildCatalog(cwdRoot), snapshots: proServer?.catalog?.snapshots() ?? {} }),
+    catalogFile: () => {
+      if (!proServer?.catalog) return null;
+      const areas = new Set(buildCatalog(cwdRoot).flatMap(e => e.layer === 'product' && e.feature ? [e.feature] : []));
+      const res = createCatalogFile(cwdRoot, [...areas], getLocale() === 'pt' ? 'pt' : 'en');
+      return { path: relative(cwdRoot, res.path), created: res.created };
+    },
+    saveSnapshots: (items) => { proServer?.catalog?.saveSnapshots(items); },
+    undoDecision: (id) => proServer?.undoDecision?.(id) ?? false,
+    forgetTestMemory: () => proServer?.forgetMemory?.(),
+    onViewAsFree: (free) => {
+      if (!ownerCanSwitch) return;
+      viewAsFree = free;
+      writeViewAsFree(free);
+      proServer = free ? undefined : loadedPro;
+      console.log(chalk.dim(`  ${t(free ? 'cli.viewAsFree' : 'cli.viewAsPro')}`));
+    },
+    appliedIds: () => appliedAnnotationIds(cwdRoot),
     connectExtras: () => ({
       // The toolbar shows test mode awake only when Pro can run it
-      pro: { test: !!proServer?.testControl },
+      pro: { test: !!proServer?.testControl, journeys: !!proServer?.journeys, catalog: !!proServer?.catalog },
+      // The owner's switch: the badge in settings flips Pro ↔ Free
+      ...(ownerCanSwitch ? { owner: { viewAsFree } } : {}),
       undo: undoState(),
       mcp: { url: `http://localhost:${getPort()}${MCP_PATH}`, token: localToken },
       ...(agentAccount ? { account: describeAccount(agentAccount) } : {}),

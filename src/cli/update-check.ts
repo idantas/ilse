@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { loadUserConfig, saveUserConfig } from '../config/user-config.js';
 
 const require = createRequire(import.meta.url);
@@ -53,7 +55,17 @@ export function pickUpdate(current: string, tags: { latest?: string; next?: stri
 
 const installCommand = (tag: 'latest' | 'next') => `npm install -g ilse-design@${tag}`;
 
+/**
+ * Running from a source checkout (`npm link` of the repo): its version is whatever the
+ * branch says, so "x.y.z available · npm install -g" would replace the checkout with an
+ * older release. A published package ships no `src/`.
+ */
+export function isSourceCheckout(pkgRoot = fileURLToPath(new URL('../../', import.meta.url))): boolean {
+  return existsSync(`${pkgRoot}/src`) && existsSync(`${pkgRoot}/.git`);
+}
+
 export async function checkForUpdate(): Promise<UpdateResult | null> {
+  if (isSourceCheckout()) return null;
   try {
     const config = loadUserConfig();
     const current = pkg.version;

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { swapMatchesScope, formatScope } from '../augment.js';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { swapMatchesScope, formatScope, sharedScope } from '../augment.js';
+import { clearLocateCache, type SourceHit } from '../../context/locate.js';
 import type { Annotation } from '../../types.js';
 
 const ann = (choice: 'one' | 'all', owner: string, usage = false): Annotation => ({
@@ -36,5 +40,35 @@ describe('readHint', () => {
     expect(readHint({ file: 'a.tsx', line: 200, endLine: 210 })).toBe('To see more, Read `a.tsx` with offset 160 and limit 120 — not the whole file.');
     expect(readHint({ file: 'a.tsx', line: 10 })).toContain('offset 1 and limit 120');
     expect(readHint({ file: 'a.tsx', line: 100, endLine: 300 })).toContain('offset 60 and limit 300');
+  });
+});
+
+describe('sharedScope — a component used on other screens is "only this" unless the designer says all', () => {
+  const project = (usedIn: string[]) => {
+    clearLocateCache();
+    const dir = mkdtempSync(join(tmpdir(), 'ilse-shared-'));
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src/BarCard.tsx'), 'export function BarCard() {\n  return <section className="bg-card p-6">x</section>\n}\n');
+    for (const page of usedIn) writeFileSync(join(dir, `src/${page}.tsx`), `import { BarCard } from './BarCard'\nexport function ${page}() {\n  return <BarCard />\n}\n`);
+    return dir;
+  };
+  const hit = (over: Partial<SourceHit> = {}): SourceHit[] => [{ file: 'src/BarCard.tsx', line: 2, endLine: 2, owner: 'BarCard', kind: 'element', score: 12, reasons: [], snippet: '', ...over }];
+
+  it('one instance on screen, but written on two screens: only this one', () => {
+    expect(sharedScope(hit(), project(['Audit', 'Usage']))).toEqual({ component: 'BarCard', count: 1, uses: 2, choice: 'one' });
+  });
+
+  it('used once: the definition is the instance, nothing to choose', () => {
+    expect(sharedScope(hit(), project(['Audit']))).toBeUndefined();
+  });
+
+  it('a guessed location never sets a scope', () => {
+    expect(sharedScope(hit({ ambiguous: true }), project(['Audit', 'Usage']))).toBeUndefined();
+  });
+
+  it('with that scope, the class swap stays out of the definition', () => {
+    const scope = sharedScope(hit(), project(['Audit', 'Usage']));
+    expect(swapMatchesScope({ ...ann('one', 'BarCard'), scope, source: hit() })).toBe(false);
+    expect(formatScope({ ...ann('one', 'BarCard'), scope, source: hit() })).toContain('written in 2 places in the code');
   });
 });

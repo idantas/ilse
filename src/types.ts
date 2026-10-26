@@ -72,11 +72,24 @@ export interface Annotation {
   /** Only the designer's own words (the note also carries Ilse's context blocks) */
   designerNote?: string;
   /** Element of a component repeated on the page: edit this instance, or all of them */
-  scope?: { component: string; count: number; choice: 'one' | 'all' };
+  scope?: {
+    component: string; count: number; choice: 'one' | 'all';
+    /** Places the component is written in the code — a single instance on screen can still be shared */
+    uses?: number;
+  };
+  /**
+   * The element is inside a copy Ilse put on the page (a dropped/duplicated component not yet
+   * in the code, or a variant preview). React never rendered it: where it's written is a guess.
+   */
+  copyOf?: { kind: 'draft' | 'variant'; component?: string };
   /** Remove the element (structural: always the agent, never the quick path) */
   remove?: boolean;
   /** The element's text, retyped in the property panel */
   textEdit?: { from: string; to: string };
+  /** Props of the component it is, changed in the panel's Component section (no AI when the JSX is found) */
+  propEdit?: import('./context/prop-swap.js').PropEdit;
+  /** A catalog component dropped next to / inside this element (the element is where it goes) */
+  insert?: import('./context/insert-component.js').InsertRequest;
   element: string;           // CSS selector (e.g. "button.cta-primary")
   component?: string;        // React component name
   styles: Record<string, string>;  // computed styles

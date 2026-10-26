@@ -1,4 +1,7 @@
 import http from 'node:http';
+import { resolveFrameUrl } from '../context/chunk-source.js';
+import { parsePropEdit } from '../context/prop-swap.js';
+import { parseInsert } from '../context/insert-component.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
   createAnnotation,
@@ -13,9 +16,10 @@ import {
   nextSequence,
 } from './store.js';
 import type { Annotation } from '../types.js';
-import type { LiveFindings, Decision, TestAction } from '../pro/types.js';
+import type { LiveFindings, Decision, TestAction, JourneyAction, TestRunOptions, TestGroup, ScreenSize } from '../pro/types.js';
 import { getLocale } from '../i18n/index.js';
 import { locateSource, type SourceHit, type LocateQuery } from '../context/locate.js';
+import { sharedScope } from './augment.js';
 
 // Global WS event sequence — monotonic, independent of annotation sequence
 let wsEventSequence = 0;
@@ -36,6 +40,18 @@ let httpServerRef: http.Server | null = null;
 let activePort: number | null = null;
 let allowedOrigin: string | null = null; // first connecting origin "claims" this server
 const clients = new Set<WebSocket>();
+const originOf = new Map<WebSocket, string>();
+/**
+ * The ports this project's app is served on (the proxy, the dev server). Known
+ * once the proxy is up: from then on only those origins may use this server,
+ * and one of them takes it back from another project's tab that got here
+ * first — a tab scanning ports for its own server while this one was starting.
+ */
+const ownPorts = new Set<number>();
+export function setOwnPorts(ports: number[]): void {
+  for (const p of ports) if (Number.isFinite(p)) ownPorts.add(p);
+}
+const portOf = (origin: string) => { try { const u = new URL(origin); return Number(u.port || (u.protocol === 'https:' ? 443 : 80)); } catch { return NaN; } };
 
 export interface WsServerOptions {
   port?: number;
@@ -58,13 +74,30 @@ export interface WsServerOptions {
   undoDecision?: (id: string) => boolean;
   forgetTestMemory?: () => void;
   /** Toolbar's test mode, on the app at this origin (the page's own, loopback only) */
-  testControl?: (action: TestAction, origin: string) => void;
+  testControl?: (action: TestAction, origin: string, options?: TestRunOptions) => void;
+  /** Toolbar's Journeys panel (Pro), on the app at this origin */
+  journeys?: (action: JourneyAction, origin: string) => void;
   /** Plain HTTP requests on the same port (the MCP endpoint). Return true when handled. */
   httpHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean> | boolean;
   /** Extra fields for the 'connected' payload — e.g. undo state after a page reload */
   connectExtras?: () => Record<string, unknown>;
+  /** The owner's switch: Pro off (view as Free) or back on. Ignored without an owner license */
+  onViewAsFree?: (free: boolean) => void;
+  /**
+   * Notes already applied in earlier sessions (the project's ledger). A toolbar
+   * that missed the "resolved" — reloaded mid-run, closed, CLI restarted — still
+   * shows them as sent; without this a fresh CLI wouldn't know them and they'd
+   * come back as pending.
+   */
+  appliedIds?: () => string[];
   tokens?: Array<{ name: string; value: string; type: string }>;
   libraries?: string[];
+  /** The design panel's catalog: the product's components, read from the code, and the copies seen on pages */
+  getCatalog?: () => { entries: unknown[]; snapshots: Record<string, unknown[]> };
+  /** Copies of catalog components the toolbar took on a page */
+  saveSnapshots?: (items: unknown[]) => void;
+  /** `.ilse/catalog.md` created (or found) for the team to edit — on the user's click */
+  catalogFile?: () => { path: string; created: boolean } | null;
 }
 
 /**
@@ -121,6 +154,14 @@ export async function startServer(options: WsServerOptions = {}): Promise<WebSoc
     // First localhost connection claims this server — subsequent connections from
     // a DIFFERENT origin get rejected with code 4003 so the toolbar retries
     // the next port and finds its own project's server.
+    if (ownPorts.size > 0) {
+      if (!ownPorts.has(portOf(origin))) { ws.close(4003, 'Wrong project'); return; }
+      if (allowedOrigin && !ownPorts.has(portOf(allowedOrigin))) {
+        // Taken by another project's tab: it goes back to scanning
+        for (const c of clients) if (!ownPorts.has(portOf(originOf.get(c) ?? ''))) c.close(4003, 'Wrong project');
+        allowedOrigin = null;
+      }
+    }
     if (!allowedOrigin) {
       allowedOrigin = origin;
     } else if (origin !== allowedOrigin) {
@@ -129,6 +170,7 @@ export async function startServer(options: WsServerOptions = {}): Promise<WebSoc
     }
 
     clients.add(ws);
+    originOf.set(ws, origin);
 
     // Send current stats + port + last sequence + tokens on connect
     // `service` field is validated by ws-client to skip zombie/stale processes
@@ -138,25 +180,48 @@ export async function startServer(options: WsServerOptions = {}): Promise<WebSoc
     connectPayload.locale = getLocale();
     // What this server knows about each annotation — the toolbar reconciles
     // anything it still shows as "sent" (reloaded page, restarted CLI).
-    connectPayload.known = knownAnnotations();
+    connectPayload.known = knownAnnotations(safeApplied(options));
     Object.assign(connectPayload, options.connectExtras?.());
     ws.send(JSON.stringify(connectPayload));
 
+    // In order: a note whose frames need a source map read first must not be passed by the "run" after it
+    let queue: Promise<void> = Promise.resolve();
     ws.on('message', (raw) => {
-      try {
-        const msg = JSON.parse(raw.toString());
-        handleMessage(ws, msg, options);
-      } catch {
+      let msg: Record<string, unknown>;
+      try { msg = JSON.parse(raw.toString()); } catch {
         ws.send(JSON.stringify({ type: 'error', message: 'Invalid JSON' }));
+        return;
       }
+      queue = queue
+        .then(() => (msg.type === 'annotate' ? resolveFrames(msg) : undefined))
+        .then(() => handleMessage(ws, msg, options))
+        .catch(() => { ws.send(JSON.stringify({ type: 'error', message: 'Message failed' })); });
     });
 
     ws.on('close', () => {
       clients.delete(ws);
+      originOf.delete(ws);
     });
   });
 
   return wss;
+}
+
+/** Frames that point into a bundled chunk (Turbopack) → the file, read from its source map, in place */
+async function resolveFrames(msg: Record<string, unknown>): Promise<void> {
+  const cwd = process.cwd();
+  const jobs: Array<Promise<void>> = [];
+  const fix = (o: unknown, key: string) => {
+    const rec = o as Record<string, unknown> | null | undefined;
+    const url = rec?.[key];
+    if (typeof url === 'string' && url.includes('#L')) jobs.push(resolveFrameUrl(url, cwd).then(u => { rec![key] = u; }));
+  };
+  const frames = msg.frames as Record<string, unknown> | undefined;
+  fix(frames?.element, 'url');
+  fix(frames?.owner, 'url');
+  fix(msg.propEdit, 'frameUrl');
+  fix((msg.insert as Record<string, unknown> | undefined)?.at, 'frameUrl');
+  await Promise.all(jobs);
 }
 
 /**
@@ -173,6 +238,7 @@ function locateForMessage(msg: Record<string, unknown>): SourceHit[] | undefined
       grepPattern: msg.grepPattern as string | undefined,
       text: typeof msg.text === 'string' ? msg.text : undefined,
       frames: parseFrames(msg.frames),
+      pageComponents: parseNames(msg.pageComponents),
     }, { cwd: process.cwd() });
     return hits.length > 0 ? hits : undefined;
   } catch {
@@ -202,14 +268,28 @@ function parseTextEdit(v: unknown): Annotation['textEdit'] {
   return t && typeof t.from === 'string' && typeof t.to === 'string' && t.from !== t.to ? { from: t.from, to: t.to } : undefined;
 }
 
+function parseCopyOf(v: unknown): Annotation['copyOf'] {
+  const c = v as { kind?: unknown; component?: unknown } | undefined;
+  if (!c || (c.kind !== 'draft' && c.kind !== 'variant')) return undefined;
+  const component = typeof c.component === 'string' && /^[A-Z][\w$.]{0,79}$/.test(c.component) ? c.component : undefined;
+  return { kind: c.kind, ...(component ? { component } : {}) };
+}
+
 function parseScope(v: unknown): Annotation['scope'] {
   const s = v as { component?: unknown; count?: unknown; choice?: unknown } | undefined;
   if (!s || typeof s.component !== 'string' || typeof s.count !== 'number' || (s.choice !== 'one' && s.choice !== 'all')) return undefined;
-  return { component: s.component.slice(0, 80), count: s.count, choice: s.choice };
+  const uses = (s as { uses?: unknown }).uses;
+  return { component: s.component.slice(0, 80), count: s.count, choice: s.choice, ...(typeof uses === 'number' ? { uses } : {}) };
 }
 
-function knownAnnotations(): Array<{ id: string; status: string }> {
-  return listAnnotations().map(a => ({ id: a.id, status: a.status }));
+function safeApplied(options: WsServerOptions): string[] {
+  try { return options.appliedIds?.() ?? []; } catch { return []; }
+}
+
+export function knownAnnotations(applied: string[] = []): Array<{ id: string; status: string }> {
+  const live = listAnnotations().map(a => ({ id: a.id, status: a.status }));
+  const seen = new Set(live.map(a => a.id));
+  return [...live, ...applied.filter(id => !seen.has(id)).map(id => ({ id, status: 'resolved' }))];
 }
 
 function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsServerOptions) {
@@ -218,9 +298,10 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       const annotation = createAnnotation({
         note: (msg.note as string) ?? '',
         designerNote: typeof msg.designerNote === 'string' ? msg.designerNote : undefined,
-        scope: parseScope(msg.scope),
         remove: msg.remove === true ? true : undefined,
         textEdit: parseTextEdit(msg.textEdit),
+        propEdit: parsePropEdit(msg.propEdit),
+        insert: parseInsert(msg.insert),
         element: (msg.element as string) ?? '',
         component: msg.component as string | undefined,
         styles: (msg.styles as Record<string, string>) ?? {},
@@ -237,9 +318,15 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
         pageComponents: parseNames(msg.pageComponents),
         ...(() => {
           const t0 = performance.now();
-          const source = locateForMessage(msg);
+          const copyOf = parseCopyOf(msg.copyOf);
+          const located = locateForMessage(msg);
+          // A copy has no React frames: whatever classes matched, its place in the code is a guess
+          const source = copyOf ? located?.map(h => (h.kind === 'element' ? { ...h, ambiguous: true } : h)) : located;
+          const scope = parseScope(msg.scope) ?? (msg.insert || msg.intent === 'create' ? undefined : sharedScope(source, process.cwd()));
           return {
             source,
+            ...(copyOf ? { copyOf } : {}),
+            ...(scope ? { scope } : {}),
             meta: {
               locateMs: Math.round(performance.now() - t0),
               composeMs: typeof msg.composeMs === 'number' ? Math.round(msg.composeMs) : undefined,
@@ -265,7 +352,7 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
     }
 
     case 'sync': {
-      ws.send(JSON.stringify({ type: 'sync', known: knownAnnotations(), seq: nextWsSeq() }));
+      ws.send(JSON.stringify({ type: 'sync', known: knownAnnotations(safeApplied(options)), seq: nextWsSeq() }));
       break;
     }
 
@@ -365,14 +452,26 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
 
     case 'test': {
       // The origin this server was claimed by — the app the toolbar is on, never one the message names
-      const actions: TestAction[] = ['run', 'run-anon', 'login', 'login-done', 'login-cancel'];
-      if (allowedOrigin && actions.includes(msg.action as TestAction)) options.testControl?.(msg.action as TestAction, allowedOrigin);
+      const actions: TestAction[] = ['run', 'run-anon', 'login', 'login-done', 'login-cancel', 'setup'];
+      if (allowedOrigin && actions.includes(msg.action as TestAction)) options.testControl?.(msg.action as TestAction, allowedOrigin, parseTestOptions(msg.options));
+      break;
+    }
+
+    case 'journey': {
+      const a = parseJourneyAction(msg);
+      if (allowedOrigin && a) options.journeys?.(a, allowedOrigin);
       break;
     }
 
     case 'finding_decide': {
       const decision = msg.decision === 'approved' || msg.decision === 'discarded' ? msg.decision : null;
       if (typeof msg.id === 'string' && decision) options.decideFinding?.(msg.id, decision);
+      break;
+    }
+
+    case 'view_as_free': {
+      if (typeof msg.free === 'boolean') options.onViewAsFree?.(msg.free);
+      ws.send(JSON.stringify({ type: 'view_as_free', free: msg.free === true }));
       break;
     }
 
@@ -385,6 +484,26 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       break;
     }
 
+    case 'catalog': {
+      let data: { entries: unknown[]; snapshots: Record<string, unknown[]> } = { entries: [], snapshots: {} };
+      try { data = options.getCatalog?.() ?? data; } catch { /* a scan error leaves the list empty */ }
+      // `lite`: just the list (copying starts on connect; the copies go when the catalog is shown)
+      ws.send(JSON.stringify(msg.lite ? { type: 'catalog', entries: data.entries, snapshots: {}, lite: true } : { type: 'catalog', ...data }));
+      break;
+    }
+
+    case 'catalog_file': {
+      let res: { path: string; created: boolean } | null = null;
+      try { res = options.catalogFile?.() ?? null; } catch { /* unwritable: nothing to say */ }
+      ws.send(JSON.stringify({ type: 'catalog_file', ...(res ?? { failed: true }) }));
+      break;
+    }
+
+    case 'catalog_snapshot': {
+      if (Array.isArray(msg.items)) options.saveSnapshots?.(msg.items);
+      break;
+    }
+
     case 'stats': {
       ws.send(JSON.stringify({ type: 'stats', stats: getStats() }));
       break;
@@ -393,6 +512,34 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
     default:
       ws.send(JSON.stringify({ type: 'error', message: `Unknown type: ${msg.type}` }));
   }
+}
+
+/** Only the shapes Pro knows, with plain short strings */
+export function parseJourneyAction(msg: Record<string, unknown>): JourneyAction | null {
+  const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
+  switch (msg.action) {
+    case 'list': return { action: 'list' };
+    case 'add': { const goal = str(msg.goal, 300); return goal ? { action: 'add', goal, start: str(msg.start, 300) } : null; }
+    case 'run': return { action: 'run', id: str(msg.id, 40) };
+    case 'remove': { const id = str(msg.id, 40); return id ? { action: 'remove', id } : null; }
+    case 'confirm': return { action: 'confirm', ok: msg.ok === true };
+    case 'suggest': return { action: 'suggest' };
+    case 'share': { const id = str(msg.id, 40); return id ? { action: 'share', id, on: msg.on === true } : null; }
+    default: return null;
+  }
+}
+
+const GROUPS: TestGroup[] = ['journeys', 'accessibility', 'errors', 'layout', 'consistency'];
+const SIZES: ScreenSize[] = ['desktop', 'tablet', 'mobile'];
+
+/** The dev's pick before a run: known groups and sizes only. Absent → Pro uses the last one */
+export function parseTestOptions(v: unknown): TestRunOptions | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  const pick = <T extends string>(x: unknown, known: T[]) => Array.isArray(x) ? [...new Set(x.filter((y): y is T => known.includes(y as T)))] : undefined;
+  const groups = pick(o.groups, GROUPS);
+  const sizes = pick(o.sizes, SIZES);
+  return { ...(groups ? { groups } : {}), ...(sizes ? { sizes } : {}) };
 }
 
 /** Only the fields a retest needs, as plain short strings */

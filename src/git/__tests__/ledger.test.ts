@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { recordChange, recordUndone, pendingChanges, readLedger, formatPending, ledgerFile } from '../ledger.js';
+import { recordChange, recordUndone, pendingChanges, readLedger, formatPending, ledgerFile, appliedAnnotationIds } from '../ledger.js';
+import { knownAnnotations } from '../../bridge/ws-server.js';
 import { addCommitContext, hasCommitContext, commitContextChoice, saveCommitContextChoice, COMMIT_MARKER } from '../commit-context.js';
 
 function repo(): string {
@@ -36,6 +37,16 @@ describe('ledger', () => {
 
     execFileSync('git', ['commit', '-qam', 'ship'], { cwd: dir });
     expect(pendingChanges(dir)).toEqual([]);
+  });
+
+  it('remembers which notes were applied, so a fresh CLI can tell the toolbar', () => {
+    const dir = repo();
+    recordChange(dir, cs('c1'), { path: 'agent', annotations: [{ id: 'n1', intent: 'fix', note: 'wizard', element: 'Form' }] });
+    recordChange(dir, cs('c2'), { path: 'swap', annotations: [{ id: 'n2', intent: 'style', note: '', element: 'Card' }] });
+    recordUndone(dir, 'c2');
+    expect(appliedAnnotationIds(dir)).toEqual(['n1']);
+    // Not in this session's store: known as resolved
+    expect(knownAnnotations(['n1'])).toContainEqual({ id: 'n1', status: 'resolved' });
   });
 
   it('does nothing outside git', () => {

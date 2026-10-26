@@ -116,25 +116,66 @@ export function summarizeChangeSet(cs: ChangeSet): Array<{ path: string; added: 
   });
 }
 
-// ── Undo stack (in memory, per CLI process) ─────────────────────────────────
+// ── Undo stack (per project, kept on disk) ─────────────────────────────────
+// Restarting `ilse` must not cost the designer their undo: the stacks are saved
+// outside the project (~/.ilse/projects/<name>/undo.json) after every change and
+// read back on start. Undo still checks every file against what the batch wrote,
+// so a stack that outlived edits made meanwhile only reports conflicts.
 
 const MAX_UNDO = 30;
+/** A saved stack bigger than this keeps only its newest batches (file contents add up) */
+const MAX_SAVED_BYTES = 20_000_000;
 const undoStack: ChangeSet[] = [];
 
 // Redo: batches taken back, newest last. Any new batch clears it — redoing past
 // a newer change would stack edits in an order nobody chose (as in any editor).
 const redoStack: ChangeSet[] = [];
 
+let undoFile: string | null = null;
+
+function isChangeSet(v: unknown): v is ChangeSet {
+  const c = v as ChangeSet | null;
+  return !!c && typeof c.id === 'string' && Array.isArray(c.files) && Array.isArray(c.annotationIds)
+    && c.files.every(f => f && typeof f.path === 'string' && (typeof f.before === 'string' || f.before === null) && (typeof f.after === 'string' || f.after === null));
+}
+
+/** Keep the stacks in `file` from now on, starting from what it already holds */
+export function persistUndoAt(file: string): void {
+  undoFile = file;
+  undoStack.length = 0;
+  redoStack.length = 0;
+  try {
+    const saved = JSON.parse(readFileSync(file, 'utf8')) as { undo?: unknown[]; redo?: unknown[] };
+    undoStack.push(...(saved.undo ?? []).filter(isChangeSet).slice(-MAX_UNDO));
+    redoStack.push(...(saved.redo ?? []).filter(isChangeSet).slice(-MAX_UNDO));
+  } catch { /* first run, or unreadable: start empty */ }
+}
+
+function saveUndo(): void {
+  if (!undoFile) return;
+  try {
+    const undo = [...undoStack];
+    let json = JSON.stringify({ v: 1, undo, redo: redoStack });
+    while (json.length > MAX_SAVED_BYTES && undo.length > 1) {
+      undo.shift();
+      json = JSON.stringify({ v: 1, undo, redo: redoStack });
+    }
+    mkdirSync(dirname(undoFile), { recursive: true });
+    writeFileSync(undoFile, json, 'utf8');
+  } catch { /* undo still works for this session */ }
+}
+
 export function pushUndo(cs: ChangeSet, fromRedo = false): void {
   undoStack.push(cs);
   if (undoStack.length > MAX_UNDO) undoStack.shift();
   if (!fromRedo) redoStack.length = 0;
+  saveUndo();
 }
-export function popUndo(): ChangeSet | undefined { return undoStack.pop(); }
+export function popUndo(): ChangeSet | undefined { const cs = undoStack.pop(); saveUndo(); return cs; }
 /** The change an undo would take back now */
 export function peekUndo(): ChangeSet | undefined { return undoStack[undoStack.length - 1]; }
-export function pushRedo(cs: ChangeSet): void { redoStack.push(cs); }
-export function popRedo(): ChangeSet | undefined { return redoStack.pop(); }
+export function pushRedo(cs: ChangeSet): void { redoStack.push(cs); saveUndo(); }
+export function popRedo(): ChangeSet | undefined { const cs = redoStack.pop(); saveUndo(); return cs; }
 export function undoState(): { count: number; label?: string; redoCount: number; redoLabel?: string } {
   return {
     count: undoStack.length, label: undoStack[undoStack.length - 1]?.label,

@@ -73,6 +73,9 @@ export function quickBlocker(a: Annotation, cwd: string, env: NodeJS.ProcessEnv 
   if (a.remove) return 'remover elemento';
   // The quick path answers in classes; a text the swap couldn't place needs the agent
   if (a.textEdit) return 'texto';
+  // A component prop the swap couldn't place: the agent finds where it's set
+  if (a.propEdit) return 'props do componente';
+  if (a.insert) return 'inserir componente';
   if (!INTENTS.has(a.intent ?? 'fix')) return `intent ${a.intent}`;
   if (a.imageRef || a.imageRefs?.length) return 'tem imagem';
   if (!designerWords(a) && !a.styleData?.changes.length) return 'sem pedido';

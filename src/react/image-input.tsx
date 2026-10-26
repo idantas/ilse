@@ -143,13 +143,17 @@ export function InlineAttachments({
   onRemove,
   fileRef,
   onFileChange,
+  onComponent,
 }: {
   images: string[];
   onAdd: () => void;
   onRemove: (index: number) => void;
   fileRef: React.RefObject<HTMLInputElement | null>;
   onFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  /** With it, + is a menu: an image, or a component from the catalog */
+  onComponent?: () => void;
 }) {
+  const [menu, setMenu] = useState(false);
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
@@ -158,8 +162,9 @@ export function InlineAttachments({
       {images.map((src, i) => (
         <AttachmentBadge key={i} src={src} onRemove={() => onRemove(i)} />
       ))}
+      <span style={{ position: 'relative', display: 'inline-flex' }}>
       <button
-        onClick={(e) => { e.stopPropagation(); onAdd(); }}
+        onClick={(e) => { e.stopPropagation(); if (onComponent) setMenu(m => !m); else onAdd(); }}
         style={{
           width: 32, height: 32, borderRadius: radius.sm,
           border: `1px dashed ${color.border}`, background: 'none',
@@ -170,6 +175,34 @@ export function InlineAttachments({
       >
         +
       </button>
+      {menu && onComponent && (
+        <div
+          role="menu"
+          onMouseLeave={() => setMenu(false)}
+          style={{
+            position: 'absolute', bottom: 36, left: 0, zIndex: 2, minWidth: 140, padding: 4,
+            background: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.md, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+          }}
+        >
+          {[
+            { label: t('card.addImage'), run: onAdd },
+            { label: t('card.addComponent'), run: onComponent },
+          ].map(item => (
+            <button
+              key={item.label}
+              role="menuitem"
+              onClick={(e) => { e.stopPropagation(); setMenu(false); item.run(); }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', borderRadius: radius.sm,
+                background: 'none', cursor: 'pointer', fontSize: 12, color: color.foreground,
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+      </span>
       <input ref={fileRef} type="file" accept="image/*" onChange={onFileChange} style={{ display: 'none' }} />
     </div>
   );

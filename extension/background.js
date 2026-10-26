@@ -2,7 +2,7 @@
 // toolbar on that site — your usual address, no proxy, nothing in the project.
 // The choice is kept per origin and the toolbar comes back on every reload.
 
-import { isLocalPage, originOf, toggleOrigin, fetchToolbar } from './lib.js';
+import { isLocalPage, originOf, toggleOrigin, fetchToolbar, menuItems, menuAction } from './lib.js';
 
 async function enabledOrigins() {
   return (await chrome.storage.local.get('origins')).origins ?? [];
@@ -64,4 +64,28 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.action.setBadgeBackgroundColor({ color: '#FA6900' });
+  chrome.contextMenus.removeAll(() => {
+    for (const item of menuItems((key) => chrome.i18n.getMessage(key))) chrome.contextMenus.create(item);
+  });
+});
+
+// Runs in the page (MAIN world): tells the toolbar what to do. A flag too, for a
+// toolbar that is still mounting and hasn't heard the event.
+function askToolbar(action) {
+  window.__ilseContext = action;
+  window.dispatchEvent(new CustomEvent('ilse:context', { detail: { action } }));
+}
+
+// Right-click → "Open with Ilse". context.js marked the element
+// that was right-clicked; the toolbar opens with the card on it.
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const action = menuAction(info.menuItemId);
+  if (!action || !tab?.id || !isLocalPage(tab.url)) return;
+  // Asking for Ilse on a site turns it on there, like the toolbar icon
+  const origin = originOf(tab.url);
+  const origins = await enabledOrigins();
+  if (!origins.includes(origin)) await chrome.storage.local.set({ origins: [...origins, origin] });
+  await refresh(tab);
+  await inject(tab.id);
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: askToolbar, args: [action] });
 });

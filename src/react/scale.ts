@@ -63,6 +63,7 @@ function probePx(expr: string): number | null {
   if (typeof document === 'undefined' || !document.body) return null;
   const probe = document.createElement('div');
   probe.style.cssText = `position:absolute;visibility:hidden;pointer-events:none;height:0;width:${expr}`;
+  probe.setAttribute('data-ilse-toolbar', ''); // Ilse's own: never read as the page repainting
   document.body.appendChild(probe);
   const w = parseFloat(getComputedStyle(probe).width);
   probe.remove();

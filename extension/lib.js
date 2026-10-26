@@ -37,3 +37,16 @@ export async function fetchToolbar(fetchImpl, ports = BRIDGE_PORTS) {
   }
   return null;
 }
+
+/** Pages where the right-click menu offers Ilse (any port: match patterns ignore it) */
+export const MENU_PATTERNS = ['http://localhost/*', 'http://127.0.0.1/*'];
+
+/** The item in the browser's right-click menu: opens Ilse with the card on the element */
+export function menuItems(getMessage) {
+  return [{ id: 'ilse-select', title: getMessage('menuOpen'), contexts: ['all'], documentUrlPatterns: MENU_PATTERNS }];
+}
+
+/** Menu item → what the toolbar is asked to do */
+export function menuAction(id) {
+  return id === 'ilse-select' ? 'select' : null;
+}

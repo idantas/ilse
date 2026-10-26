@@ -191,6 +191,21 @@ export function scopeTwins(el: Element): HTMLElement[] {
   });
 }
 
+/**
+ * One of the rows a list renders (a .map): siblings created at the same place in the
+ * code — or, without a dev stack, siblings with the same tag and classes. Copying its
+ * JSX would copy every row; a new row is a new item in the data.
+ */
+export function isDataRow(el: Element): boolean {
+  const parent = el.parentElement;
+  if (!parent) return false;
+  const site = jsxSite(el);
+  const cls = el.getAttribute('class') ?? '';
+  // Ilse's drafts are copies, not rows the app rendered
+  return Array.from(parent.children).some(sib => sib !== el && !sib.hasAttribute('data-ilse-draft') && sib.tagName === el.tagName
+    && (site ? jsxSite(sib) === site : (sib.getAttribute('class') ?? '') === cls));
+}
+
 /** Where React created the element: the first app frame of its dev stack, with line:column */
 function jsxSite(el: Element): string | undefined {
   const stack = (fiberOf(el) as (Fiber & { _debugStack?: { stack?: string } }) | null)?._debugStack?.stack;
@@ -244,6 +259,14 @@ function layoutChildren(parent: HTMLElement): HTMLElement[] {
     const cs = getComputedStyle(c);
     return cs.display !== 'none' && cs.position !== 'absolute' && cs.position !== 'fixed';
   });
+}
+
+/** The item's neighbours once moved to `to` in its list — the same children a reorder counts */
+export function neighboursAfterReorder(unit: HTMLElement, to: number): { prev: HTMLElement | null; next: HTMLElement | null } {
+  const parent = unit.parentElement;
+  if (!parent) return { prev: null, next: null };
+  const rest = layoutChildren(parent).filter(c => c !== unit);
+  return { prev: rest[to - 1] ?? null, next: rest[to] ?? null };
 }
 
 function axisOf(parent: HTMLElement): Axis | null {
@@ -458,14 +481,19 @@ function settleMove(m: Moved) {
  * with the destination's styles, so what shows is what the code will render.
  * Everything around glides into place. A copy follows the pointer meanwhile.
  */
-function reparentSession(el: HTMLElement, grab: { x: number; y: number }, base: Saved | undefined) {
+function reparentSession(el: HTMLElement, grab: { x: number; y: number }, base: Saved | undefined, opts: {
+  /** A new element not on the page yet (a catalog component): its size, since it has no box */
+  size?: { width: number; height: number };
+  /** The stand-in stays as it is after the drop — its owner (the catalog's draft) takes it away */
+  keep?: boolean;
+} = {}) {
   let target: HTMLElement | null = null;
   let index = 0;
   let ph: HTMLElement | null = null;
   let ghost: HTMLElement | null = null;
   let frame: HTMLDivElement | null = null;
   let display = '';
-  const size = el.getBoundingClientRect();
+  const size = opts.size ?? el.getBoundingClientRect();
   // The dragged element itself never takes part in the glide — the copy stands for it
   const around = (...c: Array<HTMLElement | null | undefined>) => affected(...c).filter(e => e !== el);
 
@@ -497,6 +525,7 @@ function reparentSession(el: HTMLElement, grab: { x: number; y: number }, base: 
       transform: '', transition: 'none', order: '',
       zIndex: '99990', pointerEvents: 'none', boxShadow: LIFT_SHADOW, opacity: '0.96',
     });
+    g.setAttribute('data-ilse-toolbar', ''); // Ilse's own: never read as the page repainting
     document.body.appendChild(g);
     return g;
   };
@@ -521,11 +550,19 @@ function reparentSession(el: HTMLElement, grab: { x: number; y: number }, base: 
       frame = document.createElement('div');
       frame.setAttribute('data-ilse-toolbar', '');
       frame.style.cssText = `position:fixed;pointer-events:none;z-index:99989;border:1.5px solid ${BRAND};border-radius:8px`;
+      frame.setAttribute('data-ilse-toolbar', ''); // Ilse's own: never read as the page repainting
       document.body.appendChild(frame);
     }
     // The destination is itself gliding (it grows, its neighbours shift) — follow it every frame
     void into;
     if (!raf) raf = requestAnimationFrame(track);
+  };
+
+  const without = <T,>(fn: () => T): T => {
+    if (!ph) return fn();
+    const d = ph.style.display;
+    ph.style.display = 'none';
+    try { return fn(); } finally { ph.style.display = d; }
   };
 
   /** Stable index: it only changes while the pointer is over an item, like the list */
@@ -544,6 +581,14 @@ function reparentSession(el: HTMLElement, grab: { x: number; y: number }, base: 
 
   return {
     get active() { return target !== null; },
+    /** Where the dragged copy is on screen (for the grid and the distances) */
+    get box(): DOMRect | null { return ghost?.getBoundingClientRect() ?? null; },
+    /**
+     * Look at the page as it is without the stand-in. It pushes things down as soon
+     * as it goes in, so the spot the pointer was heading for moves away from under it
+     * and the first container crossed would keep it for good.
+     */
+    without,
     get target() { return target; },
     get index() { return index; },
     show(into: HTMLElement, x: number, y: number) {
@@ -556,7 +601,8 @@ function reparentSession(el: HTMLElement, grab: { x: number; y: number }, base: 
         flip(around(el.parentElement, into), () => { el.style.display = 'none'; place(into, index); });
       } else if (into !== target) {
         const from = target;
-        index = indexFor(into, p, true);
+        // Measured without the stand-in, which still pushes the old container's neighbours around
+        index = without(() => indexFor(into, p, true));
         flip(around(from, into), () => { ph!.remove(); place(into, index); });
       } else {
         const next = indexFor(into, p, false);
@@ -593,7 +639,15 @@ function reparentSession(el: HTMLElement, grab: { x: number; y: number }, base: 
       const r = stand.getBoundingClientRect();
       g.style.transition = `left 260ms cubic-bezier(0.22, 1, 0.36, 1), top 260ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 260ms`;
       Object.assign(g.style, { left: `${r.left}px`, top: `${r.top}px`, boxShadow: 'none' });
-      setTimeout(() => { g.remove(); stand.style.opacity = '1'; }, 260);
+      setTimeout(() => { g.remove(); if (!opts.keep) stand.style.opacity = '1'; }, 260);
+      if (opts.keep) {
+        // It's the draft from now on: its own look right away (the panel reads it as the drop lands)
+        stand.removeAttribute(PLACEHOLDER);
+        stand.style.opacity = '';
+        stand.style.transition = '';
+        ph = ghost = frame = null; target = null;
+        return stand;
+      }
       // The selection follows the element to where it now shows
       const pixel = el.getAttribute(PIXEL);
       if (pixel) { el.removeAttribute(PIXEL); stand.setAttribute(PIXEL, pixel); }
@@ -885,6 +939,64 @@ export function beginDrag(picked: HTMLElement, start: { x: number; y: number }):
       if ([...snapshot].every(([c]) => entry.saved.get(c)?.order === c.style.order)) settle(parent);
     },
   };
+}
+
+export interface LiveInsert {
+  move(clientX: number, clientY: number): void;
+  /** Where it landed: the container and the index among its children, and the element now showing it */
+  end(): { target: HTMLElement; index: number; landed: HTMLElement } | null;
+  cancel(): void;
+  /** The dragged copy's box, for the grid and the distances */
+  readonly box: DOMRect | null;
+  /** Over somewhere it can land */
+  readonly active: boolean;
+}
+
+/**
+ * A component dragged in from the catalog, with the same engine as moving an
+ * element: the copy stands in the destination for real, the items around make
+ * room (FLIP), the destination is outlined, and a lifted copy follows the
+ * pointer. `el` is the draft — new (not on the page yet; `size` is its size) or
+ * one already on the page being moved (it steps out of its old place). `pick`
+ * turns the container under the pointer into the one the drop belongs to
+ * (out of a reused component, say). The stand-in stays after the drop: it is
+ * the draft from then on.
+ */
+export function beginInsert(el: HTMLElement, start: { x: number; y: number }, size: { width: number; height: number }, pick?: (c: HTMLElement) => HTMLElement | null): LiveInsert {
+  const grab = { x: Math.min(size.width / 2, 24), y: Math.min(size.height / 2, 16) };
+  const rs = reparentSession(el, grab, undefined, { size, keep: true });
+  void start;
+  return {
+    get box() { return rs.box; },
+    get active() { return rs.active; },
+    move(x, y) {
+      const into = rs.without(() => {
+        const found = containerAt(x, y, el);
+        return found && pick ? pick(found) : found;
+      });
+      if (into) rs.show(into, x, y);
+      else if (rs.active) rs.exit();
+      rs.follow(x, y);
+    },
+    end() {
+      if (!rs.active) { rs.cancel(); return null; }
+      const target = rs.target!;
+      const index = rs.index;
+      return { target, index, landed: rs.commit() };
+    },
+    cancel() { rs.cancel(); },
+  };
+}
+
+/** A container and an index among its children → "before/after this child" or "inside, at the end" */
+export function anchorOf(target: HTMLElement, index: number, landed: HTMLElement, dragged?: HTMLElement): { anchor: HTMLElement; placement: 'before' | 'after' | 'inside' } {
+  // The same children the index counted (kidsOf), minus what it landed as
+  const kids = layoutChildren(target).filter(c => c !== landed && c !== dragged && !c.hasAttribute(PLACEHOLDER));
+  // Other drafts aren't in the code yet: anchor on a real element next to the spot
+  const real = (c: HTMLElement | undefined) => !!c && !c.hasAttribute('data-ilse-draft');
+  for (let i = index; i < kids.length; i++) if (real(kids[i])) return { anchor: kids[i], placement: 'before' };
+  for (let i = Math.min(index, kids.length) - 1; i >= 0; i--) if (real(kids[i])) return { anchor: kids[i], placement: 'after' };
+  return { anchor: target, placement: 'inside' };
 }
 
 const pointIn = (p: { x: number; y: number }, r: Slot & { right?: number; bottom?: number }) =>
