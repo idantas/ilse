@@ -73,7 +73,8 @@ function append(cwd: string, line: LedgerEntry | Tombstone): void {
 
 export function describeAnnotation(a: Annotation | undefined, id: string): LedgerAnnotation {
   if (!a) return { id };
-  const owner = a.source?.[0]?.owner ?? a.component;
+  const best = a.source?.[0];
+  const owner = (best && !best.ambiguous ? best.owner : undefined) ?? a.component;
   return {
     id,
     intent: a.intent,
@@ -111,6 +112,11 @@ export function readLedger(cwd: string): LedgerEntry[] {
     } catch { /* a torn line: skip */ }
   }
   return [...entries.values()];
+}
+
+/** Ids of the notes the ledger says were applied (and not undone), newest last, capped */
+export function appliedAnnotationIds(cwd: string, limit = 2000): string[] {
+  return readLedger(cwd).flatMap(e => (e.annotations ?? []).map(a => a.id)).slice(-limit);
 }
 
 /**

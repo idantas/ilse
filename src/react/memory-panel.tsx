@@ -31,6 +31,18 @@ export interface TestMemory {
   approved: number;
   ignored: { id: string; title: string; page?: string; at: string }[];
   byCategory: { category: string; approved: number; discarded: number }[];
+  /** Absent with an older Pro */
+  journeys?: { total: number; passed: number; stuck: number; flaky: number; never: number };
+}
+
+/** "Jornadas: 4 passam · 1 travou", zeros left out; null with no journeys */
+export function journeysLine(j: TestMemory['journeys']): string | null {
+  if (!j?.total) return null;
+  const parts = ([
+    ['passed', 'memory.journeysPassed', 'memory.journeysPassedOne'], ['stuck', 'memory.journeysStuck', 'memory.journeysStuckOne'],
+    ['flaky', 'memory.journeysFlaky', 'memory.journeysFlakyOne'], ['never', 'memory.journeysNever', 'memory.journeysNeverOne'],
+  ] as const).filter(([k]) => j[k] > 0).map(([k, many, one]) => (j[k] === 1 ? t(one) : t(many, { count: j[k] })));
+  return t('memory.journeys', { parts: parts.join(' · ') });
 }
 
 export interface MemoryData {
@@ -60,6 +72,7 @@ export function ago(iso: string, now = Date.now()): string {
 const CATEGORY_KEYS: Record<string, string> = {
   accessibility: 'memory.category.accessibility', agent: 'memory.category.agent', console: 'memory.category.console',
   network: 'memory.category.network', link: 'memory.category.link', layout: 'memory.category.layout',
+  journey: 'memory.category.journey', consistency: 'memory.category.consistency',
 };
 const categoryName = (c: string) => CATEGORY_KEYS[c] ? t(CATEGORY_KEYS[c] as Parameters<typeof t>[0]) : c;
 
@@ -157,11 +170,17 @@ export function MemoryPanel({ data, onClose, onUndoDecision, onForgetTest, onOpe
             <div style={heading}>{t('memory.test')}</div>
             {!data.pro && <div style={muted}>{t('memory.testLocked')}</div>}
             {data.pro && !test && <div style={muted}>{t('memory.testUpdatePro')}</div>}
-            {test && test.runs === 0 && test.ignored.length === 0 && <div style={muted}>{t('memory.testEmpty')}</div>}
+            {test && test.runs === 0 && test.ignored.length === 0 && !test.journeys?.total && <div style={muted}>{t('memory.testEmpty')}</div>}
+            {test && journeysLine(test.journeys) && (
+              <div style={{ fontSize: 12, marginBottom: 6, display: 'flex', gap: 6, alignItems: 'center' }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, backgroundColor: test.journeys!.stuck ? color.destructive : '#16a34a' }} />
+                {journeysLine(test.journeys)}
+              </div>
+            )}
             {test && (test.runs > 0 || test.ignored.length > 0) && (
               <>
                 {test.lastRunAt && (
-                  <div style={{ fontSize: 12, marginBottom: 6 }}>{t('memory.testRuns', { count: test.runs, when: ago(test.lastRunAt) })}</div>
+                  <div style={{ fontSize: 12, marginBottom: 6 }}>{test.runs === 1 ? t('memory.testRun', { when: ago(test.lastRunAt) }) : t('memory.testRuns', { count: test.runs, when: ago(test.lastRunAt) })}</div>
                 )}
                 <div style={row}><span style={{ color: color.mutedForeground, width: 14 }}>●</span>{t('memory.testOpen', { count: test.open })}</div>
                 <div style={row}><span style={{ color: '#16a34a', width: 14 }}>✓</span>{t('memory.testFixed', { count: test.fixed })}</div>

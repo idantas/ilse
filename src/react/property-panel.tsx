@@ -16,7 +16,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { radius, color, shadow, font, ilse } from './tokens.js';
-import { scopeTwins } from './live-layout.js';
+import { scopeTwins, itemLabel } from './live-layout.js';
 import { useFrontLayer } from './front-layer.js';
 import { t } from '../i18n/index.js';
 
@@ -200,7 +200,61 @@ export interface PanelHistory {
 
 export interface TextEdit { from: string; to: string }
 
-export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep, onRemove, removed, textEdit, onTextChange, mirrorAll }: {
+export type PanelTab = 'props' | 'catalog';
+
+/** Properties | Catalog, under the panel's header */
+export function PanelTabs({ tab, onTab }: { tab: PanelTab; onTab: (tab: PanelTab) => void }) {
+  return (
+    <div role="tablist" style={{ display: 'flex', gap: 2, padding: 2, margin: '8px 12px 0', borderRadius: radius.sm, backgroundColor: color.muted }}>
+      {(['props', 'catalog'] as const).map(id => {
+        const on = tab === id;
+        return (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={on}
+            onClick={() => { if (!on) onTab(id); }}
+            style={{
+              flex: 1, height: 22, border: 'none', borderRadius: radius.sm - 2, cursor: on ? 'default' : 'pointer',
+              fontSize: 11, fontWeight: 500, fontFamily: font.sans,
+              backgroundColor: on ? color.background : 'transparent', boxShadow: on ? shadow.xs : 'none',
+              color: on ? color.foreground : color.mutedForeground,
+            }}
+          >
+            {t(id === 'props' ? 'panel.tabProps' : 'panel.tabCatalog')}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Where the user last dragged the panel; null = docked top-right */
+let lastPosition: { top: number; left: number } | null = null;
+
+/** Back to the top-right — when the toolbar closes */
+export function resetPanelPosition(): void { lastPosition = null; }
+
+/** The catalog shown with nothing selected keeps the same spot */
+export function rememberPanelPosition(p: { top: number; left: number }): void { lastPosition = p; }
+
+/** The kept spot, pulled back inside the window if it shrank since */
+export function keptPosition(): { top: number; left: number } | null {
+  if (!lastPosition) return null;
+  return {
+    top: Math.max(0, Math.min(lastPosition.top, window.innerHeight - 80)),
+    left: Math.max(0, Math.min(lastPosition.left, window.innerWidth - 248)),
+  };
+}
+
+export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep, onRemove, onDuplicate, removed, textEdit, onTextChange, mirrorAll, tab = 'props', onTab, catalog, componentSection }: {
+  /** Which tab shows: the element's properties, or the product's components */
+  tab?: PanelTab;
+  onTab?: (tab: PanelTab) => void;
+  /** The Catalog tab's content (no tabs without it) */
+  catalog?: React.ReactNode;
+  /** The Component section, on top of Properties, when the element is a catalog component */
+  componentSection?: React.ReactNode;
   /** "Apply to: all of them" — preview the edits on the component's other instances too */
   mirrorAll?: boolean;
   /** The text already retyped in this draft — a remounted panel picks it up again */
@@ -209,6 +263,8 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   onTextChange?: (edit: TextEdit | undefined) => void;
   /** Remove the element (preview: hidden; the agent takes it out of the JSX) */
   onRemove?: () => void;
+  /** Duplicate the selected component next to itself (Pro: it lands like a catalog drop) */
+  onDuplicate?: () => void;
   /** Already marked for removal — the command's × in the card takes it back */
   removed?: boolean;
   /** Filled by the panel: undo its last edit */
@@ -327,7 +383,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   useEffect(() => () => onPickerOpen?.(false), []);
 
   // Docked to the top-right until dragged, then free-floating like the card.
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  // The panel remounts on every selection, so the dragged spot lives outside it
+  // and is kept until the toolbar closes (resetPanelPosition).
+  const [pos, setPosState] = useState<{ top: number; left: number } | null>(() => keptPosition());
+  const setPos = (p: { top: number; left: number }) => { lastPosition = p; setPosState(p); };
   const dragRef = useRef<{ startX: number; startY: number; origTop: number; origLeft: number } | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
@@ -489,6 +548,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   const [boxModes, setBoxModes] = useState<Partial<Record<BoxProp, BoxMode>>>({});
   // Once the designer picks a mode it's theirs; before that, read it off the classes
   const [sizeModes, setSizeModes] = useState<Partial<Record<Axis, SizeMode>>>({});
+  // Why Fill changed nothing (no free space in the row, already full), per axis
+  const [sizeNotes, setSizeNotes] = useState<Partial<Record<Axis, string>>>({});
+  // Re-measure after a size change has laid out (the greyed value is the measured size)
+  const [, setMeasured] = useState(0);
   const sizeMode = (axis: Axis): SizeMode =>
     sizeModes[axis] ?? readSize(axis, el ? Array.from(el.classList) : [], parentFlow, styles.display ?? '');
   const textFill = isText && (!styles.backgroundColor || isTransparent(styles.backgroundColor));
@@ -662,13 +725,26 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
         )}
       </div>
 
+      {catalog && onTab && <PanelTabs tab={tab} onTab={onTab} />}
+
       <div style={{ padding: '10px 12px 12px', overflowY: 'auto', fontSize: 11 }}>
+        {tab === 'catalog' && catalog ? catalog : (<>
+        {componentSection}
         {isText && !textSelection && el && (
           <div style={{ marginBottom: GROUP_GAP }}>
             <div style={groupTitle}>Text</div>
             <textarea
               value={text}
               onChange={(e) => { record('Texto'); setTextValue(e.target.value); }}
+              // Enter confirms, like every other field here; a line break is Shift+Enter
+              // (a stray Enter used to reach the agent as a <br /> in the JSX)
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  (e.target as HTMLTextAreaElement).blur();
+                }
+              }}
+              title={t('panel.text.enterHint')}
               rows={Math.min(4, Math.max(1, text.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 34)), 0)))}
               spellCheck
               style={{
@@ -734,14 +810,24 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                 onWrap={(on) => applyMany({ flexWrap: on ? 'wrap' : 'nowrap' })}
                 size={textSelection ? undefined : {
                   mode: sizeMode,
-                  value: (axis) => effective[axis] ?? '',
+                  // Fixed: the value it's set to. Hug / Fill: the size it comes out at, greyed (like Figma's W/H)
+                  value: (axis) => sizeMode(axis) === 'fixed' || !el ? effective[axis] ?? '' : `${Math.round(el.getBoundingClientRect()[axis])}px`,
+                  note: (axis) => sizeNotes[axis],
                   fillHint: parentFlow ? 'flex-1' : 'w-full',
                   edited: ['width', 'height', 'flexGrow'].some(k => k in edits),
                   onMode: (axis, mode) => {
+                    const before = el?.getBoundingClientRect()[axis];
                     setSizeModes(m => ({ ...m, [axis]: mode }));
                     applyMany(sizeStyles(axis, mode, parentFlow, styles[axis] ?? ''));
+                    requestAnimationFrame(() => {
+                      setMeasured(n => n + 1);
+                      const after = el?.getBoundingClientRect()[axis];
+                      const still = mode === 'fill' && el && before !== undefined && after !== undefined && Math.abs(after - before) < 1;
+                      setSizeNotes(n => ({ ...n, [axis]: still ? fillBlocked(el, axis, parentFlow) : undefined }));
+                    });
                   },
                   onValue: (axis, v) => {
+                    setSizeNotes(n => ({ ...n, [axis]: undefined }));
                     setSizeModes(m => ({ ...m, [axis]: 'fixed' }));
                     applyMany(sizeStyles(axis, 'fixed', parentFlow, /^\d+(\.\d+)?$/.test(v.trim()) ? `${v.trim()}px` : v.trim()));
                   },
@@ -808,17 +894,36 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
             })}
           </div>
         ))}
+        </>)}
       </div>
 
-      {onRemove && (
-        <div style={{ borderTop: `1px solid ${color.border}`, padding: 8 }}>
+      {(onRemove || onDuplicate) && tab !== 'catalog' && (
+        <div style={{ borderTop: `1px solid ${color.border}`, padding: 8, display: 'flex', gap: 4 }}>
+          {onDuplicate && (
+            <button
+              onClick={onDuplicate}
+              title={t('panel.duplicateHint')}
+              className="ilse-panel-remove"
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: '6px 8px', borderRadius: radius.md, border: 'none',
+                background: 'none', fontSize: 11, fontFamily: font.sans, color: color.mutedForeground, cursor: 'pointer',
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5V9A1.5 1.5 0 0 0 4 10.5h1.5" />
+              </svg>
+              {t('panel.duplicate')}
+            </button>
+          )}
+          {onRemove && (
           <button
             onClick={onRemove}
             disabled={removed}
             title={removed ? t('panel.removed') : t('panel.removeHint')}
             className="ilse-panel-remove"
             style={{
-              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               padding: '6px 8px', borderRadius: radius.md, border: 'none',
               background: 'none', fontSize: 11, fontFamily: font.sans,
               color: removed ? ilse.brand : color.mutedForeground,
@@ -828,8 +933,9 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.5 6.5v4.5M9.5 6.5v4.5" />
             </svg>
-            {removed ? t('panel.removedShort') : t('panel.remove')}
+            {removed ? t('panel.removedShort') : onDuplicate ? t('panel.removeShort') : t('panel.remove')}
           </button>
+          )}
         </div>
       )}
 
@@ -883,9 +989,31 @@ const FLOWS: Array<{ flow: Flow; title: () => string; icon: React.ReactNode }> =
 
 const POSITIONS: Pos[] = ['start', 'center', 'end'];
 
+/**
+ * Fill was picked and nothing moved: say why, so it doesn't look broken. In a row,
+ * a sibling already takes the free space (a field at width 100%); otherwise the
+ * element already fills its container, or the container only hugs its content.
+ */
+function fillBlocked(el: HTMLElement, axis: Axis, parentFlow: ParentFlow): string {
+  const parent = el.parentElement;
+  if (!parent) return t('panel.size.alreadyFull');
+  const mainAxis = (parentFlow === 'row' && axis === 'width') || (parentFlow === 'column' && axis === 'height');
+  if (mainAxis) {
+    const others = Array.from(parent.children).filter((c): c is HTMLElement => c instanceof HTMLElement && c !== el && getComputedStyle(c).display !== 'none');
+    const hog = others.sort((a, b) => b.getBoundingClientRect()[axis] - a.getBoundingClientRect()[axis])[0];
+    if (hog) return t('panel.size.noRoom', { who: itemLabel(hog).slice(0, 28) });
+  }
+  const cs = getComputedStyle(parent);
+  const pad = axis === 'width' ? parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) : parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const room = parent.getBoundingClientRect()[axis] - pad;
+  return el.getBoundingClientRect()[axis] >= room - 1 ? t('panel.size.alreadyFull') : t('panel.size.parentHugs');
+}
+
 interface SizeControl {
   mode: (axis: Axis) => SizeMode;
   value: (axis: Axis) => string;
+  /** Why the last Fill changed nothing */
+  note?: (axis: Axis) => string | undefined;
   fillHint: string;
   edited: boolean;
   onMode: (axis: Axis, mode: SizeMode) => void;
@@ -901,7 +1029,9 @@ const SIZE_MODES: Array<{ mode: SizeMode; label: string; hint: (axis: Axis, fill
 function SizeRow({ axis, size }: { axis: Axis; size: SizeControl }) {
   const mode = size.mode(axis);
   const value = size.value(axis);
+  const note = size.note?.(axis);
   return (
+    <>
     <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
       <span style={{ width: 60, flexShrink: 0, color: color.mutedForeground }}>{axis === 'width' ? 'Width' : 'Height'}</span>
       <select
@@ -920,7 +1050,7 @@ function SizeRow({ axis, size }: { axis: Axis; size: SizeControl }) {
         key={`${mode}-${value}`}
         defaultValue={shortValue(value)}
         placeholder={t('panel.size.placeholder')}
-        title={t('panel.size.title')}
+        title={mode === 'fixed' ? t('panel.size.title') : t('panel.size.measured')}
         onBlur={(e) => { if (e.target.value.trim() && e.target.value.trim() !== shortValue(value)) size.onValue(axis, e.target.value); }}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         style={{
@@ -931,6 +1061,8 @@ function SizeRow({ axis, size }: { axis: Axis; size: SizeControl }) {
         }}
       />
     </div>
+    {note && <div role="status" style={{ margin: '-1px 0 6px 65px', fontSize: 10, lineHeight: 1.35, color: '#B7791F' }}>{note}</div>}
+    </>
   );
 }
 

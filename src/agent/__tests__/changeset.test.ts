@@ -93,3 +93,32 @@ describe('redo', () => {
     expect(undoState()).toMatchObject({ count: 2, redoCount: 0 });
   });
 });
+
+describe('undo saved on disk — survives a restart', () => {
+  it('a new process reads the stacks back, and they keep saving', async () => {
+    const { mkdtempSync, readFileSync: read } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join: j } = await import('node:path');
+    const m = await import('../changeset.js');
+    const file = j(mkdtempSync(j(tmpdir(), 'ilse-undo-')), 'undo.json');
+    m.persistUndoAt(file);
+    m.pushUndo({ id: 'a1', annotationIds: ['n1'], label: 'first', files: [{ path: 'x.tsx', before: 'old', after: 'new' }], createdAt: 1 });
+    m.pushUndo({ id: 'a2', annotationIds: ['n2'], files: [{ path: 'y.tsx', before: null, after: 'made' }], createdAt: 2 });
+    m.pushRedo(m.popUndo()!);
+    // "restart": the module state is reloaded from the file
+    m.persistUndoAt(file);
+    expect(m.undoState()).toMatchObject({ count: 1, label: 'first', redoCount: 1 });
+    expect(m.peekUndo()?.files[0]).toEqual({ path: 'x.tsx', before: 'old', after: 'new' });
+    expect(JSON.parse(read(file, 'utf8')).redo[0].id).toBe('a2');
+  });
+  it('an unreadable file starts empty', async () => {
+    const { mkdtempSync, writeFileSync: write } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join: j } = await import('node:path');
+    const m = await import('../changeset.js');
+    const file = j(mkdtempSync(j(tmpdir(), 'ilse-undo-')), 'undo.json');
+    write(file, '{not json');
+    m.persistUndoAt(file);
+    expect(m.undoState().count).toBe(0);
+  });
+});

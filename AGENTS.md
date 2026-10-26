@@ -44,6 +44,7 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/agent/agent-profile.ts` | Model tier per task, isolated env, Claude account, project instructions |
 | `src/agent/quick-edit.ts` | Quick path: fast model → JSON `{remove, add, needsAgent}` → applied by token-swap |
 | `src/agent/claude-accounts.ts` | Finds Claude logins (`CLAUDE_CONFIG_DIR`) to pick one per project |
+| `src/agent/ask.ts` | One question to the user's agent, no tools (Pro's journeys pick each step with it) |
 | `src/agent/verify.ts` | After an agent batch: changed files that no longer parse → one repair turn, else undo |
 | `src/agent/project-check.ts` | After a change: reads tsc/test output, keeps what the change broke, the repair prompt, weakened-test and protected-path checks |
 | `src/agent/check-run.ts` | Runs the project's typecheck and the tests that cover the change, and again on a copy of the project before it (baseline) |
@@ -56,10 +57,16 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/react/memory-panel.tsx` | Settings → Project memory: the design history (ledger) and, with Pro, test mode's memory |
 | `src/react/property-panel.tsx` | Property panel (`PROPS` lists the controls) |
 | `src/react/effects.ts` | Effects in the panel: shadow / blur / backdrop-blur scales read through the browser, Tailwind v4's empty shadow layers dropped |
+| `src/react/repaint-watch.ts`, `page-errors.ts`, `copy-place.ts` | After a change: did the page repaint (else a quiet refresh, then a reload bubble), did it log new errors (undo / ask for a fix); where a dragged copy goes in the code |
 | `src/react/scroll-anchor.ts` | Markers inside a list or panel that scrolls on its own follow their element and hide when it scrolls out |
 | `src/react/live-layout.ts` | Live drag/reorder/resize/move-into-container previews (DOM is never moved under React) |
 | `src/i18n/messages.ts` | Every user-facing string, English and Portuguese |
-| `src/design-context/` | Codebase analysis (token frequency, repeated patterns) — groundwork, not wired yet |
+| `src/design-context/` | Codebase analysis, no AI: repeated JSX, component families, scattered tokens. `consistency.ts` is what Pro's test mode reads (Consistency group) |
+| `src/design-context/catalog.ts` | The catalog: project and imported library components, props and values from types / `cva()` / usage. `catalog-search.ts` (name + what it's for), `catalog-kinds.ts` (base/product, what it's for, feature — no AI), `catalog-file.ts` (`.ilse/catalog.md`: the team's names and moves), `design-system.ts` (Storybook titles, shadcn's kit folder, design system packages), `library-types.ts` (a library's choices from its `.d.ts`). The Component section is free; the catalog list, copies and insert are Pro (`ProServer.catalog`) |
+| `src/react/catalog-panel.tsx`, `catalog-snapshot.ts`, `component-section.tsx`, `component-drop.ts` | Catalog tab and window, copies of components on the page, the panel's Component section, dragging a component onto the page (drafts) |
+| `src/context/prop-swap.ts`, `insert-component.ts` | No AI: a component prop rewritten (or removed, back to its default) where that instance is written; a catalog component inserted next to / inside an element, with its import |
+| `src/context/chunk-source.ts` | React frames that point into a bundled chunk (Turbopack, Next 16) → the project file, read from the chunk's source map |
+| `src/react/test-setup.tsx`, `test-report.tsx` | Test mode (Pro): what to test before a run; the report, above the toolbar or docked on the side |
 
 ## Recipes
 

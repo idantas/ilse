@@ -42,7 +42,7 @@ const EDITS = new Set(['fix', 'change', 'style', 'resize', 'move']);
 
 /** Which tier does this batch as well as the top model would */
 export function pickTier(annotations: Annotation[]): Tier {
-  const located = annotations.every(a => a.source?.[0]?.kind === 'element');
+  const located = annotations.every(a => a.source?.[0]?.kind === 'element' && !a.source[0].ambiguous);
   const withImages = annotations.some(a => !!a.imageRef || (a.imageRefs?.length ?? 0) > 0);
   // Open-ended work stays on the agent's own model: new UI, free chat, a picture to match
   if (withImages || annotations.some(a => a.intent === 'create' || a.intent === 'chat')) return 'default';

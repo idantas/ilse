@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, Fragment } from 'react';
 import { createPortal } from 'react-dom';
 import {
   IconPointer,
@@ -21,25 +21,38 @@ import {
   IconRefresh,
   IconMaximize,
   IconPencil,
+  IconRoute,
+  IconListDetails,
+  IconComponents,
 } from '@tabler/icons-react';
 import { captureElement, captureTextSelection, captureArea, captureEnvironment, humanizeSelector, pageComponents, type ElementCapture } from './annotator.js';
 import { analyzeElement, scanPage, setDSTokens, getDSTokens, parseTokensJSON, type Suggestion, type PageIssue } from './analyze.js';
 import { connect, disconnect, send, onMessage, onStatus, isConnected } from './ws-client.js';
+import { watchRepaints, REPAINT_WAIT_MS, sameText, softRefresh } from './repaint-watch.js';
+import { copyPlacement, lineOf, type Neighbour } from './copy-place.js';
+import { watchPageErrors, newErrors } from './page-errors.js';
 import { useImageInput, InlineAttachments } from './image-input.js';
-import { PropertyPanel, type PanelHistory, type TextEdit } from './property-panel.js';
+import { CatalogLocked, CatalogPanel, CatalogWindow, bestSnapshot } from './catalog-panel.js';
+import { componentAt, findInstances, instanceAt, liftAnchor, namesOnPage, sameVariant, snapshotPage, variantKey, type InstanceRef, type CatalogItem, type CatalogSnapshot } from './catalog-snapshot.js';
+import { ComponentSection, type PropChange } from './component-section.js';
+import { previewVariant, makeDraft, placeDraft, placeholderHtml, removeDraft, restyleDraft, jsxPreview, type DropTarget, type Placement } from './component-drop.js';
+import { PropertyPanel, resetPanelPosition, type PanelTab, type PanelHistory, type TextEdit } from './property-panel.js';
 import { useFrontLayer } from './front-layer.js';
 import { SketchLayer, PencilControl, PEN_COLORS } from './sketch-layer.js';
 import { ElementTree } from './element-tree.js';
 import { IlseMascot, type MascotActivity, type MascotMode, type MascotReaction } from './mascot.js';
 import { SpeechBubble, speechButton, reasoningLine, ReasoningDot } from './speech-bubble.js';
-import { findingsForPage, findingNote, findingElement, findingRef, type TestFinding, type TestFindingRef } from './test-findings.js';
+import { findingsForPage, findingNote, findingElement, findingRef, type TestFinding, type TestFindingRef, type TestRunMeta } from './test-findings.js';
 import { analyzeSketch, renderSketchImage, formatSketchNote, drawnContainer, pageElementAt, type Stroke } from './sketch.js';
 import { recordScrollers, scrollShift, scrollerNow, visibleIn } from './scroll-anchor.js';
-import { beginDrag, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, componentScope, scopeTwins, type LiveDrag, selectionTarget, selectableParent } from './live-layout.js';
+import { beginDrag, beginInsert, anchorOf as insertAnchor, type LiveInsert, beginResize, settleElement, expireElement, formatReorder, formatReparent, reorderUnit, neighboursAfterReorder, componentScope, scopeTwins, type LiveDrag, selectionTarget, selectableParent, isDataRow, itemLabel } from './live-layout.js';
 import type { StyleChange, StyleData } from '../types.js';
 import { toggleFreeze, isFrozen } from './freeze.js';
 import { shieldPage } from './shield.js';
 import { MemoryPanel, type MemoryData } from './memory-panel.js';
+import { TestSetup, parseOffer, type TestOffer, type TestGroup, type ScreenSize } from './test-setup.js';
+import { FindingActions, TestReport } from './test-report.js';
+import { JourneysPanel, type JourneySummary, type JourneyLive, type JourneySuggestion } from './journeys-panel.js';
 import { TooltipLayer } from './tooltip-layer.js';
 import { radius, color, shadow, ilse, font, modeAccent } from './tokens.js';
 import { t, detectLocale, setLocale, getLocale, type Locale } from '../i18n/index.js';
@@ -122,11 +135,20 @@ interface AutoContext {
   /** Text retyped in the panel: what the agent reads, and the chip's text */
   text?: string;
   textLabel?: string;
+  /** Component props changed in the Component section: what the agent reads, and the chip's text */
+  props?: string;
+  propsLabel?: string;
+  /** A catalog component the designer pointed at ("use this one"): what the agent reads, and the chip */
+  component?: string;
+  componentLabel?: string;
+  /** A catalog component dropped on the page: what the agent reads, and the chip */
+  insert?: string;
+  insertLabel?: string;
 }
 
 /** The note as the agent receives it: the designer's words first, then Ilse's context. */
 function composeNote(note: string, auto?: AutoContext): string {
-  const blocks = auto ? [auto.remove, auto.text, auto.reorder, auto.move, auto.resize, auto.area, auto.style, auto.sketch].filter(Boolean) as string[] : [];
+  const blocks = auto ? [auto.insert, auto.remove, auto.text, auto.props, auto.component, auto.reorder, auto.move, auto.resize, auto.area, auto.style, auto.sketch].filter(Boolean) as string[] : [];
   return [note.trim(), ...blocks].filter(Boolean).join('\n\n');
 }
 
@@ -136,12 +158,15 @@ const newClientId = () => `c-${Date.now().toString(36)}-${Math.random().toString
  * Bring "sent" drafts in line with what the server actually knows. A draft the
  * server resolved is resolved; one it never heard of (page reloaded mid-run,
  * CLI restarted, answer lost) goes back to pending — marked, not flickering —
- * so it can be re-sent or removed.
+ * so it can be re-sent or removed. "Resolved" includes notes the project's
+ * ledger says were applied in an earlier session.
  */
 function reconcileSent(drafts: AnnotationDraft[], known: Array<{ id: string; status: string }>): AnnotationDraft[] {
   const byId = new Map(known.map(k => [k.id, k.status]));
   let changed = false;
   const next = drafts.map(d => {
+    // Sent once, back to pending because a CLI didn't know it — the ledger may say it was applied after all
+    if (d.status === 'pending' && d.id && byId.get(d.id) === 'resolved') { changed = true; return { ...d, status: 'resolved' as const }; }
     if (d.status !== 'sent') return d;
     const status = d.id ? byId.get(d.id) : undefined;
     if (status === 'resolved') { changed = true; return { ...d, status: 'resolved' as const }; }
@@ -155,7 +180,7 @@ function reconcileSent(drafts: AnnotationDraft[], known: Array<{ id: string; sta
  * One line per thing Ilse will tell the agent — shown in the card so the
  * designer sees how it read the gesture, while the note stays theirs.
  */
-type AutoKey = 'remove' | 'text' | 'reorder' | 'move' | 'resize' | 'style' | 'sketch' | 'area';
+type AutoKey = 'insert' | 'remove' | 'text' | 'props' | 'component' | 'reorder' | 'move' | 'resize' | 'style' | 'sketch' | 'area';
 interface AutoLine { key: AutoKey; text: string }
 
 function autoSummary(auto?: AutoContext): AutoLine[] {
@@ -163,8 +188,11 @@ function autoSummary(auto?: AutoContext): AutoLine[] {
   const out: AutoLine[] = [];
   const push = (key: AutoKey, text: string) => out.push({ key, text });
   const count = (text: string, re: RegExp) => (text.match(re) ?? []).length;
+  if (auto.insertLabel) push('insert', auto.insertLabel);
   if (auto.removeLabel) push('remove', auto.removeLabel);
   if (auto.textLabel) push('text', auto.textLabel);
+  if (auto.propsLabel) push('props', auto.propsLabel);
+  if (auto.componentLabel) push('component', auto.componentLabel);
   if (auto.reorderLabel) push('reorder', auto.reorderLabel);
   if (auto.move) push('move', `${auto.move.replace(/\.$/, '')}`);
   if (auto.resize) push('resize', `${auto.resize.replace(/\.$/, '')}`);
@@ -190,6 +218,85 @@ function textCommand(edit?: { from: string; to: string }): Pick<AutoContext, 'te
       `Trocar o texto deste elemento de ${JSON.stringify(edit.from)} para ${JSON.stringify(edit.to)}.`,
       'Se o texto vem de uma variável, prop, tradução (i18n) ou dados de lista, troque na origem — só este texto, respeitando o Scope.',
       ...(/\n/.test(edit.from + edit.to) ? ['As quebras de linha (\\n) são <br> no código: mantenha uma <br> por quebra.'] : []),
+    ].join('\n'),
+  };
+}
+
+/** The command for component props picked in the panel: the chip, and what the agent is told */
+function propsCommand(name: string, source: string, changes: PropChange[]): Pick<AutoContext, 'props' | 'propsLabel'> {
+  if (changes.length === 0) return { props: undefined, propsLabel: undefined };
+  return {
+    propsLabel: `${t('toolbar.propsCommand', { name })} ${changes.map(c => `${c.prop}: ${c.to || '—'}`).join(', ')}`,
+    props: [
+      `Componente <${name}> (de ${source}): neste uso, ${changes.map(c => `${c.prop} ${c.from !== undefined ? JSON.stringify(c.from) : '(não definida)'} → ${JSON.stringify(c.to)}`).join('; ')}.`,
+      `Mude a prop onde este <${name}> é escrito, respeitando o Scope. Use só valores que o ${name} aceita; não troque por outro componente.`,
+    ].join('\n'),
+  };
+}
+
+/** A dropped component: the chip, and what the agent is told when Ilse can't write it alone */
+function insertCommand(d: InsertDraft, styled = false): Pick<AutoContext, 'insert' | 'insertLabel'> {
+  if (d.copy) return copyCommand(d, styled);
+  const from = d.item.library ? `import de '${d.item.module ?? d.item.source}'` : `definido em ${d.item.source}`;
+  const self = d.at ? `deste <${d.at.component}>` : 'deste elemento';
+  const where = { before: `antes ${self}`, after: `depois ${self}`, inside: `dentro ${self}, no fim` }[d.placement]
+    + (d.at ? ` (onde este <${d.at.component}> é usado, não dentro da definição dele)` : '');
+  return {
+    insertLabel: `+ ${d.item.name} ${t(`toolbar.insert.${d.placement}` as Parameters<typeof t>[0])}`,
+    insert: [
+      `Inserir o componente <${d.item.name}> que o projeto já tem (${from}) ${where}, assim:`,
+      jsxPreview(d.item.name, d.props, d.text),
+      ...(d.item.example ? [`Como o código já o escreve (${d.item.example.file}:${d.item.example.line}): ${d.item.example.code}`] : []),
+      'Use este componente; não crie outro. Ligue props obrigatórias ou dados como o projeto já faz.',
+    ].join('\n'),
+  };
+}
+
+/**
+ * The reload bubble's words: `legibleText`'s blend can't reach the page from inside the fixed
+ * bubble (it blends with its own transparent layer, so it shows as light grey) — solid ink with
+ * a light halo reads on light and dark pages
+ */
+const STALE_TEXT: React.CSSProperties = { color: color.foreground, mixBlendMode: 'normal', opacity: 1, textShadow: '0 0 2px #fff, 0 0 8px #fff' };
+
+/** A copy of an element that isn't a component: the chip, and what the agent works out in the code */
+function copyCommand(d: InsertDraft, styled = false): Pick<AutoContext, 'insert' | 'insertLabel'> {
+  const place = d.place;
+  // The panel edits were made on the copy, but the note points at the original (where the code is)
+  const style = styled ? ' Os ajustes de estilo desta nota foram feitos na CÓPIA: aplique-os só nela; o original não muda.' : '';
+  const text = d.text?.trim() ? ` A cópia mostra o texto ${JSON.stringify(d.text.trim())} no lugar do original.` : '';
+  // Dragged elsewhere: the copy's place is where it stands now, named by its neighbour on the page
+  const shown = place ? `e a arrastou para ${place}` : 'logo depois';
+  return {
+    insertLabel: t(d.copy === 'item' ? 'toolbar.copy.item' : 'toolbar.copy.block'),
+    insert: d.copy === 'item'
+      ? [
+        `Duplicar este item da lista (${JSON.stringify(d.item.name)}): o designer pôs na tela uma cópia dele ${shown}. Ela só existe na tela, não no código — escreva-a no código.`,
+        'Ele é uma linha de uma lista gerada a partir de dados (um .map): não copie o JSX do template. Acrescente um novo item aos dados que essa lista renderiza, com o mesmo formato deste, '
+          + (place ? `na posição em que a lista o mostra: ${place} (o original fica onde está).` : 'logo DEPOIS dele (o original continua primeiro).') + text + style,
+        'O que a lista usa como key (id, slug, nome…) tem de ser único: duas keys iguais fazem o React duplicar ou sumir com linhas. Se a key vem de um campo visível (como o nome), use um valor provisório distinto no novo item (por exemplo "Replit 2") e diga no resumo que é provisório.',
+        'Se os dados vêm de uma fonte local (mock, sample, constante, i18n), acrescente lá. Se vêm do backend ou são calculados de outros dados, não invente: diga no resumo o que precisaria existir para a linha aparecer.',
+      ].join('\n')
+      : [
+        `Duplicar este elemento (${JSON.stringify(d.item.name)}): o designer pôs na tela uma cópia dele ${shown}. Ela só existe na tela, não no código — escreva-a no código.`,
+        (place
+          ? `Escreva uma cópia deste JSX ${place}, no código que renderiza esse lugar, com o mesmo conteúdo e os mesmos dados. O original fica onde está, intocado — qualquer ajuste feito na cópia vai nela, não no original.`
+          : 'Escreva uma cópia deste JSX logo DEPOIS dele, no mesmo lugar do código, com o mesmo conteúdo e os mesmos dados. O original continua primeiro, intocado; a cópia é a segunda — qualquer ajuste feito na cópia vai nela, não no original.') + text + style,
+        ...(d.at ? [`Este elemento é um <${d.at.component}> inteiro: a cópia é outro <${d.at.component}> com as mesmas props, escrito ${place ?? 'logo depois deste'} onde ele é usado — não dentro da definição de ${d.at.component}, e sem prop nova nele.`] : []),
+        'A cópia aparece sempre, como o original: não crie prop, flag ou condição para mostrá-la. Se o JSX tem key ou id fixos, a cópia recebe outros (nunca dois iguais). Se ele faz parte de um componente usado em outros lugares, a cópia vale só aqui (respeite o Scope). Não crie um componente novo.',
+      ].join('\n'),
+  };
+}
+
+/** "Use this component": the chip, and the card the agent gets — import, the usual way it's written, the rule */
+function componentCommand(item: CatalogItem): Pick<AutoContext, 'component' | 'componentLabel'> {
+  const from = item.library ? `import de '${item.module ?? item.source}'` : `definido em ${item.source}`;
+  return {
+    componentLabel: `⟨${item.name}⟩`,
+    component: [
+      `Use o componente <${item.name}> que o projeto já tem (${from}).`,
+      ...(item.example ? [`Como o código já o escreve (${item.example.file}:${item.example.line}):`, item.example.code] : []),
+      `Use este componente aqui; não crie outro nem troque por outro.`,
     ].join('\n'),
   };
 }
@@ -264,7 +371,11 @@ function clearStylePreview(ann: { pixelTargetId?: string; styleData?: StyleData 
 }
 
 /** Where an edit goes when the element comes from a component repeated on the page */
-interface Scope { component: string; count: number; choice: 'one' | 'all' }
+interface Scope {
+  component: string; count: number; choice: 'one' | 'all';
+  /** Places it's written in the code (catalog): one on screen can still be on other screens */
+  uses?: number;
+}
 
 interface AnnotationDraft {
   id?: string;
@@ -298,8 +409,41 @@ interface AnnotationDraft {
   sketch?: Stroke[];
   auto?: AutoContext;
   textEdit?: TextEdit;
+  propEdit?: PropEditDraft;
+  insert?: InsertDraft;
   /** The `ilse test` finding this note fixes — the CLI tests its page again after the agent */
   testFinding?: TestFindingRef;
+}
+
+/** A catalog component dropped on the page: the draft copy standing there, and how it's written */
+interface InsertDraft {
+  item: CatalogItem;
+  placement: Placement;
+  props: Record<string, string | number | boolean>;
+  text?: string;
+  /** The copy on screen */
+  html: string;
+  draftId: string;
+  /** The anchor is a component instance's root: the code place is where that instance is written */
+  at?: InstanceRef;
+  /** A copy the designer dragged: where it goes, in words (see copy-place.ts) */
+  place?: string;
+  /**
+   * Not a catalog component: a copy of the selected element, on screen only. A list's row
+   * becomes a new item in its data, any other element a copy of its JSX — the agent decides
+   * in the code; `item` only names it
+   */
+  copy?: 'item' | 'block';
+}
+
+/** Component props changed in the panel, with what the CLI needs to find the JSX */
+interface PropEditDraft {
+  component: string;
+  source: string;
+  frameUrl?: string;
+  props: Record<string, string | number | boolean>;
+  text?: string;
+  changes: PropChange[];
 }
 
 interface PopoverRect {
@@ -312,6 +456,10 @@ interface PopoverRect {
 interface PendingCapture {
   /** The element's text, retyped in the panel */
   textEdit?: TextEdit;
+  /** Props of the component it is, changed in the Component section */
+  propEdit?: PropEditDraft;
+  /** A component dropped from the catalog: this draft is its copy (the capture is its anchor) */
+  insert?: InsertDraft;
   capture: ElementCapture;
   scope?: Scope;
   context: string;        // CSS selector (for grep/code)
@@ -452,7 +600,12 @@ function computePopoverPos(rect: PopoverRect, height = 168, width = 322): { top:
 function AnnotationPopover({
   context, contextLabel, rect, note, styles, grepPattern, hasElement, suggestions, imageRefs, hasContext, summary, onRemoveSummary, scope, onScope,
   onSelectParent, treeTarget, onSelectElement, onNoteChange, onApplySuggestion, onRequestAnalysis, onAddImage, onRemoveImage, onAdd, onCancel,
+  onPickComponent, picker,
 }: {
+  /** + → "Component…": open the catalog to point at the component to use */
+  onPickComponent?: () => void;
+  /** The catalog list, under the input, while picking */
+  picker?: React.ReactNode;
   context: string;
   contextLabel: string;
   rect: PopoverRect;
@@ -599,7 +752,9 @@ function AnnotationPopover({
           }}>
             {([
               { choice: 'one', label: t('toolbar.scope.one'), title: t('toolbar.scope.oneTitle', { component: scope.component }) },
-              { choice: 'all', label: t('toolbar.scope.all', { count: scope.count }), title: t('toolbar.scope.allTitle', { count: scope.count, component: scope.component }) },
+              (scope.uses ?? 0) > scope.count
+                ? { choice: 'all' as const, label: t('toolbar.scope.all', { count: scope.uses! }), title: t('toolbar.scope.allUsesTitle', { count: scope.uses!, component: scope.component }) }
+                : { choice: 'all' as const, label: t('toolbar.scope.all', { count: scope.count }), title: t('toolbar.scope.allTitle', { count: scope.count, component: scope.component }) },
             ] as const).map(o => {
               const on = scope.choice === o.choice;
               return (
@@ -733,6 +888,7 @@ function AnnotationPopover({
             onRemove={(i) => onRemoveImage?.(i)}
             fileRef={fileRef}
             onFileChange={handleFileChange}
+            onComponent={onPickComponent}
           />
           <button
             onClick={onAdd}
@@ -750,6 +906,7 @@ function AnnotationPopover({
           </button>
         </div>
       </div>
+      {picker}
     </div>
   );
 }
@@ -786,6 +943,9 @@ function clampToViewport(pos: { x: number; y: number }, buttonSize = 40): { x: n
  * The title snapshot is taken at first call in the session — stable enough
  * for dev/dogfood where each project has a distinct <title> in its layout.
  */
+/** sessionStorage: the finding the report was on when it sent the dev to another page */
+const REPORT_FOCUS_KEY = 'ilse-report-focus';
+
 function getStorageKey(base: string): string {
   if (typeof window === 'undefined') return base;
   const host = window.location.host || 'unknown';
@@ -1306,6 +1466,29 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // Project memory: asked from the CLI each time it opens, so it is never stale
   const [memoryOpen, setMemoryOpen] = useState(false);
+  // Catalog: a tab of the panel while something is selected, its own window when nothing is
+  const [panelTab, setPanelTab] = useState<PanelTab>('props');
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  // The card's "Component…": the catalog list inside the card, to point at the one to use
+  const [pickingComponent, setPickingComponent] = useState(false);
+  // The panel's ×: hidden until the next selection (or the catalog button)
+  const [panelClosed, setPanelClosed] = useState(false);
+  // A variant picked for an instance on the page has no copy yet: the panel says it shows once applied
+  const [variantMissing, setVariantMissing] = useState(false);
+  const [catalog, setCatalog] = useState<{ items: CatalogItem[]; snapshots: Record<string, CatalogSnapshot[]> } | null>(null);
+  // Read from callbacks that don't re-create on every catalog change (selecting an element)
+  const catalogRef = useRef(catalog);
+  catalogRef.current = catalog;
+  const catalogItemsRef = useRef<CatalogItem[] | null>(null);
+  /** `id|variant` copied this session */
+  const copiedRef = useRef(new Set<string>());
+  const captureCopiesRef = useRef<() => void>(() => {});
+  /** The copies came too, not just the list */
+  const catalogFullRef = useRef(false);
+  const [catalogOnPage, setCatalogOnPage] = useState<Set<string>>(new Set());
+  const loadCatalog = () => { setCatalogOnPage(namesOnPage()); send({ type: 'catalog' }); };
+  /** The list only, no copies: enough to start copying */
+  const loadCatalogList = () => send({ type: 'catalog', lite: true });
   const [memoryData, setMemoryData] = useState<MemoryData | null>(null);
   const openMemory = () => { setMemoryData(null); setMemoryOpen(true); send({ type: 'memory' }); };
   // Shortcut groups folded in the modal — the first one starts open
@@ -1451,6 +1634,31 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   };
   // Test mode runs on Ilse Pro. Without it the switch shows her asleep, and a tap says where to get it
   const [proTest, setProTest] = useState(false);
+  /** Owner license: the settings badge flips Pro ↔ Free (null: not the owner, no switch) */
+  const [owner, setOwner] = useState<{ viewAsFree: boolean } | null>(null);
+  // The catalog (list, copies, dragging onto the page) is Pro; the Component section is not
+  const [proCatalog, setProCatalog] = useState(false);
+  const proCatalogRef = useRef(false);
+  useEffect(() => { proCatalogRef.current = proCatalog; }, [proCatalog]);
+  // Journeys (Pro): the list, the one running, and whether new ones can be recorded
+  const [proJourneys, setProJourneys] = useState(false);
+  const [journeysOpen, setJourneysOpen] = useState(false);
+  const [journeys, setJourneys] = useState<JourneySummary[]>([]);
+  const [journeyRecording, setJourneyRecording] = useState(true);
+  const [journeyLive, setJourneyLive] = useState<JourneyLive | null>(null);
+  const [journeyError, setJourneyError] = useState<string | null>(null);
+  const [journeySuggestions, setJourneySuggestions] = useState<JourneySuggestion[] | null>(null);
+  const [journeySuggesting, setJourneySuggesting] = useState(false);
+  // Before a run: what Pro offers to test here (test_setup)
+  const [testOffer, setTestOffer] = useState<TestOffer | null>(null);
+  // The report: what the last run tested, open above the toolbar or docked on the side
+  const [testRunMeta, setTestRunMeta] = useState<TestRunMeta | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+  // The report is a side panel now (expanding is the report's own): it stays while the dev browses
+  const reportDocked = true;
+  const [reportFocus, setReportFocus] = useState<string | null>(null);
+  // "Ignore for now": gone from the report and the page until the next test
+  const [ignoredNow, setIgnoredNow] = useState<Set<string>>(new Set());
   const [pageIssues, setPageIssues] = useState<PageIssue[]>([]);
   const [scanHighlight, setScanHighlight] = useState<PopoverRect | null>(null);
   // Test mode: hovering Run lists the findings its markers hold
@@ -1468,7 +1676,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // Findings from the last `ilse test` run that the dev hasn't fixed or discarded yet
   const [testFindings, setTestFindings] = useState<TestFinding[]>([]);
   // Test mode, asked from here and run by the CLI: where it is, and what it needs from the dev
-  type TestPhase = 'checking' | 'running' | 'login-ask' | 'login-open' | 'error';
+  type TestPhase = 'setup' | 'checking' | 'running' | 'login-ask' | 'login-open' | 'error';
   const [testRun, setTestRun] = useState<{ phase: TestPhase; page?: string; error?: string; expired?: boolean } | null>(null);
   const [testSteps, setTestSteps] = useState<string[]>([]);
   /** The mascot at work: is the agent editing (she types) or thinking (she looks up)? */
@@ -1505,6 +1713,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   };
   /** One line of the test's reasoning: the page it opens, then what it found there */
   const testStepText = (msg: Record<string, unknown>): string => {
+    if (msg.group === 'consistency' || msg.group === 'journeys') return t(`test.stepGroup.${msg.group}`);
     if (typeof msg.path !== 'string') return t('toolbar.testStepStart');
     const page = msg.viewport === 'mobile' ? t('toolbar.testOnMobile', { page: msg.path }) : msg.path;
     if (msg.done !== true) return t('toolbar.testStepPage', { page });
@@ -1513,7 +1722,17 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const kinds = (Array.isArray(msg.kinds) ? msg.kinds : []).map(k => t(`toolbar.cat.${k}` as Parameters<typeof t>[0])).join(', ');
     return t('toolbar.testStepFound', { page, count: found, kinds });
   };
-  const testAction = (action: 'run' | 'run-anon' | 'login' | 'login-done' | 'login-cancel') => send({ type: 'test', action });
+  const testAction = (action: 'run' | 'run-anon' | 'login' | 'login-done' | 'login-cancel' | 'setup', options?: { groups: TestGroup[]; sizes: ScreenSize[] }) =>
+    send({ type: 'test', action, ...(options ? { options } : {}) });
+  /** ↻: first the list of what to test; Pro answers with what this project can run */
+  const openTestSetup = () => {
+    setShowSettings(false); setChatOpen(false); setJourneysOpen(false); setRunListOpen(false);
+    if (!reportDocked) setReportOpen(false);
+    setTestRun({ phase: 'setup' });
+    setScanOpen(true);
+    testAction('setup');
+  };
+  const journeyAction = (a: Record<string, unknown>) => send({ type: 'journey', ...a });
 
   // Recomputed on every render: a client-side route change shows that page's findings
   const pageFindings = findingsForPage(testFindings, location.pathname, location.search);
@@ -1538,6 +1757,80 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   /** What Ilse says above the toolbar, and what her mascot does while saying it */
   const [clipboardToast, setClipboardToast] = useState<{ text: string; reaction?: MascotReaction } | null>(null);
   /** The last run changed components that aren't on this page — it stays until the designer decides */
+  /** The code changed and the page didn't repaint: a reload shows it (files, for the bubble) */
+  const [stalePage, setStalePage] = useState<string[] | null>(null);
+  const repaints = useRef<ReturnType<typeof watchRepaints> | null>(null);
+  /** When the current run's notes reached the CLI: a repaint since then is the change showing */
+  const runStart = useRef(0);
+  const inRun = useRef(false);
+  /**
+   * When each note reached the CLI. Runs overlap (two agents at once, a no-AI swap during a
+   * run), so one shared start would move past a run's own repaint and call it stale
+   */
+  const noteStart = useRef(new Map<string, number>());
+  const sinceOf = (ids: string[]): number => {
+    const times = ids.map(id => noteStart.current.get(id)).filter((n): n is number => n !== undefined);
+    return times.length ? Math.min(...times) : runStart.current;
+  };
+  useEffect(() => {
+    repaints.current = watchRepaints();
+    return () => repaints.current?.stop();
+  }, []);
+  /** Errors the page logged after a change, and the change: undo it or ask the agent to fix them */
+  const [pageError, setPageError] = useState<{ changeSetId: string; files: string[]; errors: string[] } | null>(null);
+  const pageErrors = useRef<ReturnType<typeof watchPageErrors> | null>(null);
+  useEffect(() => {
+    pageErrors.current = watchPageErrors();
+    return () => pageErrors.current?.stop();
+  }, []);
+  /** How long after a change its errors show: the repaint, then the effects that run after it */
+  const ERROR_WAIT_MS = 5000;
+  /**
+   * Calls `shown` once the page repainted since the run began, or `stale` if it doesn't within
+   * the wait. With regions (where the notes were made), only a change there counts; without,
+   * any change to the page
+   */
+  const whenRepainted = (shown: () => void, stale?: () => void, regions: Element[] = [], since = runStart.current, wait = REPAINT_WAIT_MS) => {
+    const deadline = Date.now() + wait;
+    const tick = () => {
+      const w = repaints.current;
+      if (w && (regions.length ? w.repaintedIn(regions, since) : w.last() > since)) { shown(); return; }
+      if (Date.now() > deadline) { stale?.(); return; }
+      setTimeout(tick, 300);
+    };
+    tick();
+  };
+  /**
+   * Where these notes' change should show: the container of each annotated element (a
+   * draft's container is where the real one lands; a restyled element's, where it re-renders)
+   */
+  const regionsOf = (ids: string[]): Element[] => {
+    const out: Element[] = [];
+    for (const a of annotationsRef.current) {
+      if (!a.id || !ids.includes(a.id) || !a.pixelTargetId) continue;
+      const el = document.querySelector(`[data-ilse-pixel-target="${a.pixelTargetId}"]`);
+      const region = el?.parentElement ?? el;
+      if (region && !out.includes(region)) out.push(region);
+    }
+    return out;
+  };
+  /**
+   * Notes whose result the page already shows: text the designer retyped on the page stays
+   * there, so React has nothing to repaint — no mutation, yet nothing to reload either
+   */
+  const alreadyOnScreen = (ids: string[]): boolean => {
+    const notes = annotationsRef.current.filter(a => a.id && ids.includes(a.id));
+    return notes.length > 0 && notes.every(a => {
+      // Stand-ins (see 'resolved'): the page looks as asked until it repaints
+      if (a.insert && document.querySelector(`[data-ilse-draft="${a.insert.draftId}"]`)) return true;
+      if (a.auto?.remove || a.styleData) return true;
+      if (!a.textEdit || !a.pixelTargetId) return false;
+      const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${a.pixelTargetId}"]`);
+      return !!el && sameText(el.innerText, a.textEdit.to);
+    });
+  };
+  /** Test mode clicked without Pro: what it is and where to get it, until answered */
+  const [proPitch, setProPitch] = useState(false);
   const [offPage, setOffPage] = useState<{ changeSetId: string; files: string[]; routes: string[] } | null>(null);
   // The project's typecheck or tests still fail after the agent's repair turns
   const [checkFailed, setCheckFailed] = useState<{ changeSetId: string; problems: string[]; count: number } | null>(null);
@@ -1680,11 +1973,17 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const unsubStatus = onStatus(setConnected);
 
     const unsub = onMessage((msg) => {
+      // The owner flipped Pro ↔ Free: a fresh page, so every Pro piece comes up (or stays down) from scratch
+      if (msg.type === 'view_as_free') { window.location.reload(); return; }
       if (msg.type === 'connected' && typeof msg.port === 'number') {
         setWsPort(msg.port);
         setConnected(true);
         const canTest = (msg.pro as { test?: unknown } | undefined)?.test === true;
         setProTest(canTest);
+        setProJourneys((msg.pro as { journeys?: unknown } | undefined)?.journeys === true);
+        setProCatalog((msg.pro as { catalog?: unknown } | undefined)?.catalog === true);
+        const own = msg.owner as { viewAsFree?: unknown } | undefined;
+        setOwner(own ? { viewAsFree: own.viewAsFree === true } : null);
         // A browser that remembers test mode from a machine with Pro: back to design
         if (!canTest && toolbarModeRef.current === 'test') { setToolbarMode('design'); setScanOpen(false); }
         if (canTest) send({ type: 'findings' });
@@ -1714,8 +2013,30 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           setDsTokensLoaded(true);
         }
       }
+      if (msg.type === 'code-changed') {
+        const files = ((msg.files as string[]) ?? []).map(f => f.split('/').pop()!);
+        const ids = (msg.annotationIds as string[]) ?? [];
+        const regions = regionsOf(ids);
+        // The reload bubble is the last resort: first the page may already show it, then one
+        // quiet framework re-render (keeps state); only if that doesn't repaint, ask
+        const stale = () => {
+          if (alreadyOnScreen(ids)) { setStalePage(null); return; }
+          if (softRefresh()) whenRepainted(() => setStalePage(null), () => setStalePage(files), regions, Date.now());
+          else setStalePage(files);
+        };
+        whenRepainted(() => setStalePage(null), stale, regions, sinceOf(ids));
+        // A change that broke the page says so in the console: show it, with undo or a fix
+        const since = sinceOf(ids);
+        const changeSetId = msg.changeSetId as string;
+        setTimeout(() => {
+          const errors = newErrors(pageErrors.current?.seen() ?? [], since);
+          if (errors.length) setPageError({ changeSetId, files, errors });
+        }, ERROR_WAIT_MS);
+      }
       if (msg.type === 'annotated' && msg.annotation) {
+        runStart.current = Date.now();
         const a = msg.annotation as Record<string, unknown>;
+        if (typeof a.id === 'string') noteStart.current.set(a.id, runStart.current);
         const clientId = typeof msg.clientId === 'string' ? msg.clientId : undefined;
         setAnnotations(prev => {
           // The echoed client id is exact; the selector is a fallback for older servers
@@ -1728,9 +2049,28 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         const a = msg.annotation as Record<string, unknown>;
         resolvedInRunRef.current = true;
         const draft = annotationsRef.current.find(d => d.id === a.id);
-        if (draft?.styleData) setTimeout(() => clearStylePreview(draft), 600);
+        // What the designer previewed (a style, a copy, a hidden element) stands in for the real
+        // change until the page repaints with it — never a blink back to the old look
+        const since = draft?.id ? sinceOf([draft.id]) : runStart.current;
+        const standInRegions = draft?.id ? regionsOf([draft.id]) : [];
+        const STAND_IN_MS = 10 * 60_000;
+        if (draft?.styleData) whenRepainted(() => setTimeout(() => clearStylePreview(draft), 600), undefined, standInRegions, since, STAND_IN_MS);
+        if (draft?.insert) {
+          // The copy stays as a stand-in, no longer marked as a draft, until the real one renders —
+          // the designer sees the result either way and is never asked to reload for it
+          const id = draft.insert.draftId;
+          const gone = () => setTimeout(() => removeDraft(id), 300);
+          const standIn = document.querySelector<HTMLElement>(`[data-ilse-draft="${id}"]`);
+          standIn?.style.removeProperty('outline');
+          whenRepainted(gone, () => { softRefresh(); whenRepainted(gone, undefined, standInRegions, Date.now(), STAND_IN_MS); }, standInRegions, since);
+        }
+        if (draft?.propEdit && draft.pixelTargetId) {
+          const id = draft.pixelTargetId;
+          setTimeout(() => { const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${id}"]`); if (el) previewVariant(el, id, null); }, 900);
+        }
         if (draft?.pixelTargetId) expireElement(document.querySelector(`[data-ilse-pixel-target="${draft.pixelTargetId}"]`));
-        if (draft?.pixelTargetId) setTimeout(() => unhide(draft.pixelTargetId!), 4000); // still in the DOM = the code kept it
+        // Still in the DOM once the page repainted = the code kept it; no repaint, it stays hidden
+        if (draft?.pixelTargetId) { const id = draft.pixelTargetId; whenRepainted(() => setTimeout(() => unhide(id), 1000), undefined, standInRegions, since, STAND_IN_MS); }
         setAnnotations(prev => prev.map(ann =>
           ann.id === a.id ? { ...ann, status: 'resolved' as const, resolvedSummary: a.resolvedSummary as string } : ann
         ));
@@ -1781,6 +2121,41 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       }
       if (msg.type === 'findings' && Array.isArray(msg.findings)) {
         setTestFindings(msg.findings as TestFinding[]);
+        setTestRunMeta((msg.run ?? null) as TestRunMeta | null);
+      }
+      if (msg.type === 'test_setup') setTestOffer(parseOffer(msg));
+      if (msg.type === 'journey_suggestions' && Array.isArray(msg.list)) {
+        setJourneySuggesting(false);
+        setJourneySuggestions(msg.list as JourneySuggestion[]);
+      }
+      if (msg.type === 'journeys' && Array.isArray(msg.list)) {
+        setJourneys(msg.list as JourneySummary[]);
+        setJourneyRecording(msg.recording !== false);
+      }
+      if (msg.type === 'journey_started' && typeof msg.id === 'string') {
+        setJourneyError(null);
+        setJourneyLive({ id: msg.id, goal: String(msg.goal ?? ''), lines: [] });
+      }
+      if (msg.type === 'journey_step') {
+        const text = (msg.text ?? {}) as { pt?: string; en?: string };
+        const line = { viewport: msg.viewport === 'mobile' ? 'mobile' as const : 'desktop' as const, text: (getLocale() === 'pt' ? text.pt : text.en) ?? '' };
+        setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, confirm: undefined, lines: [...prev.lines, line].slice(-30) } : prev);
+      }
+      if (msg.type === 'journey_confirm') {
+        setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, confirm: String(msg.name ?? '') } : prev);
+        setJourneysOpen(true);
+      }
+      if (msg.type === 'journey_done' && msg.journey && typeof msg.journey === 'object') {
+        const done = msg.journey as JourneySummary;
+        setJourneyLive(prev => prev && prev.id === done.id ? { ...prev, confirm: undefined, done } : prev);
+        celebrate('test');
+      }
+      if (msg.type === 'journey_error') {
+        setJourneyLive(null);
+        setJourneySuggesting(false);
+        setJourneyError(msg.reason === 'no-browser' ? t('toolbar.testNoBrowser')
+          : msg.reason === 'suggest-failed' ? t('journeys.suggestFailed')
+          : msg.reason === 'no-agent' ? t('journeys.noRecording') : t('toolbar.testFailed'));
       }
       if (msg.type === 'test_checking') { setTestRun({ phase: 'checking' }); setTestSteps([t('toolbar.testStepChecking')]); }
       if (msg.type === 'test_login_needed') { setTestRun({ phase: 'login-ask', expired: msg.expired === true }); if (toolbarModeRef.current === 'test') setScanOpen(true); }
@@ -1794,11 +2169,16 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setTestRun(null);
         celebrate('test');
         if (Array.isArray(msg.findings)) setTestFindings(msg.findings as TestFinding[]);
-        // The findings land on their markers by themselves; a toast says how many
+        setTestRunMeta((msg.run ?? null) as TestRunMeta | null);
+        setIgnoredNow(new Set());
+        // The findings land on their markers by themselves; the report sums them up by group
         setScanOpen(false);
+        if (toolbarModeRef.current === 'test') { setReportOpen(true); setReportFocus(null); setJourneysOpen(false); }
         const here = Array.isArray(msg.findings) ? findingsForPage(msg.findings as TestFinding[], location.pathname, location.search).length : 0;
         clearedFindings.current.clear();
-        setClipboardToast(saying(toolbarModeRef.current === 'test' && here > 0
+        // The report says it all in test mode; the toast is for a run asked from elsewhere
+        if (toolbarModeRef.current === 'test') return;
+        setClipboardToast(saying(here > 0
           ? t('toolbar.testFoundHere', { count: here })
           : t('toolbar.testDone', { count: typeof msg.count === 'number' ? msg.count : 0, pages: typeof msg.pages === 'number' ? msg.pages : 0 })));
         setTimeout(() => setClipboardToast(null), 5000);
@@ -1843,6 +2223,30 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       }
       if (msg.type === 'agent-usage') {
         setAgentInfo(prev => prev ? { ...prev, calls: typeof msg.calls === 'number' ? msg.calls : prev.calls, model: typeof msg.model === 'string' ? msg.model : prev.model } : prev);
+      }
+      if (msg.type === 'catalog') {
+        const items = (Array.isArray(msg.entries) ? msg.entries : []) as CatalogItem[];
+        const snapshots = (msg.snapshots && typeof msg.snapshots === 'object' ? msg.snapshots : {}) as Record<string, CatalogSnapshot[]>;
+        // What this session copied stays: the stored list may be older than it
+        const lite = msg.lite === true;
+        if (!lite) catalogFullRef.current = true;
+        setCatalog(prev => {
+          if (lite) return { items, snapshots: prev?.snapshots ?? {} };
+          const merged = { ...snapshots };
+          if (prev) for (const k of copiedRef.current) {
+            const [id, variant] = [k.slice(0, k.indexOf('|')), k.slice(k.indexOf('|') + 1)];
+            const mine = prev.snapshots[id]?.find(s => s.variant === variant);
+            if (mine) merged[id] = [mine, ...(merged[id] ?? []).filter(s => s.variant !== variant)];
+          }
+          return { items, snapshots: merged };
+        });
+        catalogItemsRef.current = items;
+        setTimeout(() => captureCopiesRef.current(), 60);
+      }
+      if (msg.type === 'catalog_file') {
+        const path = typeof msg.path === 'string' ? msg.path : '.ilse/catalog.md';
+        setClipboardToast(saying(msg.failed ? t('catalog.fileFailed') : t(msg.created ? 'catalog.fileCreated' : 'catalog.fileExists', { path })));
+        setTimeout(() => setClipboardToast(null), 6000);
       }
       if (msg.type === 'memory') {
         setMemoryData({ design: msg.design as MemoryData['design'], pro: !!msg.pro, test: (msg.test ?? null) as MemoryData['test'] });
@@ -1892,6 +2296,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setClipboardToast(saying(errorMsg, 'failed'));
         setTimeout(() => setClipboardToast(null), 6000);
       }
+      // A run starting (the first 'thinking' since the last one ended): a repaint from here on is its change showing
+      if (msg.type === 'thinking' && !inRun.current) { inRun.current = true; runStart.current = Date.now(); }
+      if (msg.type === 'thinking-end') inRun.current = false;
       if (msg.type === 'thinking' && typeof msg.text === 'string') {
         const id = ++thinkingIdRef.current;
         if (msg.activity === 'edit' || msg.activity === 'think') setAgentActivity(msg.activity);
@@ -2037,6 +2444,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       ...(pendingCapture.sketch ? { sketch: pendingCapture.sketch } : {}),
       ...(pendingCapture.auto ? { auto: pendingCapture.auto } : {}),
       ...(pendingCapture.textEdit ? { textEdit: pendingCapture.textEdit } : {}),
+      ...(pendingCapture.propEdit ? { propEdit: pendingCapture.propEdit } : {}),
+      ...(pendingCapture.insert ? { insert: pendingCapture.insert } : {}),
       ...(pendingCapture.testFinding ? { testFinding: pendingCapture.testFinding } : {}),
       ...(styleChanges.length > 0 ? {
         styleData: { selector: pendingCapture.capture.element, changes: styleChanges },
@@ -2066,11 +2475,20 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     liveDragRef.current = null;
     setLiveDragging(false);
     const pc = pendingCaptureRef.current;
+    // A dropped component not confirmed in the card: its draft goes
+    if (pc?.insert) removeDraft(pc.insert.draftId);
+    // A variant previewed on a component: the real one comes back
+    if (pc?.propEdit && pc.pixelTargetId) {
+      const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`);
+      if (el) previewVariant(el, pc.pixelTargetId, null);
+    }
     if (pc?.pixelTargetId) settleElement(document.querySelector(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`));
     if (pc?.pixelTargetId) unhide(pc.pixelTargetId);
     setPendingCapture(null);
     setAnnotating(true);
   }, []);
+  const cancelCaptureRef = useRef<(() => void) | null>(null);
+  cancelCaptureRef.current = cancelCapture;
 
   // ── Toolbar drag ───────────────────────────────────────────────────────────
 
@@ -2125,11 +2543,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     stylePreviewCommitted.current = false;
     const elemRect = { top: Math.round(domRect.top), left: Math.round(domRect.left), width: Math.round(domRect.width), height: Math.round(domRect.height) };
     const suggestions = analyzeElement(target, capture.styles);
-    // Part of a component repeated on the page? Then the designer chooses: this one or all
+    // Part of a component repeated on the page, or written on other screens too? Then the
+    // designer chooses: this one (the default) or all of them. Once on screen isn't once in the code
     const owned = componentScope(target);
+    const item = owned ? catalogRef.current?.items.find(i => i.name === owned.component && !i.library) : undefined;
+    const uses = item && item.uses > 1 ? item.uses : undefined;
     setPanelEpoch(n => n + 1); // a fresh panel for the new element
     setPendingCapture({
-      ...(owned && owned.count > 1 ? { scope: { ...owned, choice: 'one' as const } } : {}),
+      ...(owned && (owned.count > 1 || uses) ? { scope: { ...owned, choice: 'one' as const, ...(uses ? { uses } : {}) } } : {}),
       capture,
       context: capture.element,
       contextLabel: buildContextLabel(target),
@@ -2142,6 +2563,35 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     });
     setAnnotating(false);
   }, []);
+
+  /**
+   * The browser's right-click menu (Ilse for Chrome): "Open with Ilse" opens
+   * the toolbar with the card on the element that was right-clicked. The
+   * extension marks the element (data-ilse-context)
+   * and asks through an event — or a flag, when the toolbar is mounting.
+   */
+  const fromContextMenu = useCallback((action: unknown) => {
+    if (action !== 'select' && action !== 'open') return;
+    const marked = document.querySelector('[data-ilse-context]');
+    marked?.removeAttribute('data-ilse-context');
+    setIsOpen(true);
+    setShowSettings(false);
+    if (action === 'open' || !marked || marked.closest('[data-ilse-toolbar]')) { setAnnotating(true); return; }
+    // A draft with work in it isn't thrown away by a right-click
+    const pc = pendingCaptureRef.current;
+    if (pc && (pc.note.trim() || hasAuto(pc.auto) || pc.styleChanges?.length || pc.imageRefs?.length || pc.sketch)) return;
+    if (pc?.pixelTargetId) settleElement(document.querySelector(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`));
+    if (toolbarModeRef.current !== 'design') setToolbarMode('design');
+    selectElement(marked);
+  }, [selectElement]);
+  useEffect(() => {
+    const w = window as Window & { __ilseContext?: string };
+    const onContext = (e: Event) => { delete w.__ilseContext; fromContextMenu((e as CustomEvent).detail?.action); };
+    window.addEventListener('ilse:context', onContext);
+    // Asked before the toolbar was there (the extension just put it on the page)
+    if (w.__ilseContext) { const a = w.__ilseContext; delete w.__ilseContext; setTimeout(() => fromContextMenu(a), 0); }
+    return () => window.removeEventListener('ilse:context', onContext);
+  }, [fromContextMenu]);
 
   // A new selection (or none) starts a new draft history
   const draftKey = pendingCapture ? (pendingCapture.pixelTargetId ?? pendingCapture.context) : null;
@@ -2354,6 +2804,22 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const memoryOpenForEsc = useRef(false);
   useEffect(() => { memoryOpenForEsc.current = memoryOpen; }, [memoryOpen]);
   useEffect(() => { chatOpenForEsc.current = chatOpen; }, [chatOpen]);
+  const journeysOpenForEsc = useRef(false);
+  useEffect(() => { journeysOpenForEsc.current = journeysOpen; }, [journeysOpen]);
+  const reportOpenForEsc = useRef(false);
+  // Back from a finding on another page: the report reopens docked, on it
+  useEffect(() => {
+    let saved: string | null = null;
+    try { saved = sessionStorage.getItem(REPORT_FOCUS_KEY); sessionStorage.removeItem(REPORT_FOCUS_KEY); } catch { return; }
+    if (!saved) return;
+    try {
+      const { id } = JSON.parse(saved) as { id?: string };
+      if (typeof id !== 'string') return;
+      setToolbarMode('test'); setIsOpen(true);
+      setReportOpen(true); setReportFocus(id);
+    } catch { /* not ours */ }
+  }, []);
+  useEffect(() => { reportOpenForEsc.current = reportOpen && !reportDocked; }, [reportOpen, reportDocked]);
 
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
@@ -2366,6 +2832,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       }
       if (chatOpenForEsc.current) {
         setChatOpen(false);
+        return;
+      }
+      if (journeysOpenForEsc.current) {
+        setJourneysOpen(false);
+        return;
+      }
+      // The docked report stays while browsing; only the one above the toolbar closes with Esc
+      if (reportOpenForEsc.current) {
+        setReportOpen(false);
         return;
       }
       if (scanOpen) {
@@ -2503,9 +2978,25 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             // moved into another container, the stand-in that shows it there
             const r = (result?.kind === 'reparent' ? result.landed : reorderUnit(liveEl)).getBoundingClientRect();
             const rect = { top: Math.round(r.top), left: Math.round(r.left), width: Math.round(r.width), height: Math.round(r.height) };
+            // A copy isn't in the code yet: its drop is where to write it, not a reorder of the code.
+            // The drag only previews (the DOM isn't moved), so the place comes from the result
+            const copyIns = pendingCaptureRef.current?.insert?.copy ? pendingCaptureRef.current.insert : null;
+            const copyDraft = copyIns ? document.querySelector<HTMLElement>(`[data-ilse-draft="${copyIns.draftId}"]`) : null;
+            let copyPlace: string | undefined;
+            if (copyDraft && result?.kind === 'reorder') {
+              const { prev: p, next: n } = neighboursAfterReorder(copyDraft, result.to);
+              copyPlace = placeBetween(copyDraft, p, n, copyDraft.parentElement);
+            } else if (copyDraft && result?.kind === 'reparent') {
+              const { anchor, placement } = insertAnchor(result.target, result.index, result.landed, copyDraft);
+              copyPlace = placeBetween(copyDraft, placement === 'after' ? anchor : null, placement === 'before' ? anchor : null, placement === 'inside' ? anchor : result.target);
+            }
             setPendingCapture(prev => {
               if (!prev) return null;
               const moved = { ...prev, rect, capture: { ...prev.capture, rect } };
+              if (copyIns && prev.insert && (result?.kind === 'reorder' || result?.kind === 'reparent')) {
+                const insert = { ...prev.insert, place: copyPlace };
+                return { ...moved, originalRect: rect, insert, auto: { ...prev.auto, ...insertCommand(insert), reorder: undefined, reorderLabel: undefined, move: undefined } };
+              }
               if (!result) return { ...moved, originalRect: rect, auto: { ...prev.auto, reorder: undefined, reorderLabel: undefined, move: undefined } };
               if (result.kind === 'reorder') {
                 // A reorder is structural, not a pixel offset: no "move N px" for the agent
@@ -2597,9 +3088,66 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   // ── Send / remove ──────────────────────────────────────────────────────────
 
+  /** Where a copy stands on the page, for the agent — undefined while it's right after its original */
+  /** The copy's place from its neighbours on the page (or after a drag, where it was dropped) */
+  const placeBetween = (draft: HTMLElement, prev: Element | null, next: Element | null, parent: Element | null): string | undefined => {
+    const twin = (el: Element) => el.tagName === draft.tagName && el.getAttribute('class') === draft.getAttribute('class')
+      && sameText((el as HTMLElement).innerText ?? '', draft.innerText);
+    const describe = (el: Element | null): Neighbour | null => el && {
+      name: `<${instanceAt(el, catalog?.items ?? [])?.component ?? el.tagName.toLowerCase()}>`,
+      text: lineOf((el as HTMLElement).innerText ?? ''),
+      twin: twin(el),
+    };
+    return copyPlacement(describe(prev), describe(next), describe(parent));
+  };
+  const placeOfCopy = (draftId: string): string | undefined => {
+    const draft = document.querySelector<HTMLElement>(`[data-ilse-draft="${draftId}"]`);
+    if (!draft) return undefined;
+    const isIlse = (el: Element) => !!el.closest('[data-ilse-toolbar],[data-ilse-placeholder],[data-ilse-marker],[data-ilse-draft]');
+    const step = (el: Element, back: boolean): Element | null => {
+      let s = back ? el.previousElementSibling : el.nextElementSibling;
+      while (s && isIlse(s)) s = back ? s.previousElementSibling : s.nextElementSibling;
+      return s;
+    };
+    return placeBetween(draft, step(draft, true), step(draft, false), draft.parentElement);
+  };
+  /**
+   * The real copy showed up (the page re-rendered mid-run): the draft gives way at once,
+   * not when the run ends — two of the same on screen for a few seconds reads as a bug
+   */
+  const watchForRealCopy = (draftId: string) => {
+    const draft = document.querySelector<HTMLElement>(`[data-ilse-draft="${draftId}"]`);
+    if (!draft) return;
+    // Tag and text, not classes: a copy restyled in the panel comes back with other classes
+    const tag = draft.tagName, text = draft.innerText;
+    if (!text.trim()) return; // no text to recognise it by (an icon, an image): 'resolved' handles it
+    const twins = () => Array.from(document.getElementsByTagName(tag)).filter(el =>
+      !el.closest('[data-ilse-draft],[data-ilse-toolbar]') && sameText((el as HTMLElement).innerText ?? '', text)).length;
+    const before = twins();
+    const deadline = Date.now() + 10 * 60_000;
+    const tick = () => {
+      if (!document.querySelector(`[data-ilse-draft="${draftId}"]`) || Date.now() > deadline) return;
+      if (twins() > before) { removeDraft(draftId); return; }
+      setTimeout(tick, 400);
+    };
+    setTimeout(tick, 400);
+  };
+
   const sendAnnotation = useCallback((index: number) => {
     const ann = annotations[index];
     if (!ann) return;
+    // A copy: its place is where it stands now (the drag of a copy isn't a reorder of the code)
+    const auto = ann.insert?.copy
+      ? { ...ann.auto, ...insertCommand({ ...ann.insert, place: ann.insert.place ?? placeOfCopy(ann.insert.draftId) }, !!ann.styleData?.changes.length), reorder: undefined, reorderLabel: undefined, move: undefined }
+      : ann.auto;
+    // The same request on the same element is already on its way: a second agent would edit
+    // the same file at the same time
+    const note = composeNote(ann.note, auto);
+    if (annotations.some((a, i) => i !== index && a.status === 'sent' && a.capture.element === ann.capture.element && composeNote(a.note, a.auto) === note)) {
+      setAnnotations(prev => prev.filter((_, i) => i !== index));
+      return;
+    }
+    if (ann.insert?.copy) watchForRealCopy(ann.insert.draftId);
     // A finding sent to the agent is one the dev approved (test memory counts it)
     if (ann.testFinding && ann.status === 'pending') decideTestFinding(ann.testFinding, 'approved');
     // Exit annotation mode on send — user gets normal cursor while agent works
@@ -2610,18 +3158,28 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const payload: Record<string, unknown> = {
       type: 'annotate',
       clientId,
-      note: composeNote(ann.note, ann.auto),
+      note,
       // What the designer typed, apart from Ilse's own context — the CLI must not skip it
       designerNote: ann.note.trim() || undefined,
       scope: ann.scope,
       remove: ann.auto?.remove ? true : undefined,
       textEdit: ann.textEdit,
+      propEdit: ann.propEdit,
+      insert: ann.insert && !ann.insert.copy ? {
+        component: ann.insert.item.name, source: ann.insert.item.source, module: ann.insert.item.module,
+        importAs: ann.insert.item.importAs ?? 'named', library: ann.insert.item.library,
+        placement: ann.insert.placement, props: ann.insert.props, text: ann.insert.text,
+        required: ann.insert.item.props.filter(p => p.required).map(p => p.name),
+        example: ann.insert.item.example?.code,
+        at: ann.insert.at,
+      } : undefined,
       element: ann.capture.element,
       component: ann.capture.component,
       styles: ann.capture.styles,
       parent: ann.capture.parent,
       grepPattern: ann.capture.grepPattern,
       frames: ann.capture.frames,
+      copyOf: ann.capture.copyOf,
       componentStack: ann.capture.componentStack,
       domPath: ann.capture.domPath,
       nearbyElements: ann.capture.nearbyElements,
@@ -2631,7 +3189,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       // What renders on this page: the CLI checks the run's edits landed here
       pageComponents: pageComponents(),
       // Schema rico
-      intent: ann.intent ?? inferDraftIntent(ann.note, !!ann.capture.element),
+      // A copy is new code to write, never a mechanical class edit — even with a margin set on it
+      intent: ann.insert?.copy ? 'change' : ann.intent ?? inferDraftIntent(ann.note, !!ann.capture.element),
       severity: ann.severity ?? 'important',
     };
     if (ann.imageRefs?.length) {
@@ -2798,6 +3357,19 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const takeBack = useCallback((key: AutoKey) => {
     // Retyped text: the panel puts the original back (and clears the command)
     if (key === 'text') { panelHistoryRef.current?.resetText(); return; }
+    if (key === 'insert') { cancelCaptureRef.current?.(); return; }
+    if (key === 'component') {
+      setPendingCapture(prev => prev ? { ...prev, auto: { ...prev.auto, component: undefined, componentLabel: undefined } } : null);
+      return;
+    }
+    if (key === 'props') {
+      const pc = pendingCaptureRef.current;
+      const el = pc?.pixelTargetId ? document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`) : null;
+      if (el) previewVariant(el, pc!.pixelTargetId!, null);
+      setVariantMissing(false);
+      setPendingCapture(prev => prev ? { ...prev, propEdit: undefined, auto: { ...prev.auto, props: undefined, propsLabel: undefined } } : null);
+      return;
+    }
     if (key === 'remove') {
       const id = pendingCaptureRef.current?.pixelTargetId;
       if (id) unhide(id);
@@ -2958,6 +3530,11 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   const removeAnnotation = useCallback((index: number) => {
     const gone = annotationsRef.current[index];
+    if (gone?.insert) removeDraft(gone.insert.draftId);
+    if (gone?.propEdit && gone.pixelTargetId && gone.status === 'pending') {
+      const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${gone.pixelTargetId}"]`);
+      if (el) previewVariant(el, gone.pixelTargetId, null);
+    }
     if (gone?.pixelTargetId) settleElement(document.querySelector(`[data-ilse-pixel-target="${gone.pixelTargetId}"]`));
     // Never sent: nothing will make its preview real, so it goes (panel edits, text, removal)
     if (gone?.pixelTargetId && gone.status === 'pending') {
@@ -3079,7 +3656,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       for (const a of annotationsRef.current) {
         if (!inMode(a)) continue;
         if (a.testFinding) clearedFindings.current.add(a.testFinding.id);
+        // A dropped component goes with its note: only a change that lands keeps it on the page
+        if (a.insert) removeDraft(a.insert.draftId);
         if (!a.pixelTargetId) continue;
+        if (a.propEdit && a.status === 'pending') {
+          const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${a.pixelTargetId}"]`);
+          if (el) previewVariant(el, a.pixelTargetId, null);
+        }
         if (a.status === 'pending') { previewReverts.current.get(a.pixelTargetId)?.(); unhide(a.pixelTargetId); }
         previewReverts.current.delete(a.pixelTargetId);
       }
@@ -3100,7 +3683,56 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     if (ann?.testFinding) decideTestFinding(ann.testFinding, 'discarded');
     removeAnnotation(index);
   };
+  /** A finding's marker or page note leaves (ignored from the report) */
+  const dropFindingMarker = (id: string) => {
+    const i = annotationsRef.current.findIndex(a => a.testFinding?.id === id && a.status === 'pending');
+    if (i >= 0) removeAnnotation(i);
+  };
+  /**
+   * "Apply fix" from the report: the finding joins the notes Run fixes sends.
+   * On this page it's a marker on its element; elsewhere, or only in the code,
+   * a note that says where.
+   */
+  const applyFinding = (f: TestFinding) => {
+    if (annotationsRef.current.some(a => a.testFinding?.id === f.id && a.status === 'pending')) return;
+    clearedFindings.current.delete(f.id);
+    const here = findingsForPage([f], location.pathname, location.search).length > 0;
+    const el = here ? findingElement(f) : null;
+    if (el) {
+      const pixelTargetId = el.getAttribute('data-ilse-pixel-target') ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      el.setAttribute('data-ilse-pixel-target', pixelTargetId);
+      addAnnotation(captureElement(el), findingNote(f), 'element', pixelTargetId, undefined, findingRef(f));
+      return;
+    }
+    const where = f.page && !here ? ` On the page ${f.page}.` : '';
+    addAnnotation({ element: '', styles: {}, rect: { top: 0, left: 0, width: 0, height: 0 } }, findingNote(f) + where, 'element', undefined, undefined, findingRef(f));
+  };
+  // "Fix" on a finding (card or report) and "Fix all": the finding becomes a note if it isn't one
+  // yet (another page, the code only), then goes to the agent — once the note exists
+  const fixQueue = useRef(new Set<string>());
+  const [fixTick, setFixTick] = useState(0);
+  const fixFindings = (list: TestFinding[]) => {
+    for (const f of list) { fixQueue.current.add(f.id); applyFinding(f); }
+    setFixTick(n => n + 1);
+  };
+  useEffect(() => {
+    if (fixQueue.current.size === 0) return;
+    annotations.forEach((a, i) => {
+      if (a.testFinding && a.status === 'pending' && fixQueue.current.has(a.testFinding.id)) {
+        fixQueue.current.delete(a.testFinding.id);
+        sendAnnotation(i);
+      }
+    });
+  }, [annotations, fixTick, sendAnnotation]);
+  /** Skip: out of this test's report and off the page; back on the next test */
+  const skipFinding = (f: Pick<TestFinding, 'id'>) => {
+    dropFindingMarker(f.id);
+    clearedFindings.current.add(f.id);
+    setIgnoredNow(prev => new Set(prev).add(f.id));
+    if (reportFocus === f.id) setReportFocus(null);
+  };
   const processingCount = annotations.filter(a => a.status === 'sent').length;
+  const testing = testRun?.phase === 'checking' || testRun?.phase === 'running';
 
   // ── Toolbar open/close ─────────────────────────────────────────────────────
 
@@ -3245,6 +3877,437 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // The catalog is read once the toolbar opens: the Component section needs it on the first click
+  useEffect(() => { if (isOpen && !catalogFullRef.current) loadCatalog(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [isOpen]);
+
+  // Copies are taken as the app is used, not only when the catalog opens: a
+  // dialog opened later, the next screen. Each look (`id|variant`) once per
+  // session; what's being edited in the panel waits until it's in the code.
+  captureCopiesRef.current = () => {
+    const items = catalogItemsRef.current;
+    if (!proCatalogRef.current || !items?.length) return;
+    const editing = new Set<string>();
+    // Selected is fine; changed in the panel and not in the code yet is not
+    const pc = pendingCapture;
+    if (pc?.pixelTargetId && (pc.styleChanges?.length || pc.textEdit || pc.propEdit)) editing.add(pc.pixelTargetId);
+    for (const a of annotations) {
+      if (a.pixelTargetId && a.status !== 'resolved' && (a.styleData || a.rearrangeData || a.textEdit || a.propEdit)) editing.add(a.pixelTargetId);
+    }
+    const shows = (root: HTMLElement) => [...editing].some(id => {
+      const el = document.querySelector(`[data-ilse-pixel-target="${id}"]`);
+      return !!el && (root.contains(el) || el.contains(root));
+    });
+    const seen = snapshotPage(items, copiedRef.current, shows);
+    if (seen.length === 0) return;
+    for (const { id, variant } of seen) copiedRef.current.add(`${id}|${variant}`);
+    // In batches: the store takes a bounded number per message (a busy page has more)
+    for (let i = 0; i < seen.length; i += 40) send({ type: 'catalog_snapshot', items: seen.slice(i, i + 40) });
+    setCatalog(prev => {
+      if (!prev) return prev;
+      const next = { ...prev.snapshots };
+      for (const { id, ...snap } of seen) next[id] = [snap, ...(next[id] ?? []).filter(s => s.variant !== snap.variant)];
+      return { ...prev, snapshots: next };
+    });
+  };
+
+  // The list is read on connect, Free or Pro: it names the selected component and its props and
+  // variants in the Component section (Free). With Pro, copying can also start before anyone opens the toolbar
+  useEffect(() => { if (connected && !catalog) loadCatalogList(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [connected]);
+
+  // The page changed (a dialog opened, another screen): copy what's new once it settles
+  useEffect(() => {
+    if (!proCatalog) return;
+    let timer = 0;
+    const ours = (n: Node | null) => !!(n instanceof Element ? n : n?.parentElement)?.closest('[data-ilse-toolbar],[data-ilse-draft],[data-ilse-variant-for]');
+    const later = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const idle = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
+        if (idle) idle(() => captureCopiesRef.current(), { timeout: 2000 }); else captureCopiesRef.current();
+      }, 1200);
+    };
+    const observer = new MutationObserver(records => {
+      if (records.some(r => !ours(r.target) && [...r.addedNodes].some(n => n instanceof HTMLElement && !ours(n)))) later();
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener('popstate', later);
+    return () => { observer.disconnect(); window.removeEventListener('popstate', later); window.clearTimeout(timer); };
+  }, [proCatalog]);
+
+  // The catalog component the selected element is, if any (the <Button> the app wrote)
+  const componentHit = useMemo(() => {
+    const ins = pendingCapture?.insert;
+    if (ins?.copy) return null;
+    if (ins) return { item: ins.item, props: ins.props, ...(ins.text ? { text: ins.text } : {}) };
+    const id = pendingCapture?.pixelTargetId;
+    if (!id || !catalog?.items.length || pendingCapture?.markerType !== 'element') return null;
+    const el = document.querySelector(`[data-ilse-pixel-target="${id}"]`);
+    return el ? componentAt(el, catalog.items) : null;
+  }, [pendingCapture?.pixelTargetId, pendingCapture?.markerType, pendingCapture?.insert, catalog]);
+
+  // ── Dragging a component from the catalog onto the page ──
+  // Same engine as moving an element on the page (live-layout): the copy stands in for real,
+  // the items around make room, the destination is outlined, the grid and distances show
+  const [catalogDrag, setCatalogDrag] = useState<{ item: CatalogItem; snap?: CatalogSnapshot; x: number; y: number; active: boolean } | null>(null);
+  /**
+   * The container a drop belongs to: the one under the pointer, or — inside a reused
+   * component (see liftAnchor) — the one where that component is written, so the
+   * copy lands next to it and never inside its definition.
+   */
+  const catalogContainer = (c: HTMLElement): HTMLElement | null => {
+    if (c.closest('[data-ilse-toolbar]')) return null;
+    // Whose code writes this container's children decides: a Stack's children are the page's
+    // (fine), a StatCard's label and value are StatCard's (climb out, next to the StatCard)
+    const kid = Array.from(c.children).find((k): k is HTMLElement => k instanceof HTMLElement && !k.hasAttribute('data-ilse-draft') && !k.hasAttribute('data-ilse-placeholder'));
+    const { anchor } = liftAnchor(kid ?? c, catalog?.items ?? []);
+    const into = anchor !== (kid ?? c) && (anchor === c || anchor.contains(c)) ? anchor.parentElement : c;
+    return into && into !== document.body && into !== document.documentElement ? into : null;
+  };
+  /**
+   * Dragging from the catalog, or the draft already on the page to another spot.
+   * The listeners go on right away, not in an effect after a render: a quick
+   * release would otherwise be missed and the drag left hanging.
+   */
+  const dragHandlers = useRef<{ move: (e: MouseEvent) => void; up: (e: MouseEvent) => void; esc: (e: KeyboardEvent) => void; session: LiveInsert } | null>(null);
+  const endCatalogDrag = (cancel = true) => {
+    const h = dragHandlers.current;
+    if (h) {
+      window.removeEventListener('mousemove', h.move, true);
+      window.removeEventListener('pointerup', h.up, true);
+      window.removeEventListener('keydown', h.esc, true);
+      if (cancel) h.session.cancel();
+    }
+    dragHandlers.current = null;
+    document.body.style.cursor = '';
+    document.documentElement.style.userSelect = '';
+    setGuides([]);
+    setSpacings([]);
+    setShowGrid(false);
+    setCatalogDrag(null);
+  };
+  const startCatalogDrag = (item: CatalogItem, x: number, y: number, moving?: { snap?: CatalogSnapshot }) => {
+    endCatalogDrag();
+    const snap = moving ? moving.snap : bestSnapshot(catalog?.snapshots[item.id]);
+    // Moving: the draft on the page steps out of its spot while it's carried. New: a draft not on the page yet
+    const movingId = moving ? pendingCaptureRef.current?.insert?.draftId : undefined;
+    const old = movingId ? document.querySelector<HTMLElement>(`[data-ilse-draft="${movingId}"]`) : null;
+    if (moving && !old) return;
+    const draftId = old ? movingId! : `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const el = old ?? makeDraft(snap?.html ?? placeholderHtml(item.name), draftId);
+    const size = old ? old.getBoundingClientRect() : { width: snap?.w ?? 120, height: snap?.h ?? 36 };
+    const session = beginInsert(el, { x, y }, { width: size.width, height: size.height }, catalogContainer);
+    setShowGrid(true);
+    snapRectsRef.current = collectSnapRects();
+    contentRectsRef.current = collectContentRects();
+    setCatalogDrag({ item, snap, x, y, active: false });
+    let frame = 0;
+    const move = (e: MouseEvent) => {
+      e.preventDefault();
+      cancelAnimationFrame(frame);
+      const { clientX, clientY } = e;
+      frame = requestAnimationFrame(() => {
+        // Back over the panel or the toolbar: no place — letting go there cancels
+        if (document.elementFromPoint(clientX, clientY)?.closest('[data-ilse-toolbar]:not([data-ilse-ghost])')) session.move(-1, -1);
+        else session.move(clientX, clientY);
+        const b = session.box;
+        if (b) {
+          const box = { top: b.top, left: b.left, width: b.width, height: b.height };
+          setGuides(computeGuides(box, snapRectsRef.current));
+          setSpacings(computeSpacings(box, contentRectsRef.current, 'y'));
+        } else { setGuides([]); setSpacings([]); }
+        setCatalogDrag(d => d ? { ...d, x: clientX, y: clientY, active: session.active } : d);
+      });
+    };
+    // pointerup, not mouseup: selection mode picks on pointerup, so the drop must come first and stop it
+    const up = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      cancelAnimationFrame(frame);
+      const landed = session.end();
+      endCatalogDrag(false);
+      // The click the browser fires after this release must not select what's under it
+      const swallow = (ev: Event) => { ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation(); };
+      window.addEventListener('click', swallow, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener('click', swallow, true), 300);
+      if (!landed) return;
+      const { anchor, placement } = insertAnchor(landed.target, landed.index, landed.landed, el);
+      const target: DropTarget = { anchor, placement, line: { left: 0, top: 0, width: 0, height: 0 } };
+      if (old) { old.remove(); moveDraft(target, landed.landed); }
+      else dropComponent(item, snap, target, landed.landed);
+    };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); endCatalogDrag(); } };
+    dragHandlers.current = { move, up, esc, session };
+    // Capture phase: the page's own handlers can't swallow them
+    window.addEventListener('mousemove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('keydown', esc, true);
+    document.body.style.cursor = 'grabbing';
+    document.documentElement.style.userSelect = 'none';
+  };
+  /** `placed`: the draft the drag already put on the page (else it's made and placed here, as Duplicate does) */
+  const dropComponent = (item: CatalogItem, snap: CatalogSnapshot | undefined, target: DropTarget, placed?: HTMLElement) => {
+    // A draft with work in it isn't thrown away by a drop
+    const pc = pendingCaptureRef.current;
+    if (pc && (pc.note.trim() || hasAuto(pc.auto) || pc.styleChanges?.length || pc.imageRefs?.length || pc.sketch)) { placed?.remove(); return; }
+    if (pc) cancelCaptureRef.current?.();
+    const html = snap?.html ?? placeholderHtml(item.name);
+    const draft = placed ?? makeDraft(html, `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
+    const draftId = draft.getAttribute('data-ilse-draft')!;
+    // What it is a copy of: clicking inside it later names the component, not a look-alike
+    draft.setAttribute('data-ilse-component', item.name);
+    if (!placed) placeDraft(draft, target.anchor, target.placement);
+    const pixelTargetId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    draft.setAttribute('data-ilse-pixel-target', pixelTargetId);
+    const at = instanceAt(target.anchor, catalog?.items ?? []);
+    const insert: InsertDraft = { item, placement: target.placement, props: snap?.props ?? {}, ...(snap?.text ? { text: snap.text } : {}), html, draftId, ...(at ? { at } : {}) };
+    // Where it goes in the code is the anchor's place; what it looks like is the draft
+    const capture = { ...captureElement(target.anchor), styles: captureElement(draft).styles };
+    const box = draft.getBoundingClientRect();
+    const rect = { top: Math.round(box.top), left: Math.round(box.left), width: Math.round(box.width), height: Math.round(box.height) };
+    stylePreviewCommitted.current = false;
+    setPanelEpoch(n => n + 1);
+    setPanelTab('props');
+    setPendingCapture({
+      capture, context: capture.element, contextLabel: t('catalog.new', { name: item.name }),
+      rect, originalRect: { ...rect }, note: '', markerType: 'element', pixelTargetId, insert,
+      auto: insertCommand(insert),
+    });
+    setAnnotating(false);
+  };
+  /**
+   * Duplicate the selected component: a copy of it right after this instance, written
+   * with the same props and text — then its variant can be changed in the Component
+   * section. The copy follows the page's layout: beside it in a row, below it otherwise.
+   */
+  const duplicateSelected = () => {
+    const pc = pendingCaptureRef.current;
+    const hit = componentHit;
+    if (!pc?.pixelTargetId || pc.insert || !hit) return;
+    const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`);
+    if (!el) return;
+    // The instance's own root (the selection may be something inside it)
+    const root = findInstances(new Set([hit.item.name])).map(i => i.root).filter(r => r.contains(el) || r === el).pop() ?? el;
+    const copy = root.cloneNode(true) as HTMLElement;
+    for (const n of [copy, ...Array.from(copy.querySelectorAll('*'))]) {
+      n.removeAttribute('data-ilse-pixel-target');
+      n.removeAttribute('data-ilse-hidden-for');
+    }
+    copy.style.removeProperty('outline');
+    const box = root.getBoundingClientRect();
+    const target: DropTarget = { anchor: root, placement: 'after', line: { left: box.right, top: box.top, width: 2, height: box.height } };
+    // The selection gives way to the copy (its card had nothing in it worth keeping, or it's kept as is)
+    cancelCaptureRef.current?.();
+    pendingCaptureRef.current = null;
+    dropComponent(hit.item, { variant: '', html: copy.outerHTML, w: box.width, h: box.height, props: hit.props, ...(hit.text ? { text: hit.text } : {}) }, target);
+  };
+
+  /**
+   * Duplicate an element that isn't a component's root (a list row, a card written inline):
+   * a copy on screen next to it, and a note on the original — where it is in the code is
+   * known — telling the agent what the copy means there: a new item in the list's data, or
+   * a copy of the JSX
+   */
+  const duplicateElement = () => {
+    const pc = pendingCaptureRef.current;
+    if (!pc?.pixelTargetId || pc.insert) return;
+    const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`);
+    if (!el) return;
+    const copy = el.cloneNode(true) as HTMLElement;
+    for (const n of [copy, ...Array.from(copy.querySelectorAll('*'))]) {
+      n.removeAttribute('data-ilse-pixel-target');
+      n.removeAttribute('data-ilse-hidden-for');
+    }
+    copy.style.removeProperty('outline');
+    cancelCaptureRef.current?.();
+    pendingCaptureRef.current = null;
+    const html = copy.outerHTML;
+    // Before the copy joins the page: next to its own copy, any element looks like a list row
+    const kind = isDataRow(el) ? 'item' as const : 'block' as const;
+    const draft = makeDraft(html, `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`);
+    const draftId = draft.getAttribute('data-ilse-draft')!;
+    placeDraft(draft, el, 'after');
+    const pixelTargetId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    draft.setAttribute('data-ilse-pixel-target', pixelTargetId);
+    // The whole visible text names it ("$ npx ilse-design@latest"), not just its first line ("$")
+    const text = (el.innerText ?? '').replace(/\s+/g, ' ').trim();
+    const name = text ? (text.length > 60 ? text.slice(0, 59) + '…' : text) : itemLabel(el);
+    const item: CatalogItem = { id: '', name, source: '', folder: '', library: false, uses: 0, props: [] };
+    // The root of a component instance: the copy is that instance, written where it's used
+    const at = instanceAt(el, catalog?.items ?? []) ?? undefined;
+    const insert: InsertDraft = { item, placement: 'after', props: {}, html, draftId, copy: kind, ...(at ? { at } : {}) };
+    // Where it goes in the code is the original's place; what it looks like is the copy
+    const capture = { ...captureElement(el), styles: captureElement(draft).styles };
+    const box = draft.getBoundingClientRect();
+    const rect = { top: Math.round(box.top), left: Math.round(box.left), width: Math.round(box.width), height: Math.round(box.height) };
+    stylePreviewCommitted.current = false;
+    setPanelEpoch(n => n + 1);
+    setPanelTab('props');
+    setPendingCapture({
+      capture, context: capture.element, contextLabel: t('toolbar.copy.label', { name }),
+      rect, originalRect: { ...rect }, note: '', markerType: 'element', pixelTargetId, insert,
+      auto: insertCommand(insert),
+    });
+    setAnnotating(false);
+  };
+
+  // A click on a catalog component: its instances on the page, outlined for a moment
+  const [spot, setSpot] = useState<{ rects: DOMRect[]; none: boolean } | null>(null);
+  const spotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spotComponent = (item: CatalogItem) => {
+    const roots = findInstances(new Set([item.name])).map(i => i.root).filter(el => !el.closest('[data-ilse-toolbar]'));
+    if (roots[0]) {
+      const r = roots[0].getBoundingClientRect();
+      if (r.bottom < 0 || r.top > window.innerHeight) roots[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    const show = () => setSpot({ rects: roots.map(el => el.getBoundingClientRect()), none: roots.length === 0 });
+    show();
+    setTimeout(show, 350); // after a smooth scroll
+    if (spotTimer.current) clearTimeout(spotTimer.current);
+    spotTimer.current = setTimeout(() => setSpot(null), 2400);
+  };
+
+  /** The draft dragged to another spot: same component and props, a new place in the page and the code */
+  const moveDraft = (target: DropTarget, draft: HTMLElement) => {
+    const pc = pendingCaptureRef.current;
+    const ins = pc?.insert;
+    if (!pc || !ins) return;
+    const at = instanceAt(target.anchor, catalog?.items ?? []);
+    const insert: InsertDraft = { ...ins, placement: target.placement, ...(at ? { at } : { at: undefined }) };
+    const capture = { ...captureElement(target.anchor), styles: captureElement(draft).styles };
+    const box = draft.getBoundingClientRect();
+    const rect = { top: Math.round(box.top), left: Math.round(box.left), width: Math.round(box.width), height: Math.round(box.height) };
+    setPendingCapture(prev => prev ? { ...prev, capture, context: capture.element, rect, originalRect: { ...rect }, insert, auto: { ...prev.auto, ...insertCommand(insert) } } : prev);
+  };
+  // Leaving a dropped component without confirming it — any way out (card ×, Esc, closing the
+  // toolbar, another selection) — takes its draft off the page, like any panel edit not kept
+  const lastInsert = useRef<string | null>(null);
+  useEffect(() => {
+    const now = pendingCapture?.insert?.draftId ?? null;
+    const before = lastInsert.current;
+    lastInsert.current = now;
+    if (!before || before === now) return;
+    if (!annotationsRef.current.some(a => a.insert?.draftId === before)) removeDraft(before);
+  }, [pendingCapture?.insert?.draftId, annotations]);
+
+  // The draft on the page is grabbed to move it: before Ilse's own drag of a selected element
+  useEffect(() => {
+    const id = pendingCapture?.insert?.draftId;
+    if (!id || pendingCapture?.insert?.copy) return;
+    const down = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const el = onDraft(e);
+      if (!el) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const x0 = e.clientX, y0 = e.clientY;
+      const ins = pendingCaptureRef.current?.insert;
+      if (!ins) return;
+      const pre = (m: MouseEvent) => {
+        if (Math.abs(m.clientX - x0) + Math.abs(m.clientY - y0) < 5) return;
+        stop();
+        startCatalogDrag(ins.item, m.clientX, m.clientY, { snap: { variant: '', html: ins.html, w: el.getBoundingClientRect().width, h: el.getBoundingClientRect().height } });
+      };
+      const stop = () => { window.removeEventListener('mousemove', pre, true); window.removeEventListener('mouseup', stop, true); };
+      window.addEventListener('mousemove', pre, true);
+      window.addEventListener('mouseup', stop, true);
+    };
+    // Ilse's own drag of a selection starts on pointerdown: the draft's grab goes first, on window
+    // The press lands on the draft, or on the selection box drawn over it
+    const onDraft = (e: MouseEvent): HTMLElement | null => {
+      const draft = document.querySelector<HTMLElement>(`[data-ilse-draft="${id}"]`);
+      if (!draft) return null;
+      const t = e.target as Element | null;
+      if (t && draft.contains(t)) return draft;
+      const box = pendingAreaRef.current;
+      if (!t || !box || !box.contains(t)) return null;
+      const r = draft.getBoundingClientRect();
+      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom ? draft : null;
+    };
+    const guard = (e: PointerEvent) => { if (onDraft(e)) e.stopImmediatePropagation(); };
+    window.addEventListener('pointerdown', guard, true);
+    window.addEventListener('mousedown', down, true);
+    return () => { window.removeEventListener('pointerdown', guard, true); window.removeEventListener('mousedown', down, true); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCapture?.insert?.draftId, catalog]);
+
+  // Drafts stay on the page until their change is applied — a reload puts them back next to their anchor
+  useEffect(() => {
+    // A draft with no note behind it (deleted, cleared) never stays: the page only keeps a dropped
+    // component while its note exists or the card is still open. An applied one gives way on its
+    // own once the real component is there (see 'resolved')
+    const keep = new Set(annotationsRef.current.filter(a => a.insert).map(a => a.insert!.draftId));
+    const open = pendingCaptureRef.current?.insert?.draftId;
+    if (open) keep.add(open);
+    document.querySelectorAll<HTMLElement>('[data-ilse-draft]').forEach(el => {
+      const id = el.getAttribute('data-ilse-draft');
+      if (id && !keep.has(id) && !el.hasAttribute('data-ilse-moving')) el.remove();
+    });
+    let tries = 0;
+    const restore = () => {
+      let missing = 0;
+      for (const a of annotationsRef.current) {
+        if (!a.insert || a.status === 'resolved' || document.querySelector(`[data-ilse-draft="${a.insert.draftId}"]`)) continue;
+        let anchor: Element | null = null;
+        try { anchor = document.querySelector(a.capture.element); } catch { /* not a selector anymore */ }
+        if (!anchor) { missing++; continue; }
+        const draft = makeDraft(a.insert.html, a.insert.draftId);
+        if (a.pixelTargetId) draft.setAttribute('data-ilse-pixel-target', a.pixelTargetId);
+        placeDraft(draft, anchor, a.insert.placement);
+      }
+      // The app may still be rendering: look again a few times
+      if (missing && tries++ < 6) setTimeout(restore, 500);
+    };
+    const timer = setTimeout(restore, 300);
+    return () => clearTimeout(timer);
+  // Annotations load from storage after mount: look whenever the list changes
+  }, [annotations]);
+
+  const setComponentProp = (prop: string, value: string) => {
+    const hit = componentHit;
+    if (!hit) return;
+    // A dropped draft: its props are the ones it will be written with; the copy follows when one exists
+    const ins = pendingCaptureRef.current?.insert;
+    if (ins) {
+      const props = { ...ins.props };
+      if (value === '') delete props[prop];
+      else props[prop] = value === 'true' ? true : value === 'false' ? false : value;
+      const key = variantKey(ins.item, props);
+      const look = catalog?.snapshots[ins.item.id]?.find(sn => sameVariant(ins.item, sn.variant, key));
+      if (look) restyleDraft(ins.draftId, look.html);
+      const next: InsertDraft = { ...ins, props, ...(look ? { html: look.html } : {}) };
+      setPendingCapture(prev => prev ? { ...prev, insert: next, auto: { ...prev.auto, ...insertCommand(next) } } : prev);
+      return;
+    }
+    setPendingCapture(prev => {
+      if (!prev) return prev;
+      const original = hit.props[prop] !== undefined ? String(hit.props[prop]) : undefined;
+      const others = (prev.propEdit?.changes ?? []).filter(c => c.prop !== prop);
+      const changes = value === (original ?? '') ? others : [...others, { prop, ...(original !== undefined ? { from: original } : {}), to: value }];
+      // See it now: the copy of that variant in its place, when one has been seen
+      const id = prev.pixelTargetId;
+      const el = id ? document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${id}"]`) : null;
+      if (el && id) {
+        const merged: Record<string, string | number | boolean> = { ...hit.props };
+        for (const c of changes) { if (c.to === '') delete merged[c.prop]; else merged[c.prop] = c.to === 'true' ? true : c.to === 'false' ? false : c.to; }
+        const look = changes.length ? catalog?.snapshots[hit.item.id]?.find(sn => sameVariant(hit.item, sn.variant, variantKey(hit.item, merged))) : undefined;
+        previewVariant(el, id, look?.html ?? null, { from: look?.text, to: hit.text });
+        setVariantMissing(changes.length > 0 && !look);
+      }
+      return {
+        ...prev,
+        propEdit: changes.length ? { component: hit.item.name, source: hit.item.source, frameUrl: hit.frameUrl, props: hit.props, text: hit.text, changes } : undefined,
+        auto: { ...prev.auto, ...propsCommand(hit.item.name, hit.item.source, changes) },
+      };
+    });
+  };
+
+  // Selecting an element turns the catalog window into the panel (its Catalog tab is a click away)
+  useEffect(() => { if (pendingCapture) setCatalogOpen(false); }, [pendingCapture]);
+  useEffect(() => { setPickingComponent(false); setPanelClosed(false); setVariantMissing(false); }, [pendingCapture?.pixelTargetId]);
+
+  // The panel keeps where it was dragged while the toolbar is open
+  useEffect(() => { if (!isOpen) resetPanelPosition(); }, [isOpen]);
+
   const closeToolbar = () => {
     // The draft first: cancelling it turns selection back on, closing turns it off
     if (pendingCaptureRef.current) cancelCapture();
@@ -3257,6 +4320,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     setChatOpen(false);
     setScanOpen(false);
     setScanHighlight(null);
+    setCatalogOpen(false);
+    setPanelTab('props');
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -3275,6 +4340,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       <style>{`
         [data-ilse-toolbar] .ilse-hidden-scroll::-webkit-scrollbar { width: 0; height: 0; }
         [data-ilse-toolbar] .ilse-hidden-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+        [data-ilse-toolbar] .ilse-catalog-row:not([aria-current]):hover { background: ${color.muted}; }
         [data-ilse-toolbar] .ilse-panel-remove:not(:disabled):hover { background: ${color.muted} !important; color: ${color.destructive} !important; }
         [data-ilse-toolbar] [contenteditable][data-placeholder]:empty::before {
           content: attr(data-placeholder);
@@ -3626,15 +4692,41 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       )}
 
       {/* ── Property panel — docked right, open while an element is selected ── */}
-      {pendingCapture && !pendingCapture.sketch && pendingCapture.capture.styles && Object.keys(pendingCapture.capture.styles).length > 0 && (
+      {pendingCapture && !panelClosed && !pendingCapture.sketch && pendingCapture.capture.styles && Object.keys(pendingCapture.capture.styles).length > 0 && (
         <PropertyPanel
+          onClose={() => setPanelClosed(true)}
+          onDuplicate={!pendingCapture.insert && pendingCapture.markerType === 'element'
+            // A card with work in it (a note, an edit) isn't thrown away for a copy
+            && !(pendingCapture.note.trim() || hasAuto(pendingCapture.auto) || pendingCapture.styleChanges?.length || pendingCapture.propEdit)
+            // Free: anything is copied on screen and explained to the agent. Pro: a component's
+            // root is written again with its props (variant swap, no AI), like a catalog drop
+            ? (proCatalog && componentHit ? duplicateSelected : duplicateElement) : undefined}
           key={panelEpoch}
+          tab={panelTab}
+          onTab={(tab) => { setPanelTab(tab); if (tab === 'catalog') loadCatalog(); }}
+          catalog={proCatalog
+            ? <CatalogPanel items={catalog?.items ?? null} snapshots={catalog?.snapshots ?? {}} onPage={catalogOnPage} onDragStart={startCatalogDrag} onEditFile={() => send({ type: 'catalog_file' })} selected={componentHit?.item.id} onSpot={spotComponent} />
+            : <CatalogLocked />}
+          componentSection={componentHit ? (
+            <ComponentSection
+              hit={componentHit}
+              changes={pendingCapture.propEdit?.changes ?? []}
+              onChange={setComponentProp}
+              note={pendingCapture.insert
+                ? (!catalog?.snapshots[pendingCapture.insert.item.id]?.some(sn => sameVariant(pendingCapture.insert!.item, sn.variant, variantKey(pendingCapture.insert!.item, pendingCapture.insert!.props))) ? t('catalog.noVariantCopy') : undefined)
+                : variantMissing ? t('catalog.noLivePreview') : undefined}
+            />
+          ) : undefined}
           historyRef={panelHistoryRef}
           onRemove={pendingCapture.markerType === 'element' ? removeSelected : undefined}
           removed={!!pendingCapture.auto?.remove}
           textEdit={pendingCapture.textEdit}
           mirrorAll={pendingCapture.scope?.choice === 'all'}
-          onTextChange={(edit) => setPendingCapture(prev => prev ? {
+          onTextChange={(edit) => setPendingCapture(prev => prev?.insert ? (() => {
+            // A draft's text is the text it will be written with — not an edit of existing code
+            const insert: InsertDraft = { ...prev.insert, text: edit ? edit.to : prev.insert.text };
+            return { ...prev, insert, auto: { ...prev.auto, ...insertCommand(insert) } };
+          })() : prev ? {
             ...prev,
             textEdit: edit,
             auto: { ...prev.auto, ...textCommand(edit) },
@@ -3652,6 +4744,46 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             auto: { ...prev.auto, style: formatStyleNote(changes) || undefined },
           } : null)}
         />
+      )}
+
+      {/* ── A catalog component clicked: where it is on this page ── */}
+      {spot && (spot.none
+        ? <div data-ilse-toolbar style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 100003, padding: '6px 10px', borderRadius: 8, background: '#171717', color: '#fff', fontSize: 11, fontFamily: font.sans, pointerEvents: 'none' }}>{t('catalog.notHere')}</div>
+        : spot.rects.map((r, i) => (
+          <div key={i} data-ilse-toolbar style={{
+            position: 'fixed', left: r.left - 3, top: r.top - 3, width: r.width + 6, height: r.height + 6, zIndex: 100002, pointerEvents: 'none',
+            outline: `2px solid ${ilse.brand}`, borderRadius: 6, background: 'rgba(255,108,3,0.08)', transition: 'opacity 0.2s',
+          }} />
+        )))}
+
+      {/* ── A component being dragged from the catalog: its copy under the pointer, where it would land ── */}
+      {catalogDrag && (
+        <>
+          <div data-ilse-toolbar data-ilse-ghost style={{
+            position: 'fixed', pointerEvents: 'none', zIndex: 100005, left: catalogDrag.x + 12, top: catalogDrag.y - 26,
+            padding: '3px 7px', borderRadius: 6, background: '#171717', color: '#fff', fontSize: 10, fontFamily: font.sans, whiteSpace: 'nowrap',
+          }}>
+            {catalogDrag.active ? t('catalog.dragHint') : t('catalog.dragCancel')}
+          </div>
+          {/* Until it's over somewhere it can land, a small copy rides with the pointer */}
+          {!catalogDrag.active && (
+            <div data-ilse-toolbar data-ilse-ghost style={{
+              position: 'fixed', pointerEvents: 'none', zIndex: 100004, left: catalogDrag.x + 10, top: catalogDrag.y + 10, opacity: 0.6,
+              transform: `scale(${Math.min(1, 240 / (catalogDrag.snap?.w ?? 120))})`, transformOrigin: 'top left',
+            }}
+              dangerouslySetInnerHTML={{ __html: catalogDrag.snap?.html ?? placeholderHtml(catalogDrag.item.name) }}
+            />
+          )}
+        </>
+      )}
+
+      {/* ── Catalog with nothing selected — the panel's spot, only the catalog ── */}
+      {isOpen && catalogOpen && !(pendingCapture && !pendingCapture.sketch && pendingCapture.capture.styles && Object.keys(pendingCapture.capture.styles).length > 0) && (
+        <CatalogWindow onClose={() => setCatalogOpen(false)}>
+          {proCatalog
+            ? <CatalogPanel items={catalog?.items ?? null} snapshots={catalog?.snapshots ?? {}} onPage={catalogOnPage} onDragStart={startCatalogDrag} onEditFile={() => send({ type: 'catalog_file' })} onSpot={spotComponent} />
+            : <CatalogLocked />}
+        </CatalogWindow>
       )}
 
       {/* ── Annotation popover — out of the way while the element is being dragged,
@@ -3693,6 +4825,21 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             imageRefs: [...(prev.imageRefs ?? []), dataUrl],
             imageFilenames: [...(prev.imageFilenames ?? []), filename ?? ''],
           } : null)}
+          onPickComponent={proCatalog ? () => { if (!catalogFullRef.current) loadCatalog(); setPickingComponent(p => !p); } : undefined}
+          picker={pickingComponent ? (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${color.border}`, maxHeight: 260, overflowY: 'auto' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: color.foreground, marginBottom: 6 }}>{t('card.pickComponent')}</div>
+              <CatalogPanel
+                items={catalog?.items ?? null}
+                snapshots={catalog?.snapshots ?? {}}
+                onPage={catalogOnPage}
+                onPick={(item) => {
+                  setPickingComponent(false);
+                  setPendingCapture(prev => prev ? { ...prev, auto: { ...prev.auto, ...componentCommand(item) } } : null);
+                }}
+              />
+            </div>
+          ) : undefined}
           onRemoveImage={(i) => setPendingCapture(prev => prev ? {
             ...prev,
             imageRefs: (prev.imageRefs ?? []).filter((_, j) => j !== i),
@@ -3966,7 +5113,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                       WebkitUserModify: 'read-write-plaintext-only' as unknown as undefined,
                     }}
                   />
-                  <button
+                  {!ann.testFinding && <button
                     onClick={() => { sendAnnotation(activeMarker); setActiveMarker(null); }}
                     style={{
                       width: 34, height: 34, borderRadius: '50%',
@@ -3977,18 +5124,19 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                     }}
                   >
                     <IconArrowUp size={16} stroke={2} color="#fff" />
-                  </button>
+                  </button>}
                 </div>
+                {ann.testFinding && (
+                  // A finding's card answers like its row in the report
+                  <FindingActions
+                    busy={false}
+                    onSkip={() => { skipFinding(ann.testFinding!); setActiveMarker(null); }}
+                    onIgnore={() => { ignoreFinding(activeMarker); setActiveMarker(null); }}
+                    onFix={() => { sendAnnotation(activeMarker); setActiveMarker(null); }}
+                  />
+                )}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
-                  {ann.testFinding ? (
-                    <button
-                      onClick={() => ignoreFinding(activeMarker)}
-                      title={t('toolbar.testDiscard')}
-                      style={{ background: 'none', border: 'none', color: color.mutedForeground, cursor: 'pointer', fontSize: 11, padding: '2px 4px' }}
-                    >
-                      {t('toolbar.testIgnore')}
-                    </button>
-                  ) : (
+                  {ann.testFinding ? null : (
                   <button
                     onClick={() => removeAnnotation(activeMarker)}
                     style={{ background: 'none', border: 'none', color: color.destructive, cursor: 'pointer', fontSize: 11, padding: '2px 4px' }}
@@ -4329,13 +5477,19 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                   <span style={{ fontSize: 12, fontWeight: 600 }}>Ilse</span>
                   <span
-                    title={proTest ? t('settings.planProHint') : t('settings.planFreeHint')}
+                    role={owner ? 'button' : undefined}
+                    tabIndex={owner ? 0 : undefined}
+                    onClick={owner ? () => send({ type: 'view_as_free', free: !owner.viewAsFree }) : undefined}
+                    title={owner
+                      ? t('settings.ownerSwitchHint', { other: owner.viewAsFree ? 'Pro' : 'Free' })
+                      : proTest ? t('settings.planProHint') : t('settings.planFreeHint')}
                     style={{
                       fontSize: 10, fontWeight: 600, lineHeight: 1, padding: '3px 6px', borderRadius: radius.full,
                       backgroundColor: proTest ? ilse.testPale : color.muted, color: proTest ? ilse.test : color.mutedForeground,
+                      ...(owner ? { cursor: 'pointer', outline: `1px dashed ${proTest ? ilse.test : color.mutedForeground}`, outlineOffset: 1 } : {}),
                     }}
                   >
-                    {proTest ? 'Pro' : 'Free'}
+                    {proTest ? 'Pro' : 'Free'}{owner ? ' ⇄' : ''}
                   </span>
                   <span
                     title={connected ? t('settings.wsConnectedHint', { port: String(wsPort ?? '') }) : t('settings.wsOfflineHint')}
@@ -4731,11 +5885,23 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   ...(speaking
                     ? { padding: '0 4px', width: 340 }
                     : { backgroundColor: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.xl, padding: 14, width: 300, boxShadow: shadow.xl }),
-                  maxHeight: 420, overflowY: 'auto',
+                  // The setup list is the tallest: room for every toggle and the button, short of the page's top
+                  maxHeight: phase === 'setup' ? 'min(600px, calc(100vh - 100px))' : 420, overflowY: 'auto',
                   fontFamily: font.sans,
                 }}
               >
-                {!speaking && <div style={{ fontSize: 12, fontWeight: 600, color: color.foreground, marginBottom: 8 }}>{t('toolbar.scan')}</div>}
+                {!speaking && <div style={{ fontSize: 12, fontWeight: 600, color: color.foreground, marginBottom: phase === 'setup' ? 12 : 8 }}>{t(phase === 'setup' ? 'test.setupTitle' : 'toolbar.scan')}</div>}
+
+                {/* Before the run: what to test and on which screens */}
+                {phase === 'setup' && (
+                  <TestSetup
+                    offer={testOffer}
+                    onRun={(groups, sizes) => {
+                      setTestSteps([]); setTestRun({ phase: 'checking' }); setScanOpen(false);
+                      testAction('run', { groups, sizes });
+                    }}
+                  />
+                )}
 
                 {/* Running: Ilse's thinking stack — the newest step bold with the pulsing square, older ones fading */}
                 {working && (
@@ -4790,6 +5956,68 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               </div>
               );
             })()}
+
+            {/* The test report (Pro): above the toolbar, or docked on the side while the dev browses */}
+            {reportOpen && toolbarMode === 'test' && (
+              <TestReport
+                findings={testFindings}
+                run={testRunMeta}
+                focusId={reportFocus}
+                ignoredNow={ignoredNow}
+                testing={testing}
+                fixing={(id) => annotations.some(a => a.testFinding?.id === id && a.status === 'sent')}
+                onFocus={setReportFocus}
+                onGoTo={(f) => {
+                  // Another page: the report reopens there, on this finding
+                  try { sessionStorage.setItem(REPORT_FOCUS_KEY, JSON.stringify({ id: f.id })); } catch { /* the report just won't reopen */ }
+                  location.href = f.page;
+                }}
+                onFix={(f) => fixFindings([f])}
+                onFixAll={fixFindings}
+                onRunAgain={openTestSetup}
+                onSkip={skipFinding}
+                onIgnoreAlways={(f) => {
+                  dropFindingMarker(f.id);
+                  decideTestFinding(f, 'discarded');
+                  if (reportFocus === f.id) setReportFocus(null);
+                }}
+                onIgnoreAll={(list) => {
+                  for (const f of list) { dropFindingMarker(f.id); decideTestFinding(f, 'discarded'); }
+                  setReportFocus(null);
+                }}
+                onShowIgnored={() => {
+                  for (const id of ignoredNow) clearedFindings.current.delete(id);
+                  setIgnoredNow(new Set());
+                  setFindingRetry(0);
+                }}
+                onClose={() => { setReportOpen(false); setReportFocus(null); }}
+              />
+            )}
+
+            {/* Journeys (Pro) — what a person does in the app, recorded once, replayed with no AI */}
+            {journeysOpen && toolbarMode === 'test' && (
+              <JourneysPanel
+                journeys={journeys}
+                recording={journeyRecording}
+                live={journeyLive}
+                error={journeyError}
+                extendsRight={extendsRight}
+                // Starts on the page the dev is looking at
+                suggestions={journeySuggestions}
+                suggesting={journeySuggesting}
+                onAdd={(goal, start) => {
+                  setJourneyError(null); setJourneyLive(null);
+                  setJourneySuggestions(prev => prev ? prev.filter(x => x.goal !== goal) : prev);
+                  journeyAction({ action: 'add', goal, start: start ?? location.pathname + location.search });
+                }}
+                onSuggest={() => { setJourneyError(null); setJourneySuggestions(null); setJourneySuggesting(true); journeyAction({ action: 'suggest' }); }}
+                onShare={(id, on) => journeyAction({ action: 'share', id, on })}
+                onRun={(id) => { setJourneyError(null); setJourneyLive(null); journeyAction({ action: 'run', id }); }}
+                onRemove={(id) => journeyAction({ action: 'remove', id })}
+                onConfirm={(ok) => { journeyAction({ action: 'confirm', ok }); setJourneyLive(prev => prev ? { ...prev, confirm: undefined } : prev); }}
+                onClose={() => setJourneysOpen(false)}
+              />
+            )}
 
             {/* Chat panel — blocks interaction behind it */}
             {chatOpen && (
@@ -4981,22 +6209,29 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                     <rect x="3" y="3" width="10" height="10" rx="2" />
                   </svg>
                 </PillBtn>
-              ) : (
-                <span
-                  style={{ display: 'inline-flex' }}
-                  onMouseEnter={() => { if (toolbarMode === 'test' && testFindings.length + pendingCount > 0) holdRunList(true); }}
-                  onMouseLeave={() => holdRunList(false)}
-                >
+              ) : toolbarMode === 'test' ? (
+                // Test mode's own action: run the test. Fixing lives in the report and on each finding's card
                 <PillBtn accent={accent}
-                  // In test mode the list under the pointer names the action; with nothing to list, the tooltip does
-                  title={toolbarMode === 'test' ? (testFindings.length + pendingCount > 0 ? undefined : t('toolbar.runFixes')) : t('toolbar.run')}
+                  title={t('test.runTest')}
+                  active={testing}
+                  pulsing={testing}
+                  disabled={testing}
+                  onClick={() => {
+                    if (scanOpen && testRun?.phase === 'setup') { setScanOpen(false); setTestRun(null); return; }
+                    openTestSetup();
+                  }}
+                >
+                  <IconEyeglass2 size={18} stroke={1.75} />
+                </PillBtn>
+              ) : (
+                <PillBtn accent={accent}
+                  title={t('toolbar.run')}
                   onClick={() => { setRunListOpen(false); setScanHighlight(null); sendAll(); }}
                   disabled={pendingCount === 0}
                   badge={pendingCount > 0 ? pendingCount : undefined}
                 >
                   <IconBolt size={18} stroke={1.75} />
                 </PillBtn>
-                </span>
               )}
 
               {/* Undo — restores the files of the last batch, no LLM involved */}
@@ -5049,6 +6284,25 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               )}
               </span>
 
+              {/* Catalog — the product's components, from the code */}
+              <PillBtn accent={accent}
+                title={t('catalog.open')}
+                active={catalogOpen || (!!pendingCapture && !panelClosed && panelTab === 'catalog')}
+                onClick={() => {
+                  if (pendingCaptureRef.current) {
+                    if (panelClosed) { setPanelClosed(false); setPanelTab('catalog'); loadCatalog(); return; }
+                    const next = panelTab === 'catalog' ? 'props' : 'catalog';
+                    setPanelTab(next);
+                    if (next === 'catalog') loadCatalog();
+                    return;
+                  }
+                  if (!catalogOpen) loadCatalog();
+                  setCatalogOpen(o => !o);
+                }}
+              >
+                <IconComponents size={18} stroke={1.75} />
+              </PillBtn>
+
               {/* Pause */}
               <PillBtn accent={accent}
                 title={paused ? t('toolbar.resumeAnimations') : t('toolbar.pauseAnimations')}
@@ -5086,17 +6340,33 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
               {/* Test mode: test the app again; the findings land on their markers */}
               {toolbarMode === 'test' && (() => {
-                const testing = testRun?.phase === 'checking' || testRun?.phase === 'running';
                 return (<>
                   <PillBtn accent={accent}
-                    title={t('toolbar.testRunAgain')}
-                    active={testing}
-                    pulsing={testing}
-                    disabled={testing}
-                    onClick={() => { setShowSettings(false); setChatOpen(false); setTestSteps([]); setTestRun({ phase: 'checking' }); testAction('run'); }}
+                    title={t('report.open')}
+                    active={reportOpen}
+                    onClick={() => {
+                      const opening = !reportOpen;
+                      setReportOpen(opening);
+                      if (opening) { setShowSettings(false); setJourneysOpen(false); setRunListOpen(false); if (testRun?.phase === 'setup') { setScanOpen(false); setTestRun(null); } send({ type: 'findings' }); }
+                      else setReportFocus(null);
+                    }}
                   >
-                    <IconRefresh size={18} stroke={1.75} />
+                    <IconListDetails size={18} stroke={1.75} />
                   </PillBtn>
+                  {proJourneys && (
+                    <PillBtn accent={accent}
+                      title={t('journeys.open')}
+                      active={journeysOpen}
+                      pulsing={!!journeyLive && !journeyLive.done}
+                      onClick={() => {
+                        const opening = !journeysOpen;
+                        setJourneysOpen(opening);
+                        if (opening) { setShowSettings(false); setScanOpen(false); setRunListOpen(false); if (!reportDocked) setReportOpen(false); journeyAction({ action: 'list' }); }
+                      }}
+                    >
+                      <IconRoute size={18} stroke={1.75} />
+                    </PillBtn>
+                  )}
                   <PillBtn accent={accent}
                     title={markersVisible ? t('toolbar.hideMarkers') : t('toolbar.showMarkers')}
                     active={!markersVisible}
@@ -5125,7 +6395,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               <PillBtn accent={accent}
                 title={t('toolbar.settings')}
                 active={showSettings}
-                onClick={() => { setShowSettings(v => !v); if (!showSettings) { setChatOpen(false); setScanOpen(false); } }}
+                onClick={() => { setShowSettings(v => !v); if (!showSettings) { setChatOpen(false); setScanOpen(false); setJourneysOpen(false); if (!reportDocked) setReportOpen(false); } }}
               >
                 <IconSettings size={18} stroke={1.75} />
               </PillBtn>
@@ -5152,11 +6422,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                       aria-label={t(locked ? 'toolbar.testLocked' : mode === 'design' ? 'toolbar.modeDesignHint' : 'toolbar.modeTestHint')}
                       onClick={() => {
                         if (on) return;
-                        if (locked) {
-                          setClipboardToast(saying(t('toolbar.testLocked'), 'say'));
-                          setTimeout(() => setClipboardToast(null), 8000);
-                          return;
-                        }
+                        if (locked) { setProPitch(true); return; }
                         setToolbarMode(mode);
                         setShowSettings(false); setChatOpen(false); setActiveMarker(null); setRunListOpen(false);
                         if (mode === 'test') {
@@ -5166,7 +6432,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                           setAnnotating(false);
                           send({ type: 'findings' });
                         } else {
-                          setScanOpen(false); setScanHighlight(null);
+                          setScanOpen(false); setScanHighlight(null); setJourneysOpen(false); setReportOpen(false);
                         }
                       }}
                       style={{
@@ -5281,6 +6547,100 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             </div>
           </div>
         )}
+
+        {pageError && !offPage && !clipboardToast && (() => {
+          const above = isOpen && toolbarPos.y > 90;
+          const growsRight = toolbarPos.x < 250;
+          const edge = above
+            ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
+            : { left: window.innerWidth / 2 };
+          const first = pageError.errors[0];
+          const shown = first.length > 220 ? first.slice(0, 219) + '…' : first;
+          const more = pageError.errors.length > 1 ? ' ' + t('toolbar.pageError.more', { count: pageError.errors.length - 1 }) : '';
+          const askFix = () => {
+            const list = pageError.errors.slice(0, 3).map(e => `- ${e.slice(0, 600)}`).join('\n');
+            send({
+              type: 'annotate',
+              note: `Depois da última mudança (${pageError.files.join(', ')}), a página mostrou ${pageError.errors.length > 1 ? 'estes erros' : 'este erro'} no console do navegador:\n${list}\nCorrija a causa no código que essa mudança tocou, mantendo o que ela pediu. Não esconda o erro (sem try/catch vazio, sem silenciar o console).`,
+              element: '', styles: {}, intent: 'fix', severity: 'important',
+              environment: captureEnvironment(),
+            });
+            setPageError(null);
+          };
+          return (
+            <div
+              data-ilse-toolbar
+              role="alert"
+              style={{
+                position: 'fixed', zIndex: 100000, ...edge,
+                ...(above ? { top: toolbarPos.y - 12, transform: 'translateY(-100%)' } : { bottom: 80, transform: 'translateX(-50%)' }),
+                maxWidth: 420,
+              }}
+            >
+              <SpeechBubble mode={toolbarMode} reaction="say" mascotSize={24} textStyle={STALE_TEXT} actions={<>
+                <button style={speechButton(toolbarMode, true)} onClick={askFix}>{t('toolbar.pageError.fix')}</button>
+                <button style={speechButton(toolbarMode, false)} onClick={() => { send({ type: 'undo', changeSetId: pageError.changeSetId }); setPageError(null); }}>{t('toolbar.pageError.undo')}</button>
+                <button style={speechButton(toolbarMode, false)} onClick={() => setPageError(null)}>{t('toolbar.pageError.later')}</button>
+              </>}>
+                {t('toolbar.pageError.text', { files: pageError.files.join(', ') || '—', error: shown }) + more}
+              </SpeechBubble>
+            </div>
+          );
+        })()}
+
+        {stalePage && !pageError && !offPage && !clipboardToast && (() => {
+          const above = isOpen && toolbarPos.y > 90;
+          const growsRight = toolbarPos.x < 250;
+          const edge = above
+            ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
+            : { left: window.innerWidth / 2 };
+          return (
+            <div
+              data-ilse-toolbar
+              role="alert"
+              style={{
+                position: 'fixed', zIndex: 100000, ...edge,
+                ...(above ? { top: toolbarPos.y - 12, transform: 'translateY(-100%)' } : { bottom: 80, transform: 'translateX(-50%)' }),
+                maxWidth: 380,
+              }}
+            >
+              <SpeechBubble mode={toolbarMode} reaction="say" mascotSize={24} textStyle={STALE_TEXT} actions={<>
+                <button style={speechButton(toolbarMode, true)} onClick={() => window.location.reload()}>{t('toolbar.stale.reload')}</button>
+                <button style={speechButton(toolbarMode, false)} onClick={() => setStalePage(null)}>{t('toolbar.stale.later')}</button>
+              </>}>
+                {t('toolbar.stale.text', { files: stalePage.join(', ') || '—' })}
+              </SpeechBubble>
+            </div>
+          );
+        })()}
+
+        {proPitch && !offPage && !clipboardToast && (() => {
+          const above = isOpen && toolbarPos.y > 90;
+          const growsRight = toolbarPos.x < 250;
+          const edge = above
+            ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
+            : { left: window.innerWidth / 2 };
+          return (
+            <div
+              data-ilse-toolbar
+              role="dialog"
+              aria-label={t('toolbar.proPitch.title')}
+              style={{
+                position: 'fixed', zIndex: 100000, ...edge,
+                ...(above ? { top: toolbarPos.y - 12, transform: 'translateY(-100%)' } : { bottom: 80, transform: 'translateX(-50%)' }),
+                maxWidth: 380,
+              }}
+            >
+              <SpeechBubble mode="test" reaction="say" mascotSize={24} actions={<>
+                <button style={speechButton('test', true)} onClick={() => { window.open('https://ilse.design/#pro', '_blank', 'noopener'); setProPitch(false); }}>{t('toolbar.proPitch.cta')}</button>
+                <button style={speechButton('test', false)} onClick={() => setProPitch(false)}>{t('toolbar.proPitch.later')}</button>
+              </>}>
+                <strong style={{ display: 'block', fontWeight: 600 }}>{t('toolbar.proPitch.title')}</strong>
+                {t('toolbar.proPitch.text')}
+              </SpeechBubble>
+            </div>
+          );
+        })()}
 
         {offPage && !clipboardToast && (() => {
           const above = isOpen && toolbarPos.y > 90;

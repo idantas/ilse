@@ -29,6 +29,8 @@ export interface SourceHit {
   score: number;
   reasons: string[];
   snippet: string;       // numbered source lines, capped
+  /** Another element in a different file scored the same: the match is a guess, not a location */
+  ambiguous?: boolean;
 }
 
 export interface LocateQuery {
@@ -39,6 +41,12 @@ export interface LocateQuery {
   text?: string;             // the element's own visible text
   /** React 19 dev stacks from the browser: the element's JSX site and its component's usage site */
   frames?: { element?: { fn: string; url: string }; owner?: { fn: string; url: string } };
+  /**
+   * Components rendered on the page the element is on. Without React's frames (a copy
+   * Ilse put on the page, a preview), classes alone match look-alikes from other screens:
+   * an element written in a component that isn't on this page can't be this one.
+   */
+  pageComponents?: string[];
 }
 
 export interface LocateOptions {
@@ -378,6 +386,7 @@ export function locateSource(query: LocateQuery, opts: LocateOptions): SourceHit
   const grep = parseGrepPattern(query.grepPattern);
   const stack = query.componentStack ?? (query.component ? [query.component] : []);
   const text = query.text ? normalizeText(query.text).slice(0, 60) : '';
+  const onPage = !elementFrame?.file && query.pageComponents?.length ? new Set(query.pageComponents) : null;
 
   // Cheap text pre-filter: only parse files that mention something we look for
   const needles = [
@@ -412,6 +421,7 @@ export function locateSource(query: LocateQuery, opts: LocateOptions): SourceHit
         score += 5; reasons.push(`used in ${ownerFrame.fn}`); kind = 'usage';
       }
       if (score < MIN_SCORE) continue;
+      if (onPage && kind === 'element' && node.owner && !onPage.has(node.owner)) continue;
       hits.push({
         file: rel,
         line: node.line,
@@ -432,6 +442,10 @@ export function locateSource(query: LocateQuery, opts: LocateOptions): SourceHit
   const max = opts.maxResults ?? 3;
   const firstElement = hits.find(h => h.kind === 'element');
   const firstUsage = hits.find(h => h.kind === 'usage');
+  // A tie with an element in another file: classes alone can't tell them apart
+  if (firstElement && hits.some(h => h !== firstElement && h.kind === 'element' && h.score === firstElement.score && h.file !== firstElement.file)) {
+    firstElement.ambiguous = true;
+  }
   const ordered = [firstElement, firstUsage, ...hits].filter((h): h is SourceHit => !!h);
   return Array.from(new Set(ordered)).slice(0, max);
 }

@@ -78,6 +78,7 @@ function getChildTags(node: any): string[] {
  */
 export async function findPatterns(
   files: Array<{ path: string; code: string }>,
+  minOccurrences = 3,
 ): Promise<Result<ImplicitComponent[]>> {
   const signatures: ElementSignature[] = [];
 
@@ -156,11 +157,11 @@ export async function findPatterns(
     groups.set(key, existing);
   }
 
-  // Convert to ImplicitComponent (only patterns that repeat 3+ times)
+  // Convert to ImplicitComponent (only patterns that repeat often enough)
   const components: ImplicitComponent[] = [];
 
   for (const [key, sigs] of groups) {
-    if (sigs.length < 3) continue;
+    if (sigs.length < minOccurrences) continue;
 
     // Determine pattern name
     const firstSig = sigs[0];
@@ -179,7 +180,8 @@ export async function findPatterns(
     // Collect unique className variants
     const variants = new Set<string>();
     for (const sig of sigs) {
-      if (sig.rawClasses) variants.add(sig.rawClasses.substring(0, 80));
+      // Whole: test mode looks for these exact class lists on the rendered pages
+      if (sig.rawClasses) variants.add(sig.rawClasses.trim().replace(/\s+/g, ' ').substring(0, 300));
     }
 
     // Unique files
@@ -190,7 +192,7 @@ export async function findPatterns(
       signature: key,
       occurrences: sigs.length,
       files: fileLocations,
-      variants: Array.from(variants).slice(0, 5),
+      variants: Array.from(variants).slice(0, 8),
     });
   }
 

@@ -17,6 +17,28 @@ export interface ElementCapture {
   text?: string;               // own visible text, short — lets the CLI find the JSX node
   /** React 19 dev stacks: where this element's JSX runs, and where its component is used */
   frames?: ReactFrames;
+  /** Inside a copy Ilse put on the page — React never rendered it */
+  copyOf?: { kind: 'draft' | 'variant'; component?: string };
+}
+
+/**
+ * A dropped or duplicated component (draft) and a variant preview are HTML copies:
+ * no fiber, so no component and no React stack. Their identity comes from what they
+ * are a copy of, and the page stack from where they stand (the draft's parent, or
+ * the real element the preview stands in for).
+ */
+function copyIdentity(el: Element): Pick<ElementCapture, 'component' | 'componentStack' | 'copyOf'> | null {
+  const copy = el.closest('[data-ilse-draft],[data-ilse-variant-for]');
+  if (!copy) return null;
+  const variantFor = copy.getAttribute('data-ilse-variant-for');
+  const host = variantFor ? document.querySelector(`[data-ilse-pixel-target="${variantFor}"]`) : copy.parentElement;
+  const stack = host ? getComponentStack(host) : [];
+  const name = copy.getAttribute('data-ilse-component') ?? (variantFor && host ? getComponentName(host) : undefined) ?? undefined;
+  return {
+    component: name,
+    componentStack: name ? [name, ...stack.filter(n => n !== name)] : stack,
+    copyOf: { kind: variantFor ? 'variant' : 'draft', ...(name ? { component: name } : {}) },
+  };
 }
 
 export interface ReactFrame { fn: string; url: string }
@@ -29,15 +51,19 @@ export interface ReactFrames { element?: ReactFrame; owner?: ReactFrame }
 export function firstAppFrame(stack: string | undefined): ReactFrame | undefined {
   let anonymousUrl: string | undefined;
   for (const line of (stack ?? '').split('\n')) {
-    const m = /^\s*at\s+(?:Object\.)?([\w$.<>]+)\s+\((.+?)(?::\d+){1,2}\)\s*$/.exec(line);
+    const m = /^\s*at\s+(?:Object\.)?([\w$.<>]+)\s+\((.+?)(?::(\d+))?(?::(\d+))?\)\s*$/.exec(line);
     if (!m) continue;
-    const [, rawFn, url] = m;
+    const [, rawFn, file, ln, col] = m;
+    // A bundled chunk (Turbopack) says nothing on its own: keep where in it, for its source map
+    const url = /\/_next\/static\//.test(file) && ln && col ? `${file}#L${ln}:${col}` : file;
     if (/node_modules|react-stack|jsx-dev-runtime|react-dom|jsxDEV/.test(url + rawFn)) continue;
+    // Turbopack's chunks of Next and of packages: `205a_next_dist_…`, `node_modules_…`
+    if (/\/chunks\/(?:\w+_)?(?:next|node_modules)_/.test(file)) continue;
     const fn = rawFn.split('.').pop()!;
     // A component is Capitalized; eval/map callbacks (a .map() inside it) are not —
     // keep looking for the component in the same file
-    if (/^[A-Z]/.test(fn) && (!anonymousUrl || anonymousUrl === url)) return { fn, url };
-    anonymousUrl ??= url;
+    if (/^[A-Z]/.test(fn) && (!anonymousUrl || anonymousUrl === file)) return { fn, url };
+    anonymousUrl ??= file;
   }
   return undefined;
 }
@@ -469,6 +495,7 @@ export function captureElement(el: Element): ElementCapture {
   const { grepPattern, componentStack } = getSmartID(el);
 
   const frames = reactFrames(el);
+  const copy = frames ? null : copyIdentity(el);
   return {
     frames,
     element: buildSelector(el),
@@ -489,5 +516,6 @@ export function captureElement(el: Element): ElementCapture {
     domPath: buildDomPath(el),
     nearbyElements: getNearbyElements(el),
     text: getOwnText(el),
+    ...(copy ?? {}),
   };
 }

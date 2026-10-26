@@ -149,3 +149,40 @@ describe('firstAppFrame — callbacks', () => {
     expect(firstAppFrame(stack)).toEqual({ fn: 'List', url: 'webpack-internal:///./src/List.tsx' });
   });
 });
+
+describe('look-alikes on other screens (no React frames: a copy Ilse put on the page)', () => {
+  beforeEach(() => clearLocateCache());
+
+  const project = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ilse-lookalike-'));
+    mkdirSync(join(dir, 'components/areas'), { recursive: true });
+    mkdirSync(join(dir, 'components/comum'), { recursive: true });
+    // Same classes, two screens: alphabetically, areas/ comes first
+    writeFileSync(join(dir, 'components/areas/TenantPanel.tsx'),
+      'export function TenantPanel() {\n  return <section className="bg-card border border-border flex">x</section>\n}\n');
+    writeFileSync(join(dir, 'components/comum/BarCard.tsx'),
+      'export function BarCard() {\n  return <section className="bg-card border border-border relative">y</section>\n}\n');
+    return dir;
+  };
+  const element = 'section.bg-card.border.border-border:nth-child(2)';
+
+  it('marks a tie between files as ambiguous instead of picking the first file', () => {
+    const hits = locateSource({ element }, { cwd: project() });
+    expect(hits[0].ambiguous).toBe(true);
+  });
+
+  it('drops look-alikes written in components that are not on this page', () => {
+    const hits = locateSource({ element, pageComponents: ['AuditPage', 'BarCard'] }, { cwd: project() });
+    expect(hits.map(h => h.owner)).toEqual(['BarCard']);
+    expect(hits[0].ambiguous).toBeUndefined();
+  });
+
+  it('trusts React frames over the page list', () => {
+    const cwd = project();
+    const hits = locateSource({
+      element, pageComponents: ['AuditPage'],
+      frames: { element: { fn: 'TenantPanel', url: 'http://localhost:3000/components/areas/TenantPanel.tsx' } },
+    }, { cwd });
+    expect(hits[0]).toMatchObject({ owner: 'TenantPanel', kind: 'element' });
+  });
+});

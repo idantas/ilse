@@ -114,6 +114,7 @@ export function readEffectScales(v4: boolean): EffectScales {
     const probe = document.createElement('div');
     probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;width:0;height:0';
     probe.style[prop] = expr;
+    probe.setAttribute('data-ilse-toolbar', ''); // Ilse's own: never read as the page repainting
     document.body.appendChild(probe);
     const v = getComputedStyle(probe)[prop];
     probe.remove();

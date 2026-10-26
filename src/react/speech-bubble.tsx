@@ -23,7 +23,8 @@ export function reasoningLine(fromBottom: number): React.CSSProperties {
   return {
     ...legibleText,
     fontWeight: fromBottom === 0 ? 600 : 500,
-    opacity: 0.5 * (fromBottom === 0 ? 1 : fromBottom === 1 ? 0.45 : 0.2),
+    // The newest line is read, not glimpsed: near full strength over any page (test 22/10); older ones fade
+    opacity: fromBottom === 0 ? 0.9 : fromBottom === 1 ? 0.45 : 0.2,
     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
     transition: 'opacity 0.4s ease',
     animation: fromBottom === 0 ? 'ilse-thinking-in 0.35s ease-out' : undefined,

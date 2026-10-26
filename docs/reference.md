@@ -123,6 +123,7 @@ These assume a global install. Without it, use `npx ilse-design@latest` instead 
 | `ILSE_CHECK=off` | No project checks after a change; `types` runs only the typecheck |
 | `ILSE_COMPONENT_CARD=0` | No component card |
 | `ILSE_RESUME=1` | Resume the agent session between batches |
+| `ILSE_UNDO_SAVE=0` | Keep the undo history in memory only (lost when `ilse` stops) |
 | `ILSE_AGENT_USER_CONTEXT=1` | Let the agent load your personal `CLAUDE.md` and memory |
 
 ## Project checks
@@ -253,6 +254,8 @@ No proxy and nothing in the project, not even a dev dependency: your browser put
 After updating Ilse, click *Reload* on the extension's card in `chrome://extensions` to pick up the new version.
 
 Both only work on `localhost` pages. They fetch the toolbar from the running `ilse` and run it in the page without a network request, so a service worker (MSW, PWAs) can't drop it. A page with a strict Content-Security-Policy can still block them; use the proxy there, which removes that header.
+
+**Right-click menu** (Chrome extension): on a local page, right-click any element → **Open with Ilse** opens the toolbar with the card already on that element, and turns Ilse on for that site.
 
 ## Without the proxy: `<Ilse />` in your layout
 

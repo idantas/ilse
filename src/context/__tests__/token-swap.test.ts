@@ -276,3 +276,15 @@ describe('planTextSwap', () => {
     expect(res.ok).toBe(false);
   });
 });
+
+describe('a guessed location is never written', () => {
+  it('refuses an ambiguous hit even when a usage sits between it and the look-alike', () => {
+    const cwd = project({ 'src/Card.tsx': CARD });
+    const ann = annotation(cwd, 'div.flex.flex-col.gap-3', [{ property: 'gap', from: '12px', to: '16px' }]);
+    ann.source = [
+      { ...ann.source![0], ambiguous: true },
+      { file: 'src/Page.tsx', line: 3, endLine: 3, owner: 'Page', kind: 'usage', score: 5, reasons: [], snippet: '' },
+    ];
+    expect(planTokenSwap(ann, cwd)).toEqual({ ok: false, reason: 'localização ambígua' });
+  });
+});

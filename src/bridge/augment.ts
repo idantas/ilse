@@ -95,7 +95,8 @@ function filterStyles(styles: Record<string, string>, intents: Intent[]): Record
 export function historyRef(annotation: Annotation): string | undefined {
   if (!annotation.id) return undefined;
   const parts = ['ilse', `annotation ${annotation.id}`];
-  const owner = annotation.source?.[0]?.owner ?? annotation.component;
+  const best = annotation.source?.[0];
+  const owner = (best && !best.ambiguous ? best.owner : undefined) ?? annotation.component;
   if (owner) parts.push(owner);
   if (annotation.source?.[0]) parts.push(annotation.source[0].file);
   return parts.join(' · ');
@@ -113,7 +114,9 @@ function formatSource(annotation: Annotation): string | undefined {
   const where = (h: typeof best) =>
     `\`${h.file}:${h.line}\`${h.owner ? ` in ${h.owner}` : ''} — ${h.kind === 'usage' ? 'usage site' : 'element'}, matched ${h.reasons.join(', ')}`;
   const lines = [
-    `**Source (located by Ilse — start here, search only if this is wrong):** ${where(best)}`,
+    best.ambiguous
+      ? `**Source (a GUESS — other elements in other files match just as well):** ${where(best)}. Confirm it is the clicked element (it must be rendered on ${annotation.environment?.url ?? 'this page'}) before editing; if it isn't, find the right one.`
+      : `**Source (located by Ilse — start here, search only if this is wrong):** ${where(best)}`,
     '```' + ext,
     best.snippet,
     '```',
@@ -140,10 +143,28 @@ export function formatComponentCard(card: ComponentCard): string | undefined {
 
 export function formatComponentFor(annotation: Annotation, cwd = process.cwd()): string | undefined {
   if (process.env.ILSE_COMPONENT_CARD === '0') return undefined;
-  const owner = annotation.source?.[0]?.owner;
+  const best = annotation.source?.[0];
+  const owner = best && !best.ambiguous ? best.owner : undefined;
   if (!owner) return undefined;
   const card = componentCard(owner, { cwd });
   return card ? formatComponentCard(card) : undefined;
+}
+
+/**
+ * The element is written inside a component used in 2+ places, and the designer didn't
+ * pick a scope (the toolbar only offers one when it sees the twins on screen): this
+ * instance only. Editing the definition would change every screen that uses it.
+ */
+export function sharedScope(source: Annotation['source'], cwd: string): Annotation['scope'] {
+  const best = source?.[0];
+  if (!best || best.kind !== 'element' || best.ambiguous || !best.owner) return undefined;
+  try {
+    const card = componentCard(best.owner, { cwd });
+    const uses = card?.def ? card.usages.length : 0;
+    return uses >= 2 ? { component: best.owner, count: 1, uses, choice: 'one' } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Does editing the element where it is written give the scope the designer chose? */
@@ -154,17 +175,28 @@ export function swapMatchesScope(annotation: Annotation): boolean {
   return scope.choice === 'all' ? insideComponent : !insideComponent;
 }
 
+/** The element is in a copy Ilse drew on the page — the change belongs to that new instance */
+export function formatCopy(annotation: Annotation): string | undefined {
+  const copy = annotation.copyOf;
+  if (!copy) return undefined;
+  const c = copy.component ? `<${copy.component}>` : 'the component';
+  return copy.kind === 'draft'
+    ? `**On a draft:** the clicked element is inside Ilse's on-screen copy of ${c}, dropped or duplicated by the designer and not in the code yet (another note in this batch inserts it). Apply this change to that new ${c} instance only — the copy written right AFTER the original (the original stays first and untouched) — never to ${c}'s definition, and never to a look-alike on another screen.`
+    : `**On a variant preview:** the clicked element is inside Ilse's preview of another variant of ${c}. Apply this change to this ${c} instance only, never to a look-alike on another screen.`;
+}
+
 /** One instance or all of them — and how to get there in code */
 export function formatScope(annotation: Annotation): string | undefined {
   const scope = annotation.scope;
   if (!scope) return undefined;
   const c = `<${scope.component}>`;
+  const reach = [`${scope.count} on this screen`, scope.uses ? `written in ${scope.uses} places in the code` : ''].filter(Boolean).join(', ');
   if (scope.choice === 'all') {
-    return `**Scope: ALL ${c}** (${scope.count} on this screen). The designer wants this on every ${c}: change the component's own definition so all instances get it — not just this usage.`;
+    return `**Scope: ALL ${c}** (${reach}). The designer wants this on every ${c}: change the component's own definition so all instances get it — not just this usage.`;
   }
   const usage = annotation.source?.find(h => h.kind === 'usage');
   return [
-    `**Scope: ONLY THIS ${c}** (1 of ${scope.count} on this screen). Do not change ${c}'s definition — the other instances must stay as they are.`,
+    `**Scope: ONLY THIS ${c}** (${reach}). Do not change ${c}'s definition — the other instances, here and on other screens, must stay as they are.`,
     `Override at this usage${usage ? ` (\`${usage.file}:${usage.line}\`)` : ''}: pass a className (merged with cn/clsx) or a prop. If ${c} doesn't accept one, add an optional className/prop to ${c} that keeps today's look by default, and set it only here.`,
   ].join('\n');
 }
@@ -279,6 +311,8 @@ export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   const page = pagePath(annotation.environment?.url);
   if (page) lines.push(`**Page:** \`${page}\` — the change belongs on this screen`);
 
+  const copyBlock = formatCopy(annotation);
+  if (copyBlock) lines.push(copyBlock);
   const sourceBlock = formatSource(annotation);
   if (sourceBlock) lines.push(sourceBlock);
   const historyBlock = formatHistoryFor(annotation);

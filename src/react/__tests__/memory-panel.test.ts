@@ -15,3 +15,14 @@ describe('ago', () => {
     expect(ago('nope', now)).toBe('');
   });
 });
+
+describe('journeys line', () => {
+  it('leaves out zeros; nothing with no journeys', async () => {
+    const { journeysLine } = await import('../memory-panel.js');
+    const { setLocale } = await import('../../i18n/index.js');
+    setLocale('pt');
+    expect(journeysLine({ total: 6, passed: 4, stuck: 1, flaky: 1, never: 0 })).toBe('Jornadas: 4 passam · 1 travou · 1 intermitente');
+    expect(journeysLine({ total: 0, passed: 0, stuck: 0, flaky: 0, never: 0 })).toBeNull();
+    expect(journeysLine(undefined)).toBeNull();
+  });
+});

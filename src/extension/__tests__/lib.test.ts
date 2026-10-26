@@ -66,7 +66,9 @@ describe('extension manifest', () => {
 
   it('only asks for localhost', () => {
     expect(manifest.host_permissions).toEqual(['http://localhost/*', 'http://127.0.0.1/*']);
-    expect(manifest.permissions).toEqual(['storage', 'scripting']);
+    // contextMenus: the right-click items; Chrome shows no install warning for it
+    expect(manifest.permissions).toEqual(['storage', 'scripting', 'contextMenus']);
+    expect(manifest.content_scripts.flatMap((c: { matches: string[] }) => c.matches)).toEqual(['http://localhost/*', 'http://127.0.0.1/*']);
   });
 
   it('has every message in English and Portuguese', () => {
@@ -77,5 +79,21 @@ describe('extension manifest', () => {
     ].flatMap((m) => m.slice(1).filter(Boolean));
     expect(used.length).toBeGreaterThan(4);
     for (const key of used) expect(en, key).toHaveProperty(key);
+  });
+});
+
+describe('right-click menu', () => {
+  it('one item, on local pages only, that selects the element', async () => {
+    const { menuItems, menuAction } = await import('../../../extension/lib.js');
+    const items = menuItems((k: string) => `«${k}»`);
+    expect(items.map((i: { id: string; title: string }) => [i.id, i.title])).toEqual([['ilse-select', '«menuOpen»']]);
+    expect(items[0].documentUrlPatterns).toEqual(['http://localhost/*', 'http://127.0.0.1/*']);
+    expect([menuAction('ilse-select'), menuAction('x')]).toEqual(['select', null]);
+  });
+  it('the manifest asks for the menu and marks the right-clicked element', () => {
+    const manifest = JSON.parse(readFileSync(join(EXT, 'manifest.json'), 'utf8'));
+    expect(manifest.permissions).toContain('contextMenus');
+    expect(manifest.content_scripts[0].js).toEqual(['context.js']);
+    expect(existsSync(join(EXT, 'context.js'))).toBe(true);
   });
 });

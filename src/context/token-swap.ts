@@ -306,7 +306,7 @@ interface Literal { start: number; end: number; value: string; synthetic?: boole
  * The JSX element that starts on `line`. Several can (`<ul><li>…</li></ul>`):
  * then the one whose tag the browser saw wins, so the edit lands on what was clicked.
  */
-function jsxAt(ast: Node, line: number, tag?: string): JSXElement | null {
+export function jsxAt(ast: Node, line: number, tag?: string): JSXElement | null {
   const found: JSXElement[] = [];
   const walk = (n: Node): void => {
     if (n.type === 'JSXElement' && n.loc?.start.line === line) found.push(n);
@@ -362,6 +362,7 @@ export function locateClassName(annotation: Annotation, cwd: string): ClassSite 
   if (!usesTailwind(cwd)) return { ok: false, reason: 'projeto sem Tailwind' };
   const hit = annotation.source?.[0];
   if (!hit || hit.kind !== 'element') return { ok: false, reason: 'elemento não localizado' };
+  if (hit.ambiguous) return { ok: false, reason: 'localização ambígua' };
   const second = annotation.source?.[1];
   if (second && second.kind === 'element' && second.score >= hit.score) return { ok: false, reason: 'localização ambígua' };
 
@@ -483,6 +484,7 @@ export function planTextSwap(annotation: Annotation, cwd: string): SwapResult {
   if (!edit) return { ok: false, reason: 'sem texto' };
   const hit = annotation.source?.[0];
   if (!hit || hit.kind !== 'element') return { ok: false, reason: 'elemento não localizado' };
+  if (hit.ambiguous) return { ok: false, reason: 'localização ambígua' };
   const second = annotation.source?.[1];
   if (second && second.kind === 'element' && second.score >= hit.score) return { ok: false, reason: 'localização ambígua' };
   const abs = join(cwd, hit.file);

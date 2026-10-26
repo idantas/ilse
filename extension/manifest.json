@@ -21,6 +21,25 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "scripting"],
-  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"]
+  "permissions": [
+    "storage",
+    "scripting",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "context.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
 }

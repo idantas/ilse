@@ -123,6 +123,7 @@ Isso supõe a instalação global. Sem ela, use `npx ilse-design@latest` no luga
 | `ILSE_CHECK=off` | Sem as checagens do projeto depois de uma mudança; `types` roda só o typecheck |
 | `ILSE_COMPONENT_CARD=0` | Sem a ficha do componente |
 | `ILSE_RESUME=1` | Retoma a sessão do agente entre lotes |
+| `ILSE_UNDO_SAVE=0` | Histórico de desfazer só em memória (some quando o `ilse` para) |
 | `ILSE_AGENT_USER_CONTEXT=1` | Deixa o agente carregar seu `CLAUDE.md` pessoal e memória |
 
 ## Checagens do projeto
@@ -253,6 +254,8 @@ Sem proxy e nada no projeto, nem dependência de dev: o próprio navegador põe 
 Depois de atualizar a Ilse, clique em *Recarregar* no card da extensão em `chrome://extensions` para pegar a versão nova.
 
 Os dois só funcionam em páginas `localhost`. Eles buscam a barra na Ilse em execução e a rodam na página sem nenhuma requisição de rede, então um service worker (MSW, PWAs) não consegue derrubá-la. Uma página com Content-Security-Policy restrita ainda pode bloqueá-los; nesse caso use o proxy, que remove esse cabeçalho.
+
+**Menu do botão direito** (extensão do Chrome): numa página local, clique com o botão direito em qualquer elemento → **Abrir com a Ilse** abre a barra já com o card nesse elemento e liga a Ilse naquele site.
 
 ## Sem o proxy: `<Ilse />` no seu layout
 

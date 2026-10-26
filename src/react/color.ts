@@ -67,6 +67,7 @@ function viaComputedStyle(value: string): string | null {
   probe.style.color = value;
   if (!probe.style.color) return null; // the browser rejected it outright
   probe.style.display = 'none';
+  probe.setAttribute('data-ilse-toolbar', ''); // Ilse's own: never read as the page repainting
   document.body.appendChild(probe);
   const computed = getComputedStyle(probe).color;
   probe.remove();
