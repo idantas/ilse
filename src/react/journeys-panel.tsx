@@ -19,6 +19,8 @@ export interface JourneySummary {
   steps: number;
   mobileVariant: boolean;
   last: { at: string; ms: number; desktop: ViewportResult; mobile?: ViewportResult } | null;
+  /** The last runs, newest first, one word each (an older Pro sends none) */
+  history?: Array<{ at: string; verdict: ViewportResult['outcome'] }>;
   /** In the project's .ilse/journeys.md: no, the same, or the project's copy is behind this machine's */
   project?: 'no' | 'saved' | 'behind';
 }
@@ -33,6 +35,10 @@ export interface JourneyLive {
   lines: Array<{ viewport: 'desktop' | 'mobile'; text: string }>;
   /** A destructive click waiting for an OK */
   confirm?: string;
+  /** Paused in the journey's window, waiting for the person: what they're asked */
+  waiting?: { need: string; say: string };
+  /** Known before the run: what the person will be asked for */
+  needs?: string[];
   /** Set when it finished: the bubbles stay until the next run */
   done?: JourneySummary;
 }
@@ -90,7 +96,7 @@ function Square({ pulsing, tone }: { pulsing?: boolean; tone?: 'ok' | 'bad' }) {
   );
 }
 
-export function JourneysPanel({ journeys, recording, live, error, extendsRight, suggestions, suggesting, onAdd, onRun, onRemove, onConfirm, onSuggest, onShare, onClose }: {
+export function JourneysPanel({ journeys, recording, live, error, extendsRight, suggestions, suggesting, onAdd, onRun, onRemove, onConfirm, onFocus, onSuggest, onShare, onReport, onClose }: {
   journeys: JourneySummary[];
   /** The core can ask the agent: new journeys can be recorded */
   recording: boolean;
@@ -105,11 +111,18 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
   onRun: (id?: string) => void;
   onRemove: (id: string) => void;
   onConfirm: (ok: boolean) => void;
+  /** Bring the journey's window to the front */
+  onFocus: () => void;
   onSuggest: () => void;
   onShare: (id: string, on: boolean) => void;
+  /** The journey step by step, in the report's Journeys tab */
+  onReport: (id: string) => void;
   onClose: () => void;
 }) {
   const [input, setInput] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  // "New journey" chosen: the field is the way in, with a word on what to type
+  const [wantsNew, setWantsNew] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const running = !!live && !live.done;
@@ -166,20 +179,28 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
   };
 
   const liveLine = live?.done ? journeyLine(live.done) : null;
+  // The one that ran last: what "go on" runs again
+  const latest = journeys.filter(j => j.last).sort((a, b) => Date.parse(b.last!.at) - Date.parse(a.last!.at))[0] ?? journeys[journeys.length - 1];
 
-  // A journey's pill: hovering shows run, save to the project and remove
+  // A journey's pill: a click opens its report; hovering shows run, save to the project and remove
   const pill = (j: JourneySummary) => (
     <div
-      style={{ ...userPill, display: 'flex', gap: 6, alignItems: 'center', cursor: running ? 'default' : 'pointer' }}
-      title={running ? undefined : t('journeys.run')}
+      style={{ ...userPill, display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}
+      title={t('journeys.viewReport')}
       onMouseEnter={() => setHover(j.id)}
       onMouseLeave={() => setHover(null)}
-      onClick={() => { if (!running) onRun(j.id); }}
+      onClick={() => onReport(j.id)}
     >
       <span>{j.goal}</span>
       {hover === j.id && !running && (
         <>
-          <IconPlayerPlay size={12} stroke={2} color={ilse.test} />
+          <button
+            aria-label={t('journeys.run')} title={t('journeys.run')}
+            onClick={(e) => { e.stopPropagation(); onRun(j.id); }}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', lineHeight: 0, color: ilse.test }}
+          >
+            <IconPlayerPlay size={12} stroke={2} />
+          </button>
           {j.steps > 0 && (
             <button
               aria-label={t(j.project === 'saved' ? 'journeys.unsave' : 'journeys.save')} title={t(j.project === 'saved' ? 'journeys.unsave' : 'journeys.save')}
@@ -220,6 +241,7 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
   return (
     <div
       data-ilse-toolbar
+      data-ilse-above=""
       onClick={(e) => e.stopPropagation()}
       style={{
         position: 'absolute', bottom: 'calc(100% + 12px)', ...(extendsRight ? { left: 0 } : { right: 0 }),
@@ -227,6 +249,30 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
       }}
     >
       <div ref={scrollRef} className="ilse-hidden-scroll" style={{ overflowY: 'auto', maxHeight: 320, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {/* Opened with journeys and nothing going on: start a new one, or go on with the last */}
+        {journeys.length > 0 && !live && !busy && !suggesting && !suggestions && (
+          <div style={{ ...agentBubble, color: '#171717' }}>
+            <Square />{wantsNew ? t('journeys.newHint') : t('journeys.whatNow')}
+            {!wantsNew && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {latest && (
+                  <button style={{ ...speechButton('test', true), display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: '100%' }} onClick={() => onRun(latest.id)}>
+                    <IconPlayerPlay size={12} stroke={2} style={{ flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('journeys.again', { goal: latest.goal })}</span>
+                  </button>
+                )}
+                {recording && <button style={speechButton('test', false)} onClick={() => { setWantsNew(true); inputRef.current?.focus(); }}>{t('journeys.newOne')}</button>}
+              </div>
+            )}
+            {wantsNew && recording && (
+              <div style={{ marginTop: 8 }}>
+                <button style={{ ...speechButton('test', false), display: 'inline-flex', alignItems: 'center', gap: 5 }} onClick={onSuggest}>
+                  <IconSparkles size={13} stroke={2} />{t('journeys.suggest')}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {journeys.length === 0 && !live && (
           <div style={agentBubble}>
             <Square />{t('journeys.empty')}
@@ -259,11 +305,23 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
             {finished ? pill(finished) : <div style={userPill}>{live.goal}</div>}
             {live.lines.map((l, i) => (
               <div key={i} style={{ ...agentBubble, animation: i === live.lines.length - 1 ? 'ilse-thinking-in 0.3s ease-out' : undefined }}>
-                <Square pulsing={running && !live.confirm && i === live.lines.length - 1} />
+                <Square pulsing={running && !live.confirm && !live.waiting && i === live.lines.length - 1} />
                 {l.viewport === 'mobile' ? '📱 ' : ''}{l.text}
               </div>
             ))}
+            {live.needs && live.needs.length > 0 && live.lines.length === 0 && (
+              <div style={agentBubble}><Square />{t('journeys.needs', { list: live.needs.map(n => t(`journeys.need.${n}` as Parameters<typeof t>[0])).join(', ') })}</div>
+            )}
             {running && live.lines.length === 0 && <div style={agentBubble}><Square pulsing />{t('journeys.opening')}</div>}
+            {live.waiting && (
+              <div style={{ ...agentBubble, color: '#171717' }}>
+                <Square pulsing />{t('journeys.waiting')}
+                {live.waiting.say && <div style={{ marginTop: 4, fontWeight: 600 }}>{live.waiting.say}</div>}
+                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                  <button style={speechButton('test', true)} onClick={onFocus}>{t('journeys.goToWindow')}</button>
+                </div>
+              </div>
+            )}
             {live.confirm !== undefined && (
               <div style={{ ...agentBubble, color: '#171717' }}>
                 <Square />{t('journeys.confirm', { name: live.confirm })}
@@ -277,6 +335,9 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
               <div style={{ ...agentBubble, color: '#171717', fontWeight: 600 }}>
                 <Square tone={liveLine.ok ? 'ok' : 'bad'} />{liveLine.text}
                 {finished && projectNote(finished)}
+                <div style={{ marginTop: 6 }}>
+                  <button style={speechButton('test', !liveLine.ok)} onClick={() => onReport(live.id)}>{t('journeys.viewReport')}</button>
+                </div>
               </div>
             )}
           </>
@@ -368,6 +429,7 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
           }}
           placeholder={t('journeys.placeholder')}
           aria-label={t('journeys.placeholder')}
+          ref={inputRef}
           maxLength={300}
           disabled={running || !recording}
           autoFocus

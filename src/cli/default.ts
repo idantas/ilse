@@ -52,6 +52,7 @@ import { checkSetup, checkChange } from '../agent/check-run.js';
 import { hasProblems, checkRepairPrompt, describeReport, type CheckReport } from '../agent/project-check.js';
 import type { FileChange } from '../agent/changeset.js';
 import { projectDir } from '../config/project-dir.js';
+import { createDs, hasDs, dsTokens, dsView, addDsInstructions, dsChanges, dsInput, notesToKeep, projectName, addDsRule, DS_DIR } from '../design-context/ds-export.js';
 import { planClassEdit } from '../context/token-swap.js';
 import { hasCommitContext, addCommitContext, commitContextChoice, saveCommitContextChoice, instructionsFile } from '../git/commit-context.js';
 
@@ -1417,7 +1418,20 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       test: proServer?.getMemory?.() ?? null,
     }),
     // The code's components are read for everyone (the Component section); copies are Pro's
-    getCatalog: () => ({ entries: buildCatalog(cwdRoot), snapshots: proServer?.catalog?.snapshots() ?? {} }),
+    getCatalog: () => {
+      const entries = buildCatalog(cwdRoot);
+      const tokens = detectTokens(cwdRoot).tokens;
+      return {
+        entries,
+        snapshots: proServer?.catalog?.snapshots() ?? {},
+        // The Library: "Create design system" until .ilse/ds exists, then "Export".
+        // Pro keeps it alive: what changed since it was written, for the person to approve
+        ds: {
+          exists: hasDs(cwdRoot), tokens: dsTokens(tokens).length, formats: !!(proServer && pro?.dsFormats),
+          ...(proServer && pro?.dsFormats ? { changes: dsChanges(cwdRoot, entries, tokens) } : {}),
+        },
+      };
+    },
     catalogFile: () => {
       if (!proServer?.catalog) return null;
       const areas = new Set(buildCatalog(cwdRoot).flatMap(e => e.layer === 'product' && e.feature ? [e.feature] : []));
@@ -1425,6 +1439,26 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       return { path: relative(cwdRoot, res.path), created: res.created };
     },
     saveSnapshots: (items) => { proServer?.catalog?.saveSnapshots(items); },
+    // Create DS, only when asked, no AI: DESIGN.md is Free; Pro adds tokens.json and the registry
+    // (not while the owner views as Free — proServer is off then)
+    dsExport: () => createDs(cwdRoot, buildCatalog(cwdRoot), detectTokens(cwdRoot).tokens, proServer ? {
+      formats: pro?.dsFormats, notes: pro?.dsNotes, ask: (prompt, opts) => askAgent(cwdRoot, prompt, opts),
+    } : undefined),
+    dsAgents: () => addDsInstructions(cwdRoot),
+    dsCheck: async () => {
+      if (!proServer || !pro?.dsCheck || !hasDs(cwdRoot)) return null;
+      const catalog = buildCatalog(cwdRoot);
+      const tokens = dsTokens(detectTokens(cwdRoot).tokens);
+      const input = dsInput(cwdRoot, join(cwdRoot, DS_DIR), projectName(cwdRoot), catalog, tokens, notesToKeep(cwdRoot, catalog).kept);
+      const designMd = readFileSync(join(cwdRoot, DS_DIR, 'DESIGN.md'), 'utf8');
+      return pro.dsCheck({ ...input, designMd }, (prompt, opts) => askAgent(cwdRoot, prompt, opts));
+    },
+    dsRule: async (rule) => {
+      if (!addDsRule(cwdRoot, rule)) return;
+      // Written again with the rule; the notes are kept (same contracts), so no new question to the agent
+      await createDs(cwdRoot, buildCatalog(cwdRoot), detectTokens(cwdRoot).tokens, proServer ? { formats: pro?.dsFormats } : undefined);
+    },
+    dsView: () => dsView(cwdRoot, buildCatalog(cwdRoot), detectTokens(cwdRoot).tokens, !!(proServer && pro?.dsFormats)),
     undoDecision: (id) => proServer?.undoDecision?.(id) ?? false,
     forgetTestMemory: () => proServer?.forgetMemory?.(),
     onViewAsFree: (free) => {

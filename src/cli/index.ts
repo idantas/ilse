@@ -167,4 +167,23 @@ program
     console.log(options.json ? JSON.stringify(pending, null, 2) : formatPending(pending));
   });
 
+program
+  .command('ds')
+  .description(t('cmd.ds'))
+  .action(async () => {
+    const { buildCatalog } = await import('../design-context/catalog.js');
+    const { detectTokens } = await import('../setup/token-detect.js');
+    const { createDs } = await import('../design-context/ds-export.js');
+    const { askAgent } = await import('../agent/ask.js');
+    const cwd = process.cwd();
+    // `pro` is loaded below, before parse(); a locked Pro has no dsFormats / dsNotes
+    if (pro?.dsNotes) console.log(`\n  ${t('cli.dsNotes')}`);
+    const out = await createDs(cwd, buildCatalog(cwd), detectTokens(cwd).tokens, pro ? {
+      formats: pro.dsFormats, notes: pro.dsNotes, ask: (prompt, opts) => askAgent(cwd, prompt, opts),
+    } : undefined);
+    console.log(`\n  ${t('cli.dsWritten', { components: out.components, tokens: out.tokens })}`);
+    for (const f of out.files) console.log(`    ${f}`);
+    console.log(`\n  ${t('cli.dsHint')}\n`);
+  });
+
 program.parse();

@@ -53,6 +53,13 @@ export function setOwnPorts(ports: number[]): void {
 }
 const portOf = (origin: string) => { try { const u = new URL(origin); return Number(u.port || (u.protocol === 'https:' ? 443 : 80)); } catch { return NaN; } };
 
+/** The Library's design system: written yet, how many tokens, whether Pro writes the other formats */
+export interface DsState {
+  exists: boolean; tokens: number; formats: boolean;
+  /** Pro's live DS: what changed in the code since the DS was written */
+  changes?: { added: string[]; removed: string[]; changed: string[]; tokens: string[] } | null;
+}
+
 export interface WsServerOptions {
   port?: number;
   onAnnotation?: (annotation: Annotation) => void;
@@ -93,11 +100,21 @@ export interface WsServerOptions {
   tokens?: Array<{ name: string; value: string; type: string }>;
   libraries?: string[];
   /** The design panel's catalog: the product's components, read from the code, and the copies seen on pages */
-  getCatalog?: () => { entries: unknown[]; snapshots: Record<string, unknown[]> };
+  getCatalog?: () => { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState };
   /** Copies of catalog components the toolbar took on a page */
   saveSnapshots?: (items: unknown[]) => void;
   /** `.ilse/catalog.md` created (or found) for the team to edit — on the user's click */
   catalogFile?: () => { path: string; created: boolean } | null;
+  /** Create DS: the project's design system written to .ilse/ds from its code (ds-export.ts) */
+  dsExport?: () => Promise<{ files: string[]; components: number; tokens: number; notes?: number } | null> | { files: string[]; components: number; tokens: number } | null;
+  /** The DS window: the files in .ilse/ds and the reading behind them (ds-export.ts DsView) */
+  dsView?: () => unknown;
+  /** The DS block added to AGENTS.md (or CLAUDE.md) — on the person's click */
+  dsAgents?: () => string | null;
+  /** Pro: the fresh-agent test of the DS (a minute or two) */
+  dsCheck?: () => Promise<unknown>;
+  /** A rule from the test the person approved: kept, and the DS written again */
+  dsRule?: (rule: string) => Promise<unknown>;
 }
 
 /**
@@ -485,10 +502,10 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
     }
 
     case 'catalog': {
-      let data: { entries: unknown[]; snapshots: Record<string, unknown[]> } = { entries: [], snapshots: {} };
+      let data: { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState } = { entries: [], snapshots: {} };
       try { data = options.getCatalog?.() ?? data; } catch { /* a scan error leaves the list empty */ }
       // `lite`: just the list (copying starts on connect; the copies go when the catalog is shown)
-      ws.send(JSON.stringify(msg.lite ? { type: 'catalog', entries: data.entries, snapshots: {}, lite: true } : { type: 'catalog', ...data }));
+      ws.send(JSON.stringify(msg.lite ? { type: 'catalog', entries: data.entries, snapshots: {}, ds: data.ds, lite: true } : { type: 'catalog', ...data }));
       break;
     }
 
@@ -496,6 +513,51 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       let res: { path: string; created: boolean } | null = null;
       try { res = options.catalogFile?.() ?? null; } catch { /* unwritable: nothing to say */ }
       ws.send(JSON.stringify({ type: 'catalog_file', ...(res ?? { failed: true }) }));
+      break;
+    }
+
+    case 'ds_export': {
+      // With Pro the user's agent writes "when to use" first: it can take a minute, the toolbar shows it working
+      void Promise.resolve()
+        .then(() => options.dsExport?.() ?? null)
+        .catch(() => null) // unwritable: the toolbar says it failed
+        .then(res => ws.send(JSON.stringify({ type: 'ds_export', ...(res ?? { failed: true }) })));
+      break;
+    }
+
+    case 'ds_check': {
+      void Promise.resolve()
+        .then(() => options.dsCheck?.() ?? null)
+        .catch(() => null)
+        .then(result => ws.send(JSON.stringify({ type: 'ds_check', result })));
+      break;
+    }
+
+    case 'ds_rule': {
+      if (typeof msg.rule !== 'string') break;
+      void Promise.resolve()
+        .then(() => options.dsRule?.(msg.rule as string))
+        .catch(() => null)
+        .then(() => {
+          let view: unknown = null;
+          try { view = options.dsView?.() ?? null; } catch { /* unreadable */ }
+          ws.send(JSON.stringify({ type: 'ds_view', view, rule: msg.rule }));
+        });
+      break;
+    }
+
+    case 'ds_agents': {
+      try { options.dsAgents?.(); } catch { /* unwritable: the window keeps offering it */ }
+      let view: unknown = null;
+      try { view = options.dsView?.() ?? null; } catch { /* unreadable */ }
+      ws.send(JSON.stringify({ type: 'ds_view', view }));
+      break;
+    }
+
+    case 'ds_view': {
+      let view: unknown = null;
+      try { view = options.dsView?.() ?? null; } catch { /* unreadable: the window says so */ }
+      ws.send(JSON.stringify({ type: 'ds_view', view }));
       break;
     }
 
@@ -523,8 +585,10 @@ export function parseJourneyAction(msg: Record<string, unknown>): JourneyAction 
     case 'run': return { action: 'run', id: str(msg.id, 40) };
     case 'remove': { const id = str(msg.id, 40); return id ? { action: 'remove', id } : null; }
     case 'confirm': return { action: 'confirm', ok: msg.ok === true };
+    case 'focus': return { action: 'focus' };
     case 'suggest': return { action: 'suggest' };
     case 'share': { const id = str(msg.id, 40); return id ? { action: 'share', id, on: msg.on === true } : null; }
+    case 'report': { const id = str(msg.id, 40); return id ? { action: 'report', id } : null; }
     default: return null;
   }
 }

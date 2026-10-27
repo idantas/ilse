@@ -52,7 +52,11 @@ export type JourneyAction =
   /** Save to the project (.ilse/journeys.md) or take it out */
   | { action: 'share'; id: string; on: boolean }
   /** A destructive click the goal didn't ask for: may the journey go on? */
-  | { action: 'confirm'; ok: boolean };
+  | { action: 'confirm'; ok: boolean }
+  /** The journey is waiting for the person in its own window: bring that window to the front */
+  | { action: 'focus' }
+  /** One journey's last runs, step by step (journey_report) */
+  | { action: 'report'; id: string };
 
 /** A finding the agent was handed, as much as a retest needs */
 export interface RetestTarget { id: string; page: string; category?: string; selector?: string }
@@ -141,6 +145,45 @@ export interface ProCore {
   consistency?: (cwd: string) => Promise<ConsistencyItem[]>;
 }
 
+/** A component of the project's DS as the core sees it: Pro writes it into the registry */
+export interface DsComponent {
+  name: string;
+  folder: string;
+  layer?: string;
+  /** Props, values, defaults, uses, example (the core's ComponentContract) */
+  contract: Record<string, unknown>;
+  /** npm packages its file imports (not react/react-dom/next), for an installable registry item */
+  dependencies?: string[];
+  /** The project's own components its file imports, by name */
+  requires?: string[];
+}
+
+/** The fresh-agent test: each task, what the agent wrote, what it got wrong; rules that would have prevented it */
+export interface DsCheck {
+  tasks: Array<{ task: string; code: string; problems: string[] }>;
+  rules: string[];
+}
+
+/** What a component is for, in a sentence the agent reads before picking it */
+export interface DsNote {
+  whenToUse: string;
+  /** When not to — and what to use instead */
+  avoid?: string;
+}
+
+/** Create DS: what the core read from the code, for Pro to write the machine formats */
+export interface DsInput {
+  cwd: string;
+  /** Absolute path of .ilse/ds, already created */
+  dir: string;
+  /** The project's name (package.json, else the folder) */
+  name: string;
+  components: DsComponent[];
+  tokens: Array<{ name: string; value: string; type: string }>;
+  /** package.json's homepage, when it has one */
+  homepage?: string;
+}
+
 export interface ProPlugin {
   pluginApi: number;
   version: string;
@@ -148,4 +191,13 @@ export interface ProPlugin {
   registerCli?: (program: Command, core?: ProCore) => void;
   /** Hooks for the running `ilse` (bridge + toolbar) */
   server?: (ctx: ProContext) => ProServer;
+  /**
+   * Create DS beyond DESIGN.md: tokens.json (W3C, for Figma / Tokens Studio) and the shadcn
+   * registry, written into `dir`. Returns the file names. Optional: without it Free writes DESIGN.md only
+   */
+  dsFormats?: (input: DsInput) => string[];
+  /** Create DS: "when to use" for each component handed over (only the new or changed ones), by the user's agent */
+  dsNotes?: (input: DsInput, ask: AskAgent) => Promise<Record<string, DsNote>>;
+  /** Create DS: an agent that knows only DESIGN.md does a few tasks; what it got wrong becomes suggested rules */
+  dsCheck?: (input: DsInput & { designMd: string }, ask: AskAgent) => Promise<DsCheck>;
 }

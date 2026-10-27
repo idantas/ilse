@@ -15,6 +15,9 @@ import { findPatterns, type ImplicitComponent } from './find-patterns.js';
 import { indexTokens } from './index-tokens.js';
 import { findInconsistencies } from './find-inconsistencies.js';
 import type { ConsistencyItem } from '../pro/types.js';
+import { hasDs, dsComponents, dsTokens } from './ds-export.js';
+import { buildCatalog } from './catalog.js';
+import { detectTokens } from '../setup/token-detect.js';
 
 const SKIP = new Set(['node_modules', '.git', '.next', 'dist', 'build', 'out', 'coverage', '.turbo', '.vercel', '.ilse', 'public', 'storybook-static']);
 const MAX_FILES = 800;
@@ -116,7 +119,12 @@ export async function checkConsistency(cwd: string): Promise<ConsistencyItem[]> 
     else app.push({ path: rel, code });
   }
 
+  // With a DS written (Create DS), its components count as what already exists, and its tokens are the rule
+  const ds = hasDs(cwd);
+  if (ds) for (const c of dsComponents(buildCatalog(cwd))) { if (!catalog.has(c.name)) catalog.set(c.name, c.source); }
+
   const items: ConsistencyItem[] = [];
+  if (ds) items.push(...rawTokenValues(app, dsTokens(detectTokens(cwd).tokens)));
 
   // Repeated by hand
   const patterns = await findPatterns(app, 2);
@@ -179,4 +187,56 @@ export async function checkConsistency(cwd: string): Promise<ConsistencyItem[]> 
     }
   }
   return items;
+}
+
+/** `#abc` → `#aabbcc`, lowercase: the same color written two ways is one value */
+export function normalizeHex(hex: string): string {
+  const h = hex.toLowerCase();
+  return h.length === 4 ? '#' + [...h.slice(1)].map(c => c + c).join('') : h;
+}
+
+/**
+ * The DS's drift check: a color the DS has as a token, written by hand in the app's code
+ * (`bg-[#ff6c03]`, `color: '#ff6c03'`). When the token changes, these places stay behind.
+ */
+export function rawTokenValues(app: { path: string; code: string }[], tokens: Array<{ name: string; value: string; type: string }>): ConsistencyItem[] {
+  const byValue = new Map<string, string>();
+  for (const t of tokens) if (t.type === 'color' && /^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(t.value.trim())) {
+    const v = normalizeHex(t.value.trim());
+    if (!byValue.has(v)) byValue.set(v, t.name);
+  }
+  if (!byValue.size) return [];
+  const found = new Map<string, { file: string; line: number }[]>();
+  for (const f of app) {
+    f.code.split('\n').forEach((line, i) => {
+      if (/^\s*(import|\/\/|\*|\/\*)/.test(line)) return;
+      for (const m of line.matchAll(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g)) {
+        const token = byValue.get(normalizeHex(m[0]));
+        if (!token) continue;
+        const list = found.get(token) ?? [];
+        list.push({ file: f.path, line: i + 1 });
+        found.set(token, list);
+      }
+    });
+  }
+  return [...found.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 6).map(([token, places]) => {
+    const value = tokens.find(t => t.name === token)!.value;
+    const leaf = token.split('.').slice(1).join('-') || token;
+    const n = places.length;
+    return {
+      key: key(`ds-raw|${token}`),
+      kind: 'tokens' as const,
+      severity: n >= 3 ? 'medium' as const : 'low' as const,
+      occurrences: n,
+      files: places.slice(0, 20),
+      title: {
+        pt: `${value} escrito à mão ${n === 1 ? 'em 1 lugar' : `em ${n} lugares`}; o design system tem o token ${leaf}`,
+        en: `${value} written by hand ${n === 1 ? 'in 1 place' : `in ${n} places`}; the design system has the token ${leaf}`,
+      },
+      detail: {
+        pt: `Use o token (var(--${leaf}) ou a classe com ${leaf}). Se a cor do DS mudar, esses lugares ficam para trás.`,
+        en: `Use the token (var(--${leaf}) or the ${leaf} class). If the DS's color changes, these places stay behind.`,
+      },
+    };
+  });
 }

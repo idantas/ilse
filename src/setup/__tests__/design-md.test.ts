@@ -73,3 +73,18 @@ describe('DESIGN.md', () => {
     expect(r.tokens.some(t => t.name === 'color.accent')).toBe(true);
   });
 });
+
+describe('findDesignMd — the project\'s own first, then the one Ilse wrote', () => {
+  it('finds .ilse/ds/DESIGN.md, and prefers DESIGN.md at the root', async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { findDesignMd } = await import('../design-md.js');
+    const cwd = mkdtempSync(join(tmpdir(), 'ilse-dm-'));
+    mkdirSync(join(cwd, '.ilse/ds'), { recursive: true });
+    writeFileSync(join(cwd, '.ilse/ds/DESIGN.md'), '---\nname: x\n---\n');
+    expect(findDesignMd(cwd)).toBe('.ilse/ds/DESIGN.md');
+    writeFileSync(join(cwd, 'DESIGN.md'), '---\nname: y\n---\n');
+    expect(findDesignMd(cwd)).toBe('DESIGN.md');
+  });
+});
