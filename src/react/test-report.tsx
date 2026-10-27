@@ -8,6 +8,8 @@
  * expanded to the middle of the page. Both end with the same two actions:
  * Run again and Fix all. Per item: skip (back on the next test), ignore
  * always (test memory; undone in Project memory) or fix (to the agent now).
+ *
+ * With journeys, a second tab lists them; one opens step by step (journeys-tab).
  */
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -17,6 +19,9 @@ import { t } from '../i18n/index.js';
 import { ago } from './memory-panel.js';
 import { GROUP_ORDER, type TestGroup } from './test-setup.js';
 import type { TestFinding, TestRunMeta } from './test-findings.js';
+import { JourneysTab } from './journeys-tab.js';
+import type { JourneySummary } from './journeys-panel.js';
+import type { JourneyReport } from './journey-report.js';
 
 type Key = Parameters<typeof t>[0];
 
@@ -120,7 +125,9 @@ function Outlines({ targets }: { targets: Element[] }) {
   );
 }
 
-export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing, onFocus, onGoTo, onFix, onFixAll, onRunAgain, onSkip, onIgnoreAlways, onIgnoreAll, onShowIgnored, onClose }: {
+export type ReportTab = 'findings' | 'journeys';
+
+export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing, onFocus, onGoTo, onFix, onFixAll, onRunAgain, onSkip, onIgnoreAlways, onIgnoreAll, onShowIgnored, onClose, tab, onTab, journeys, journeyId, journeyReport, journeyRunning, onJourney, onRunJourney, onFixJourney }: {
   findings: TestFinding[];
   run: TestRunMeta | null;
   focusId: string | null;
@@ -140,6 +147,16 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
   onIgnoreAll: (list: TestFinding[]) => void;
   onShowIgnored: () => void;
   onClose: () => void;
+  tab: ReportTab;
+  onTab: (tab: ReportTab) => void;
+  journeys: JourneySummary[];
+  /** The journey open step by step */
+  journeyId: string | null;
+  journeyReport: JourneyReport | null;
+  journeyRunning: boolean;
+  onJourney: (id: string | null) => void;
+  onRunJourney: (id: string) => void;
+  onFixJourney: (report: JourneyReport, runIndex: number) => void;
 }) {
   const [filter, setFilter] = useState<'all' | 'errors' | 'improvements'>('all');
   const [expanded, setExpanded] = useState(false);
@@ -191,6 +208,8 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
   const ghost: React.CSSProperties = { padding: '5px 10px', borderRadius: radius.sm, border: `1px solid ${color.border}`, background: color.background, fontSize: 11, fontWeight: 600, fontFamily: font.sans, cursor: 'pointer', color: color.foreground };
   const primary: React.CSSProperties = { padding: '5px 10px', borderRadius: radius.sm, border: 'none', background: ilse.test, color: '#fff', fontSize: 11, fontWeight: 600, fontFamily: font.sans, cursor: 'pointer' };
 
+  // The Journeys tab once there are journeys (or it was opened on purpose)
+  const showTabs = journeys.length > 0 || tab === 'journeys';
   const sizes = (run?.sizes ?? []).map(s => t(`test.size.${s}` as Key)).join(' · ');
 
   const chip = (text: string, tone: 'error' | 'ok' | 'muted' | 'test') => (
@@ -265,8 +284,13 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
     return (
       <div
         key={j.id}
-        onClick={() => finding && pick(finding)}
-        style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0', cursor: finding ? 'pointer' : 'default' }}
+        role="button"
+        tabIndex={0}
+        // Its steps, in the Journeys tab
+        onClick={() => { onTab('journeys'); onJourney(j.id); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') { onTab('journeys'); onJourney(j.id); } }}
+        title={finding ? finding.title : undefined}
+        style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0', cursor: 'pointer' }}
       >
         <span style={{ fontSize: 11, width: 12, color: stuck ? '#ef4444' : flaky ? '#f59e0b' : '#16a34a' }}>{stuck ? '✗' : flaky ? '~' : '✓'}</span>
         <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: color.foreground, lineHeight: 1.35 }}>
@@ -301,7 +325,7 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
         >
           {expanded ? <IconArrowsMinimize size={16} stroke={1.75} /> : <IconArrowsMaximize size={16} stroke={1.75} />}
         </button>
-        {visible.length > 0 && (
+        {visible.length > 0 && tab === 'findings' && (
           <button
             title={t('report.more')} aria-label={t('report.more')}
             onClick={() => setMenu(m => m === 'closed' ? 'open' : 'closed')}
@@ -339,6 +363,34 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
         </button>
       </div>
 
+      {showTabs && (
+        <div role="tablist" style={{ display: 'flex', gap: 14, margin: '0 14px 10px', borderBottom: `1px solid ${color.border}` }}>
+          {(['findings', 'journeys'] as const).map(k => (
+            <button
+              key={k}
+              role="tab"
+              aria-selected={tab === k}
+              onClick={() => { onTab(k); if (k === 'journeys') onJourney(null); }}
+              style={{
+                background: 'none', border: 'none', padding: '0 0 6px', marginBottom: -1, cursor: 'pointer', fontFamily: font.sans, fontSize: 12, fontWeight: 600,
+                color: tab === k ? color.foreground : color.mutedForeground, borderBottom: `2px solid ${tab === k ? ilse.test : 'transparent'}`,
+              }}
+            >
+              {t(k === 'findings' ? 'report.tabFindings' : 'report.tabJourneys')}
+              <span style={{ marginLeft: 5, fontWeight: 500, color: color.mutedForeground }}>{k === 'findings' ? visible.length : journeys.length}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {tab === 'journeys' ? (
+        <div className="ilse-hidden-scroll" style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '0 14px 14px' }}>
+          <JourneysTab
+            journeys={journeys} selected={journeyId} report={journeyReport} running={journeyRunning} wide={expanded}
+            onSelect={onJourney} onRun={onRunJourney} onFix={onFixJourney}
+          />
+        </div>
+      ) : (<>
       {/* Summary: one number per group tested, and what changed since the last test */}
       {(run || visible.length > 0) && (
         <div style={{ padding: '0 14px 10px' }}>
@@ -424,6 +476,7 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
           {t('report.fixAll', { count: toFix.length })}
         </button>
       </div>
+      </>)}
     </>
   );
 

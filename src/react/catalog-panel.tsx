@@ -1,5 +1,9 @@
 /**
- * The panel's Catalog tab: the product's components, from the code.
+ * The panel's Library tab: the product's components, from the code.
+ *
+ * Free: the list, search and "where is it on the page"; the design system written from it
+ * (DESIGN.md) — "Create design system" until .ilse/ds exists, then "Export". Pro: dragging
+ * onto the page, copies (thumbnails), and the export's other formats (tokens.json, registry).
  *
  * Search first (by name, and by what it's for: "botão" finds Button). With no
  * search: Base (library, kit, shared patterns) by what it's for, then Product
@@ -10,7 +14,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { color, font, ilse, radius, shadow } from './tokens.js';
+import { color, font, ilse, proText, radius, shadow } from './tokens.js';
 import { t } from '../i18n/index.js';
 import type { CatalogItem, CatalogSnapshot } from './catalog-snapshot.js';
 import { searchCatalog } from '../design-context/catalog-search.js';
@@ -50,21 +54,22 @@ export function bestSnapshot(list: CatalogSnapshot[] | undefined): CatalogSnapsh
 }
 
 /** The hover card: a big copy, where it's used, its props and variant names */
-function HoverCard({ item, snap, at, onEnter, onLeave }: { item: CatalogItem; snap?: CatalogSnapshot; at: DOMRect; onEnter: () => void; onLeave: () => void }) {
+function HoverCard({ item, snap, at, copies, onEnter, onLeave }: { item: CatalogItem; snap?: CatalogSnapshot; at: DOMRect; copies: boolean; onEnter: () => void; onLeave: () => void }) {
   const choosable = item.props.filter(p => (p.kind === 'enum' || p.kind === 'boolean') && p.values.length > 0).slice(0, 6);
   const others = item.props.filter(p => !choosable.includes(p) && p.kind !== 'other').slice(0, 6);
   const width = 260;
   // Beside the panel, on the side with room
   const left = at.left - width - 12 > 8 ? at.left - width - 12 : at.right + 12;
-  const height = 120 + 70 + (choosable.length + (others.length ? 1 : 0)) * 17;
+  const height = (copies ? 120 : 0) + 70 + (choosable.length + (others.length ? 1 : 0)) * 17;
   return createPortal(
     <div data-ilse-toolbar onMouseEnter={onEnter} onMouseLeave={onLeave} style={{
       position: 'fixed', left, top: Math.max(8, Math.min(at.top - 40, window.innerHeight - height - 8)), width, zIndex: 100002,
       background: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.lg, boxShadow: shadow.lg,
       padding: 10, fontFamily: font.sans, fontSize: 11, color: color.foreground, boxSizing: 'border-box', userSelect: 'text',
     }}>
-      <Thumb snap={snap} w={width - 20} h={120} empty={item.example ? t('catalog.noCopyWhere', { file: item.example.file.split('/').pop()! }) : t('catalog.noCopyHint')} />
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 8 }}>
+      {/* Copies are Pro's: without them the box would only ever say "no copy yet" */}
+      {copies && <Thumb snap={snap} w={width - 20} h={120} empty={item.example ? t('catalog.noCopyWhere', { file: item.example.file.split('/').pop()! }) : t('catalog.noCopyHint')} />}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: copies ? 8 : 0 }}>
         <span style={{ fontSize: 12, fontWeight: 600 }}>{item.name}</span>
         <span style={{ color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>◇ {item.folder}</span>
       </div>
@@ -126,7 +131,7 @@ function Row({ item, selected, here, onHover, onPick, onDragStart, onSpot }: {
       className="ilse-catalog-row"
       style={{
         display: 'flex', alignItems: 'center', gap: 8, padding: '5px 6px', borderRadius: radius.sm,
-        cursor: onPick ? 'pointer' : 'grab',
+        cursor: onPick || !onDragStart ? 'pointer' : 'grab',
         background: selected ? ilse.orangePale : undefined,
         boxShadow: selected ? `inset 2px 0 0 ${ilse.brand}` : undefined,
       }}
@@ -206,6 +211,104 @@ function MoreOptions({ items }: { items: Array<{ label: string; hint?: string; o
   );
 }
 
+/** What the Library knows of the project's design system (the bridge's DsState) */
+export interface DsInfo {
+  exists: boolean; tokens: number; formats: boolean;
+  /** Pro's live DS: what changed in the code since it was written */
+  changes?: { added: string[]; removed: string[]; changed: string[]; tokens: string[] } | null;
+}
+
+/** "+1 new (Badge) · 2 changed · 3 tokens" — what Update would write */
+function changesLine(c: NonNullable<DsInfo['changes']>): string {
+  const list = (names: string[]) => names.slice(0, 2).join(', ') + (names.length > 2 ? '…' : '');
+  return [
+    c.added.length ? t('library.added', { n: c.added.length, names: list(c.added) }) : '',
+    c.changed.length ? t('library.changed', { n: c.changed.length, names: list(c.changed) }) : '',
+    c.removed.length ? t('library.removed', { n: c.removed.length, names: list(c.removed) }) : '',
+    c.tokens.length ? t('library.tokensChanged', { n: c.tokens.length, names: list(c.tokens) }) : '',
+  ].filter(Boolean).join(' · ');
+}
+
+const primaryButton: React.CSSProperties = {
+  border: 'none', borderRadius: radius.sm, background: ilse.brand, color: '#fff', cursor: 'pointer',
+  fontSize: 11, fontWeight: 600, fontFamily: font.sans, padding: '6px 10px', whiteSpace: 'nowrap',
+};
+const proBadge: React.CSSProperties = { fontSize: 9, fontWeight: 600, padding: '1px 6px', borderRadius: radius.full, background: color.muted, flexShrink: 0 };
+
+/**
+ * The top of the Library. No DS yet: what was found and the step that turns it into one.
+ * With one: where it is and Export, which writes every format this install can (Free: DESIGN.md).
+ */
+function DsBar({ ds, components, onCreate, onExport, onView }: { ds: DsInfo; components: number; onCreate: () => void; onExport: () => void; onView?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    window.addEventListener('mousedown', away, true);
+    return () => window.removeEventListener('mousedown', away, true);
+  }, [open]);
+
+  if (!ds.exists) {
+    return (
+      <div style={{ padding: 10, marginBottom: 8, borderRadius: radius.md, background: ilse.orangePale, border: `1px solid ${ilse.brand}33` }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: color.foreground }}>{t('library.mapped', { components, tokens: ds.tokens })}</div>
+        <div style={{ fontSize: 11, lineHeight: 1.45, color: color.mutedForeground, margin: '2px 0 8px' }}>{t('library.mappedHint')}</div>
+        <button onClick={onCreate} title={t('ds.hint')} style={primaryButton}>{t('ds.create')}</button>
+      </div>
+    );
+  }
+  const formats: Array<{ file: string; for: string; pro: boolean }> = [
+    { file: 'DESIGN.md', for: t('library.forAgents'), pro: false },
+    { file: 'tokens.json', for: 'Figma', pro: true },
+    { file: 'registry.json', for: 'shadcn', pro: true },
+  ];
+  const changes = ds.changes && (ds.changes.added.length + ds.changes.changed.length + ds.changes.removed.length + ds.changes.tokens.length) > 0 ? ds.changes : null;
+  return (
+    <>
+    <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${color.border}` }}>
+      {/* The DS itself, on screen: what Create DS gave the person */}
+      <button onClick={onView} disabled={!onView} title={t('dsv.open')} style={{ flex: 1, minWidth: 0, textAlign: 'left', border: 'none', background: 'transparent', padding: 0, cursor: onView ? 'pointer' : 'default', fontFamily: font.sans }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: color.foreground }}>{t('library.ds')}</div>
+        <div style={{ fontSize: 10, color: onView ? ilse.brand : color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: onView ? 'underline' : 'none', textUnderlineOffset: 2 }}>.ilse/ds/DESIGN.md</div>
+      </button>
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open} style={primaryButton}>{t('library.export')} ▾</button>
+      {open && (
+        <div role="menu" style={{
+          position: 'absolute', right: 0, top: 34, width: 220, zIndex: 3, padding: 8,
+          background: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.md, boxShadow: shadow.lg,
+        }}>
+          {formats.map(f => {
+            const locked = f.pro && !ds.formats;
+            return (
+              <div key={f.file} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 2px', fontSize: 11, color: locked ? color.mutedForeground : color.foreground }}>
+                <span aria-hidden style={{ width: 12, color: locked ? color.mutedForeground : ilse.brand }}>{locked ? '–' : '✓'}</span>
+                <span style={{ fontFamily: font.mono }}>{f.file}</span>
+                <span style={{ flex: 1, color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.for}</span>
+                {locked && <span style={proBadge}><span style={proText}>Pro</span></span>}
+              </div>
+            );
+          })}
+          <button onClick={() => { setOpen(false); onExport(); }} style={{ ...primaryButton, width: '100%', marginTop: 6 }}>{t('library.exportTo')}</button>
+          {!ds.formats && (
+            <a href="https://ilse.design/#pro" target="_blank" rel="noreferrer" style={{ display: 'block', marginTop: 8, fontSize: 10, fontWeight: 600, color: ilse.test, textDecoration: 'none' }}>
+              {t('catalog.lockedLink')} →
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+    {/* Pro keeps the DS alive: the code moved on since it was written; Update is the person's approval */}
+    {changes && (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', marginBottom: 8, borderRadius: radius.sm, background: ilse.orangePale, fontSize: 10.5, lineHeight: 1.4, color: color.foreground }}>
+        <span style={{ flex: 1, minWidth: 0 }}><b>{t('library.dsChanged')}</b> {changesLine(changes)}</span>
+        <button onClick={onExport} style={{ ...primaryButton, padding: '4px 8px', fontSize: 10.5 }}>{t('library.update')}</button>
+      </div>
+    )}
+    </>
+  );
+}
+
 type Show = 'all' | 'page' | 'base';
 
 /** Which components: all, only the ones on this page, only Base (the kit / design system / libraries) */
@@ -250,7 +353,15 @@ function GroupBy({ value, onChange }: { value: 'type' | 'folder'; onChange: (v: 
   return <div role="group" aria-label={t('catalog.groupBy')} style={{ display: 'flex', gap: 2 }}>{option('type')}{option('folder')}</div>;
 }
 
-export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDragStart, selected, onSpot, onEditFile }: {
+export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDragStart, selected, onSpot, onEditFile, copies = true, ds, onCreateDs, onExportDs, onViewDs }: {
+  /** Pro keeps copies of components (thumbnails); without them the hover card has no picture */
+  copies?: boolean;
+  /** The project's design system, for the bar on top (absent while picking) */
+  ds?: DsInfo | null;
+  onCreateDs?: () => void;
+  onExportDs?: () => void;
+  /** Opens the DS window (the files in .ilse/ds, drawn as a DS) */
+  onViewDs?: () => void;
   /** "Edit organization": creates `.ilse/catalog.md` for the team to rename and move things */
   onEditFile?: () => void;
   /** A click on a component: show its instances on the page */
@@ -327,8 +438,11 @@ export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDrag
 
   return (
     <div style={{ fontFamily: font.sans }}>
+      {ds && items && onCreateDs && onExportDs && (
+        <DsBar ds={ds} components={items.filter(i => !i.library).length} onCreate={onCreateDs} onExport={onExportDs} onView={onViewDs} />
+      )}
       {/* Search stays at the top while the list scrolls */}
-      <div style={{ position: 'sticky', top: -10, zIndex: 1, background: color.popover, padding: '0 0 6px', margin: '-10px 0 0', paddingTop: 10, display: 'flex', gap: 4, alignItems: 'center' }}>
+      <div style={{ position: 'sticky', top: -10, zIndex: 1, background: color.popover, padding: '0 0 6px', margin: ds && items ? 0 : '-10px 0 0', paddingTop: ds && items ? 0 : 10, display: 'flex', gap: 4, alignItems: 'center' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={color.mutedForeground} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
             style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} aria-hidden>
@@ -386,7 +500,7 @@ export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDrag
         </>
       )}
 
-      {hover && <HoverCard item={hover.item} snap={bestSnapshot(snapshots[hover.item.id])} at={hover.at} onEnter={keep} onLeave={() => onHover(null)} />}
+      {hover && <HoverCard item={hover.item} snap={bestSnapshot(snapshots[hover.item.id])} at={hover.at} copies={copies} onEnter={keep} onLeave={() => onHover(null)} />}
     </div>
   );
 }
@@ -446,26 +560,5 @@ export function CatalogWindow({ onClose, children }: { onClose: () => void; chil
       <div style={{ padding: '10px 12px 12px', overflowY: 'auto', fontSize: 11 }}>{children}</div>
     </div>,
     document.body,
-  );
-}
-
-/** The catalog without Ilse Pro: what it is, and where to get it — like test mode asleep */
-export function CatalogLocked() {
-  return (
-    <div style={{ fontFamily: font.sans, padding: '6px 2px 4px', textAlign: 'left' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: color.foreground }}>{t('catalog.title')}</span>
-        <span style={{ fontSize: 9, fontWeight: 600, padding: '1px 6px', borderRadius: radius.full, background: ilse.testPale, color: ilse.test }}>Pro</span>
-      </div>
-      <div style={{ fontSize: 11, lineHeight: 1.45, color: color.mutedForeground }}>{t('catalog.locked')}</div>
-      <a
-        href="https://ilse.design/#pro"
-        target="_blank"
-        rel="noreferrer"
-        style={{ display: 'inline-block', marginTop: 10, fontSize: 11, fontWeight: 600, color: ilse.test, textDecoration: 'none' }}
-      >
-        {t('catalog.lockedLink')} →
-      </a>
-    </div>
   );
 }

@@ -107,6 +107,7 @@ ilse-design --inject        # put <Ilse /> in your layout instead of using the p
 ilse-design --reset         # answer the setup questions again (mode, where Ilse opens)
 ilse-design --account       # choose again which Claude account this project uses
 ilse-design changes         # what Ilse changed that isn't committed yet
+ilse-design ds              # write the project's design system to .ilse/ds/DESIGN.md, no AI (Pro adds tokens.json, registry.json)
 ilse-design bookmarklet     # the bookmarklet that puts the toolbar on any local page
 ```
 

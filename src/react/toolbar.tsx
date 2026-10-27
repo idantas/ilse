@@ -32,7 +32,8 @@ import { watchRepaints, REPAINT_WAIT_MS, sameText, softRefresh } from './repaint
 import { copyPlacement, lineOf, type Neighbour } from './copy-place.js';
 import { watchPageErrors, newErrors } from './page-errors.js';
 import { useImageInput, InlineAttachments } from './image-input.js';
-import { CatalogLocked, CatalogPanel, CatalogWindow, bestSnapshot } from './catalog-panel.js';
+import { CatalogPanel, CatalogWindow, bestSnapshot, type DsInfo } from './catalog-panel.js';
+import { DsViewer, type DsViewData, type DsCheckState } from './ds-viewer.js';
 import { componentAt, findInstances, instanceAt, liftAnchor, namesOnPage, sameVariant, snapshotPage, variantKey, type InstanceRef, type CatalogItem, type CatalogSnapshot } from './catalog-snapshot.js';
 import { ComponentSection, type PropChange } from './component-section.js';
 import { previewVariant, makeDraft, placeDraft, placeholderHtml, removeDraft, restyleDraft, jsxPreview, type DropTarget, type Placement } from './component-drop.js';
@@ -51,10 +52,12 @@ import { toggleFreeze, isFrozen } from './freeze.js';
 import { shieldPage } from './shield.js';
 import { MemoryPanel, type MemoryData } from './memory-panel.js';
 import { TestSetup, parseOffer, type TestOffer, type TestGroup, type ScreenSize } from './test-setup.js';
-import { FindingActions, TestReport } from './test-report.js';
+import { FindingActions, TestReport, type ReportTab } from './test-report.js';
+import { journeyFinding, parseReport, type JourneyReport } from './journey-report.js';
+import { useLift } from './above-stack.js';
 import { JourneysPanel, type JourneySummary, type JourneyLive, type JourneySuggestion } from './journeys-panel.js';
 import { TooltipLayer } from './tooltip-layer.js';
-import { radius, color, shadow, ilse, font, modeAccent } from './tokens.js';
+import { radius, color, shadow, ilse, font, modeAccent, proText } from './tokens.js';
 import { t, detectLocale, setLocale, getLocale, type Locale } from '../i18n/index.js';
 import { withShortcut, isTyping, doublePress, mod, SHORTCUT_GROUPS } from './shortcuts.js';
 
@@ -1476,6 +1479,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // A variant picked for an instance on the page has no copy yet: the panel says it shows once applied
   const [variantMissing, setVariantMissing] = useState(false);
   const [catalog, setCatalog] = useState<{ items: CatalogItem[]; snapshots: Record<string, CatalogSnapshot[]> } | null>(null);
+  // The Library's design system: "Create" until .ilse/ds exists, then "Export"
+  const [dsInfo, setDsInfo] = useState<DsInfo | null>(null);
+  // The DS window: opened by Create DS / Export (just written) or by the DS's path in the Library
+  const [dsViewer, setDsViewer] = useState<{ data: DsViewData; justWritten: boolean } | null>(null);
+  const dsJustWritten = useRef(false);
+  const [dsCheck, setDsCheck] = useState<DsCheckState | null>(null);
   // Read from callbacks that don't re-create on every catalog change (selecting an element)
   const catalogRef = useRef(catalog);
   catalogRef.current = catalog;
@@ -1657,6 +1666,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // The report is a side panel now (expanding is the report's own): it stays while the dev browses
   const reportDocked = true;
   const [reportFocus, setReportFocus] = useState<string | null>(null);
+  // The report's tabs: findings, or journeys (one open step by step)
+  const [reportTab, setReportTab] = useState<ReportTab>('findings');
+  const [reportJourney, setReportJourney] = useState<string | null>(null);
+  const [journeyReport, setJourneyReport] = useState<JourneyReport | null>(null);
   // "Ignore for now": gone from the report and the page until the next test
   const [ignoredNow, setIgnoredNow] = useState<Set<string>>(new Set());
   const [pageIssues, setPageIssues] = useState<PageIssue[]>([]);
@@ -1678,6 +1691,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // Test mode, asked from here and run by the CLI: where it is, and what it needs from the dev
   type TestPhase = 'setup' | 'checking' | 'running' | 'login-ask' | 'login-open' | 'error';
   const [testRun, setTestRun] = useState<{ phase: TestPhase; page?: string; error?: string; expired?: boolean } | null>(null);
+  // The reasoning lines above the open toolbar rise over any bubble or panel opened there (above-stack)
+  const liftRef = useRef<HTMLDivElement | null>(null);
   const [testSteps, setTestSteps] = useState<string[]>([]);
   /** The mascot at work: is the agent editing (she types) or thinking (she looks up)? */
   const [agentActivity, setAgentActivity] = useState<MascotActivity>('edit');
@@ -1696,12 +1711,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
    * no background, newest line at the bottom, older lines fading. The mascot
    * in the mode switch is the one that works; only while the test runs.
    */
-  const testStream = (gap: number, fontSize: number, maxWidth: number) => {
+  const testStream = (gap: number | string, fontSize: number, maxWidth: number) => {
     const running = testRun?.phase === 'checking' || testRun?.phase === 'running';
     if (!running || testSteps.length === 0) return null;
     const lines = testSteps.slice(-3).reverse();
     return (
-      <div style={{ position: 'absolute', bottom: `calc(100% + ${gap}px)`, right: 0, display: 'flex', flexDirection: 'column-reverse', alignItems: 'flex-end', gap: 4, pointerEvents: 'none' }}>
+      <div style={{ position: 'absolute', bottom: typeof gap === 'number' ? `calc(100% + ${gap}px)` : gap, right: 0, display: 'flex', flexDirection: 'column-reverse', alignItems: 'flex-end', gap: 4, pointerEvents: 'none' }}>
         {lines.map((line, i) => (
           <div key={`${testSteps.length - i}-${line}`} style={{ fontSize, fontFamily: font.sans, maxWidth, ...reasoningLine(i) }}>
             {i === 0 && <ReasoningDot mode="test" />}
@@ -1733,6 +1748,18 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     testAction('setup');
   };
   const journeyAction = (a: Record<string, unknown>) => send({ type: 'journey', ...a });
+  // A journey open in the report: ask for its steps, and again when the list changes (a run just ended)
+  useEffect(() => {
+    if (reportOpen && reportTab === 'journeys' && reportJourney) journeyAction({ action: 'report', id: reportJourney });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportOpen, reportTab, reportJourney, journeys]);
+  // The Journeys tab needs the list even when the Journeys panel was never opened
+  useEffect(() => { if (reportOpen && proJourneys) journeyAction({ action: 'list' }); }, [reportOpen, proJourneys]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** The report, on the Journeys tab, on this journey's steps */
+  const openJourneyReport = (id: string) => {
+    setShowSettings(false); setScanOpen(false); setRunListOpen(false);
+    setReportOpen(true); setReportFocus(null); setReportTab('journeys'); setReportJourney(id);
+  };
 
   // Recomputed on every render: a client-side route change shows that page's findings
   const pageFindings = findingsForPage(testFindings, location.pathname, location.search);
@@ -2124,6 +2151,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setTestRunMeta((msg.run ?? null) as TestRunMeta | null);
       }
       if (msg.type === 'test_setup') setTestOffer(parseOffer(msg));
+      if (msg.type === 'journey_report') setJourneyReport(parseReport(msg.report));
       if (msg.type === 'journey_suggestions' && Array.isArray(msg.list)) {
         setJourneySuggesting(false);
         setJourneySuggestions(msg.list as JourneySuggestion[]);
@@ -2139,7 +2167,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (msg.type === 'journey_step') {
         const text = (msg.text ?? {}) as { pt?: string; en?: string };
         const line = { viewport: msg.viewport === 'mobile' ? 'mobile' as const : 'desktop' as const, text: (getLocale() === 'pt' ? text.pt : text.en) ?? '' };
-        setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, confirm: undefined, lines: [...prev.lines, line].slice(-30) } : prev);
+        setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, confirm: undefined, waiting: undefined, lines: [...prev.lines, line].slice(-30) } : prev);
+      }
+      if (msg.type === 'journey_needs' && Array.isArray(msg.needs)) {
+        const needs = (msg.needs as unknown[]).filter((n): n is string => typeof n === 'string');
+        setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, needs } : prev);
+      }
+      if (msg.type === 'journey_waiting') {
+        setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, waiting: { need: String(msg.need ?? ''), say: String(msg.say ?? '') } } : prev);
+        setJourneysOpen(true);
       }
       if (msg.type === 'journey_confirm') {
         setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, confirm: String(msg.name ?? '') } : prev);
@@ -2147,7 +2183,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       }
       if (msg.type === 'journey_done' && msg.journey && typeof msg.journey === 'object') {
         const done = msg.journey as JourneySummary;
-        setJourneyLive(prev => prev && prev.id === done.id ? { ...prev, confirm: undefined, done } : prev);
+        setJourneyLive(prev => prev && prev.id === done.id ? { ...prev, confirm: undefined, waiting: undefined, done } : prev);
         celebrate('test');
       }
       if (msg.type === 'journey_error') {
@@ -2173,7 +2209,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setIgnoredNow(new Set());
         // The findings land on their markers by themselves; the report sums them up by group
         setScanOpen(false);
-        if (toolbarModeRef.current === 'test') { setReportOpen(true); setReportFocus(null); setJourneysOpen(false); }
+        if (toolbarModeRef.current === 'test') { setReportOpen(true); setReportTab('findings'); setReportFocus(null); setJourneysOpen(false); }
         const here = Array.isArray(msg.findings) ? findingsForPage(msg.findings as TestFinding[], location.pathname, location.search).length : 0;
         clearedFindings.current.clear();
         // The report says it all in test mode; the toast is for a run asked from elsewhere
@@ -2230,6 +2266,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         // What this session copied stays: the stored list may be older than it
         const lite = msg.lite === true;
         if (!lite) catalogFullRef.current = true;
+        if (msg.ds && typeof msg.ds === 'object') setDsInfo(msg.ds as DsInfo);
         setCatalog(prev => {
           if (lite) return { items, snapshots: prev?.snapshots ?? {} };
           const merged = { ...snapshots };
@@ -2247,6 +2284,32 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         const path = typeof msg.path === 'string' ? msg.path : '.ilse/catalog.md';
         setClipboardToast(saying(msg.failed ? t('catalog.fileFailed') : t(msg.created ? 'catalog.fileCreated' : 'catalog.fileExists', { path })));
         setTimeout(() => setClipboardToast(null), 6000);
+      }
+      if (msg.type === 'ds_export') {
+        setClipboardToast(null);
+        if (msg.failed) {
+          setClipboardToast(saying(t('ds.failed')));
+          setTimeout(() => setClipboardToast(null), 9000);
+        } else {
+          // What was written opens on screen, instead of a line saying where it went
+          setDsInfo(prev => prev ? { ...prev, exists: true, changes: null } : prev);
+          dsJustWritten.current = true;
+          send({ type: 'ds_view' });
+        }
+      }
+      if (msg.type === 'ds_check') {
+        const r = msg.result as { tasks?: unknown; rules?: unknown } | null;
+        setDsCheck(r && Array.isArray(r.tasks) && r.tasks.length
+          ? { status: 'done', tasks: r.tasks as Array<{ task: string; code: string; problems: string[] }>, rules: Array.isArray(r.rules) ? r.rules as string[] : [] }
+          : { status: 'failed' });
+      }
+      if (msg.type === 'ds_view') {
+        if (msg.view && typeof msg.view === 'object') {
+          // A refresh of the open window (Add to AGENTS.md) keeps its "just written"
+          const fresh = dsJustWritten.current;
+          setDsViewer(prev => ({ data: msg.view as DsViewData, justWritten: fresh || !!prev?.justWritten }));
+        }
+        dsJustWritten.current = false;
       }
       if (msg.type === 'memory') {
         setMemoryData({ design: msg.design as MemoryData['design'], pro: !!msg.pro, test: (msg.test ?? null) as MemoryData['test'] });
@@ -3733,6 +3796,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   };
   const processingCount = annotations.filter(a => a.status === 'sent').length;
   const testing = testRun?.phase === 'checking' || testRun?.phase === 'running';
+  const feedLift = useLift(liftRef, isOpen && (thinkingMessages.length > 0 || testing), 24);
 
   // ── Toolbar open/close ─────────────────────────────────────────────────────
 
@@ -4164,6 +4228,27 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     setTimeout(show, 350); // after a smooth scroll
     if (spotTimer.current) clearTimeout(spotTimer.current);
     spotTimer.current = setTimeout(() => setSpot(null), 2400);
+  };
+
+  // Create DS / Export: with Pro the agent writes "when to use" first, so the toolbar says it's working
+  const exportDs = () => {
+    setClipboardToast(saying(t('ds.writing')));
+    send({ type: 'ds_export' });
+  };
+
+  // The Library: the list, search and spotting are Free; dragging, copies and organizing the areas are Pro
+  const libraryProps = {
+    items: catalog?.items ?? null,
+    snapshots: catalog?.snapshots ?? {},
+    onPage: catalogOnPage,
+    onSpot: spotComponent,
+    copies: proCatalog,
+    onDragStart: proCatalog ? startCatalogDrag : undefined,
+    onEditFile: proCatalog ? () => send({ type: 'catalog_file' }) : undefined,
+    ds: dsInfo,
+    onCreateDs: () => exportDs(),
+    onExportDs: () => exportDs(),
+    onViewDs: () => send({ type: 'ds_view' }),
   };
 
   /** The draft dragged to another spot: same component and props, a new place in the page and the code */
@@ -4704,9 +4789,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           key={panelEpoch}
           tab={panelTab}
           onTab={(tab) => { setPanelTab(tab); if (tab === 'catalog') loadCatalog(); }}
-          catalog={proCatalog
-            ? <CatalogPanel items={catalog?.items ?? null} snapshots={catalog?.snapshots ?? {}} onPage={catalogOnPage} onDragStart={startCatalogDrag} onEditFile={() => send({ type: 'catalog_file' })} selected={componentHit?.item.id} onSpot={spotComponent} />
-            : <CatalogLocked />}
+          catalog={<CatalogPanel {...libraryProps} selected={componentHit?.item.id} />}
           componentSection={componentHit ? (
             <ComponentSection
               hit={componentHit}
@@ -4780,10 +4863,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       {/* ── Catalog with nothing selected — the panel's spot, only the catalog ── */}
       {isOpen && catalogOpen && !(pendingCapture && !pendingCapture.sketch && pendingCapture.capture.styles && Object.keys(pendingCapture.capture.styles).length > 0) && (
         <CatalogWindow onClose={() => setCatalogOpen(false)}>
-          {proCatalog
-            ? <CatalogPanel items={catalog?.items ?? null} snapshots={catalog?.snapshots ?? {}} onPage={catalogOnPage} onDragStart={startCatalogDrag} onEditFile={() => send({ type: 'catalog_file' })} onSpot={spotComponent} />
-            : <CatalogLocked />}
+          <CatalogPanel {...libraryProps} />
         </CatalogWindow>
+      )}
+
+      {dsViewer && (
+        <DsViewer data={dsViewer.data} justWritten={dsViewer.justWritten} onClose={() => setDsViewer(null)} onExport={() => exportDs()} onLinkAgents={() => send({ type: 'ds_agents' })}
+          check={dsCheck} onCheck={() => { setDsCheck({ status: 'running' }); send({ type: 'ds_check' }); }}
+          onAddRule={(rule) => send({ type: 'ds_rule', rule })} />
       )}
 
       {/* ── Annotation popover — out of the way while the element is being dragged,
@@ -5466,7 +5553,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
             {/* Settings panel — absolutely above the pill */}
             {showSettings && (
-              <div style={{
+              <div data-ilse-above="" style={{
                 position: 'absolute', bottom: 'calc(100% + 8px)', ...(extendsRight ? { left: 0 } : { right: 0 }),
                 backgroundColor: color.popover, border: `1px solid ${color.border}`,
                 borderRadius: 10, padding: 12,
@@ -5485,11 +5572,11 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                       : proTest ? t('settings.planProHint') : t('settings.planFreeHint')}
                     style={{
                       fontSize: 10, fontWeight: 600, lineHeight: 1, padding: '3px 6px', borderRadius: radius.full,
-                      backgroundColor: proTest ? ilse.testPale : color.muted, color: proTest ? ilse.test : color.mutedForeground,
-                      ...(owner ? { cursor: 'pointer', outline: `1px dashed ${proTest ? ilse.test : color.mutedForeground}`, outlineOffset: 1 } : {}),
+                      backgroundColor: color.muted, color: color.mutedForeground,
+                      ...(owner ? { cursor: 'pointer', outline: `1px dashed ${proTest ? ilse.brand : color.mutedForeground}`, outlineOffset: 1 } : {}),
                     }}
                   >
-                    {proTest ? 'Pro' : 'Free'}{owner ? ' ⇄' : ''}
+                    {proTest ? <span style={proText}>Pro</span> : 'Free'}{owner ? ' ⇄' : ''}
                   </span>
                   <span
                     title={connected ? t('settings.wsConnectedHint', { port: String(wsPort ?? '') }) : t('settings.wsOfflineHint')}
@@ -5790,7 +5877,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               const elsewhere = testFindings.length - pageFindings.length;
               const targetOf = (ann: AnnotationDraft) => ann.pixelTargetId ? document.querySelector(`[data-ilse-pixel-target="${ann.pixelTargetId}"]`) : null;
               return (
-                <div
+                <div data-ilse-above=""
                   data-ilse-toolbar
                   className="ilse-hidden-scroll"
                   onMouseEnter={() => holdRunList(true)}
@@ -5875,7 +5962,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 <div style={{ fontSize: 11, color: tone === 'error' ? '#ef4444' : color.mutedForeground, lineHeight: 1.45, marginBottom: 10 }}>{body}</div>
               );
               return (
-              <div
+              <div data-ilse-above=""
                 data-ilse-toolbar
                 className="ilse-hidden-scroll"
                 onClick={(e) => e.stopPropagation()}
@@ -5991,6 +6078,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   setFindingRetry(0);
                 }}
                 onClose={() => { setReportOpen(false); setReportFocus(null); }}
+                tab={reportTab}
+                onTab={setReportTab}
+                journeys={proJourneys ? journeys : []}
+                journeyId={reportJourney}
+                journeyReport={journeyReport}
+                journeyRunning={!!journeyLive && !journeyLive.done}
+                onJourney={(id) => { setReportJourney(id); if (!id) setJourneyReport(null); }}
+                onRunJourney={(id) => { setJourneyError(null); setJourneyLive(null); journeyAction({ action: 'run', id }); }}
+                onFixJourney={(report, i) => { const f = journeyFinding(report, report.runs[i]); if (f) fixFindings([f]); }}
               />
             )}
 
@@ -6012,9 +6108,11 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 }}
                 onSuggest={() => { setJourneyError(null); setJourneySuggestions(null); setJourneySuggesting(true); journeyAction({ action: 'suggest' }); }}
                 onShare={(id, on) => journeyAction({ action: 'share', id, on })}
+                onReport={openJourneyReport}
                 onRun={(id) => { setJourneyError(null); setJourneyLive(null); journeyAction({ action: 'run', id }); }}
                 onRemove={(id) => journeyAction({ action: 'remove', id })}
                 onConfirm={(ok) => { journeyAction({ action: 'confirm', ok }); setJourneyLive(prev => prev ? { ...prev, confirm: undefined } : prev); }}
+                onFocus={() => journeyAction({ action: 'focus' })}
                 onClose={() => setJourneysOpen(false)}
               />
             )}
@@ -6031,7 +6129,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   }}
                   onClick={() => setChatOpen(false)}
                 />
-                <div
+                <div data-ilse-above=""
                   data-ilse-toolbar
                   onClick={(e) => e.stopPropagation()}
                   style={{
@@ -6155,12 +6253,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             {/* Thinking stack — chat-like history above the pill.
                 Uses #BABABA + mix-blend-mode: luminosity so the text auto-adapts
                 to any backdrop (white, cream, dark, image). Figma-tested combo. */}
-            {toolbarMode === 'test' && !scanOpen && testStream(24, 12, 360)}
+            <div ref={liftRef} aria-hidden style={{ position: 'absolute', bottom: '100%', width: 0, height: 0 }} />
+            {toolbarMode === 'test' && !scanOpen && testStream(`calc(100% + ${feedLift}px)`, 12, 360)}
             {thinkingMessages.length > 0 && !chatOpen && (
               <div
                 style={{
                   position: 'absolute',
-                  bottom: 'calc(100% + 24px)',
+                  bottom: `calc(100% + ${feedLift}px)`,
+                  transition: 'bottom 0.2s ease',
                   right: 0,
                   display: 'flex',
                   flexDirection: 'column-reverse',
@@ -6568,7 +6668,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             setPageError(null);
           };
           return (
-            <div
+            <div data-ilse-above=""
               data-ilse-toolbar
               role="alert"
               style={{
@@ -6595,7 +6695,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
             : { left: window.innerWidth / 2 };
           return (
-            <div
+            <div data-ilse-above=""
               data-ilse-toolbar
               role="alert"
               style={{
@@ -6621,7 +6721,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
             : { left: window.innerWidth / 2 };
           return (
-            <div
+            <div data-ilse-above=""
               data-ilse-toolbar
               role="dialog"
               aria-label={t('toolbar.proPitch.title')}
@@ -6650,7 +6750,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             : { left: window.innerWidth / 2 };
           const files = offPage.files.map(f => f.split('/').pop()).join(', ');
           return (
-            <div
+            <div data-ilse-above=""
               data-ilse-toolbar
               role="alert"
               style={{
@@ -6678,7 +6778,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
             : { left: window.innerWidth / 2 };
           return (
-            <div
+            <div data-ilse-above=""
               data-ilse-toolbar
               role="alert"
               style={{
@@ -6706,7 +6806,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
             : { left: window.innerWidth / 2 };
           return (
-            <div
+            <div data-ilse-above=""
               data-ilse-toolbar
               role="status"
               aria-live="polite"
@@ -7002,8 +7102,12 @@ function PixelOverlay({ targetId, element, selector, fallbackRect, fadeOut }: { 
       };
 
       const r = pickRect();
-      const top = r.top + Math.random() * r.height;
-      const left = r.left + Math.random() * r.width;
+      const size = 3 + Math.floor(Math.random() * 3);
+      // Inside the page: a pixel past the right/bottom edge grows the document and
+      // flashes a scrollbar (target as wide as the page, e.g. a full-width section)
+      const doc = document.documentElement;
+      const top = Math.min(r.top + Math.random() * r.height, doc.scrollHeight - size - 1);
+      const left = Math.min(r.left + Math.random() * r.width, doc.clientWidth + window.scrollX - size - 1);
 
       // Color variety: orange (20%), light gray (25%), white (55%)
       const roll = Math.random();
@@ -7013,7 +7117,7 @@ function PixelOverlay({ targetId, element, selector, fallbackRect, fadeOut }: { 
         id: nextId++,
         top,
         left,
-        size: 3 + Math.floor(Math.random() * 3),
+        size,
         color,
         delay: Math.random() * 0.8,
         duration: 1.2 + Math.random() * 1.5,
@@ -7069,8 +7173,10 @@ function PixelOverlay({ targetId, element, selector, fallbackRect, fadeOut }: { 
     <div
       data-ilse-pixel-overlay
       style={{
+        // No dissolve on the layer itself: scaling it from the page's corner pushed the
+        // pixels near the right edge past the page and flashed a horizontal scrollbar.
+        // Each pixel dissolves on its own (below).
         position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 99995,
-        ...(dissolving ? { animation: 'ilse-pixel-dissolve 2s ease-out forwards' } : {}),
       }}
     >
       {cells.map((c) => (

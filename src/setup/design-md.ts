@@ -12,7 +12,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DetectedToken } from './token-detect.js';
 
-const CANDIDATES = ['DESIGN.md', 'design.md', 'docs/DESIGN.md', '.ilse/DESIGN.md'];
+// The project's own first; then the one Create DS writes (ds-export.ts), so Ilse reads what it wrote
+const CANDIDATES = ['DESIGN.md', 'design.md', 'docs/DESIGN.md', '.ilse/DESIGN.md', '.ilse/ds/DESIGN.md'];
 
 /** Where the project's DESIGN.md is, relative to `cwd`, or null */
 export function findDesignMd(cwd: string): string | null {

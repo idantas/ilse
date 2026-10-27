@@ -5,6 +5,8 @@ describe('journey messages from the page', () => {
   it('passes only the shapes Pro knows', () => {
     expect(parseJourneyAction({ action: 'add', goal: '  criar chave ', start: '/keys' })).toEqual({ action: 'add', goal: 'criar chave', start: '/keys' });
     expect(parseJourneyAction({ action: 'add', goal: '' })).toBeNull();
+    expect(parseJourneyAction({ action: 'report', id: 'abc' })).toEqual({ action: 'report', id: 'abc' });
+    expect(parseJourneyAction({ action: 'report' })).toBeNull();
     expect(parseJourneyAction({ action: 'run' })).toEqual({ action: 'run', id: undefined });
     expect(parseJourneyAction({ action: 'remove' })).toBeNull();
     expect(parseJourneyAction({ action: 'confirm', ok: 'yes' })).toEqual({ action: 'confirm', ok: false });

@@ -64,6 +64,14 @@ export const ilse = {
   testPale: '#E2EAFF',
 } as const;
 
+/** The Pro badge's text: Ilse's orange fading into black, clipped to the letters (on a muted pill) */
+export const proText = {
+  backgroundImage: 'linear-gradient(90deg, rgb(250, 105, 0), rgb(0, 0, 0))',
+  WebkitBackgroundClip: 'text',
+  backgroundClip: 'text',
+  color: 'transparent',
+} as const;
+
 /** The toolbar's accent per mode: hex for fills, "r,g,b" for rgba() glows */
 export const modeAccent = (mode: 'design' | 'test') => mode === 'test'
   ? { hex: ilse.test, rgb: '47,107,255' }

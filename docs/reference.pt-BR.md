@@ -107,6 +107,7 @@ ilse-design --inject        # põe <Ilse /> no seu layout em vez de usar o proxy
 ilse-design --reset         # responde de novo as perguntas do setup (modo, onde a Ilse abre)
 ilse-design --account       # escolhe de novo a conta do Claude deste projeto
 ilse-design changes         # o que a Ilse mudou e ainda não foi commitado
+ilse-design ds              # escreve o design system do projeto em .ilse/ds/DESIGN.md, sem IA (Pro adiciona tokens.json, registry.json)
 ilse-design bookmarklet     # o bookmarklet que põe a barra em qualquer página local
 ```
 
