@@ -55,16 +55,32 @@ Na primeira vez, a Ilse pergunta como entregar as anotações ao seu agente:
 - **None:** as listas de espaçamento, arredondamento e espessura da borda começam com *None* (zero) — sem padding, cantos retos, sem borda.
 - **Borda:** o *+* adiciona e já mostra cor, espessura, estilo e lados; o *−* tira.
 - **Aplicar em — só neste ou todos:** quando o elemento faz parte de um componente repetido na página. Com *Todos · N*, os ajustes do painel aparecem em todas as instâncias de uma vez.
-- **Editar texto:** elementos de texto ganham um campo *Text* no topo do painel. Texto que vem de variável, prop ou tradução vai para o agente, que muda na origem.
+- **Editar texto:** elementos de texto ganham um campo *Text* no topo do painel. Texto com formatação (`<em>`, `<strong>`, `<span>`…) mantém a formatação de cada parte. Texto que vem de variável, prop ou tradução vai para o agente, que muda na origem.
+- **Seção Componente:** selecione um componente e o painel mostra de onde ele vem e as props e variantes dele, com os valores que o seu código já usa ou que o tipo permite (os tipos de uma biblioteca também, como os do MUI). Uma prop sem valor mostra o padrão; escolher o padrão remove a prop. Escolha outro valor e a Ilse reescreve essa prop onde esta instância está escrita — sem IA; quando não acha exatamente esse uso, o seu agente recebe a mudança por escrito.
+- **Duplicar:** *Duplicar* no fim do painel, com a nota ainda vazia. Uma linha de lista vira um item novo nos dados dela (com key única); qualquer outro elemento, uma cópia do JSX. A cópia aparece na página na hora: arraste para onde quiser e mude o estilo no painel antes de enviar. O original fica como estava.
 - **Remover um elemento:** *Remove element* no fim do painel, ou a tecla Delete (fn+⌫ no Mac) com a nota vazia — o ⌫ funciona com o foco fora da nota. Numa lista feita com `.map`, só aquele item sai, a não ser que *Aplicar em* diga todos.
 - **Mover de verdade:** arraste para reordenar, ou para dentro e para fora de containers; a página se reorganiza ao vivo. O arraste move o que está selecionado — a célula, não a linha; o título, não o card. Para mover o container, selecione ele antes (↰ ou a árvore).
 - **Redimensionar:** arraste as alças, com encaixe na grade.
 - **Lápis:** rabisque na página; os traços são lidos e vão junto. Um desenho numa área vazia se ancora no elemento que o contém, e o agente recebe o arquivo dele como num clique.
 - **Imagens de referência:** cole ou envie um print ou SVG.
 
-### Revisar a página
+### A Biblioteca
 
-- **Scan:** analisa a página inteira e lista problemas de design por categoria — contraste, tipografia, espaçamento, acessibilidade, componentes. Passe o mouse num problema para ver onde ele está.
+O botão da biblioteca na barra (*Biblioteca de componentes*), ou a aba **Biblioteca** do painel, lista os componentes que o seu projeto já tem, lidos do código: os do próprio projeto e os componentes de biblioteca que ele importa. Sem IA.
+
+- **Achar:** busque pelo nome ou pelo que o componente faz (*"botão"*, *"modal"*). Acima da lista: **Todos**, **Nesta página** ou **Base**; agrupados **por tipo** ou **por pasta**. Passe o mouse num componente para ver as props e variantes dele.
+- **Onde está:** clique num componente para destacar onde ele está nesta página (ou saber que não está aqui); clique numa instância para abrir a seção Componente dela.
+- **Criar design system:** no topo da Biblioteca, ou `ilse ds`. A Ilse escreve o `.ilse/ds/DESIGN.md` a partir do seu código — componentes com props, variantes e um exemplo, e tokens (cores, espaçamento, raio, tipografia, sombras). Sem IA, em segundos. Depois que existe, o topo mostra o arquivo (clique para abrir de novo) e **Exportar**, que escreve de novo.
+- **O seu agente segue o DS:** a janela do design system abre o que foi escrito. **Adicionar ao AGENTS.md** (ou **CLAUDE.md**, o que o projeto tiver) acrescenta um bloco curto apontando para o `.ilse/ds/DESIGN.md`, escrito só nesse clique — ou **Copiar linha** e cole você mesmo. O Claude Code, Codex, Cursor ou Gemini passam a usar os seus componentes e tokens, com ou sem a Ilse rodando. A Ilse também lê.
+
+Mais em [Como funciona → A Biblioteca](how-it-works.pt-BR.md#a-biblioteca).
+
+### Depois de uma mudança
+
+- **Aparece sem recarregar.** O que você viu em prévia — um estilo, uma cópia, um elemento escondido — continua na tela até a página renderizar a mudança real. Se ela não renderizar sozinha, a Ilse pede ao framework que renderize de novo (App Router do Next: sem recarregar, sem perder o estado). Pedir para você recarregar é o último recurso.
+- **A página não pode quebrar.** Erros novos que a página registra depois de uma mudança (uma key repetida do React, uma exceção não tratada) aparecem com **Pedir correção** (o erro vai para o seu agente), **Desfazer** e **Ignorar**.
+- **Página errada:** se nenhum dos componentes que o agente editou está nesta página, a barra diz qual arquivo mudou, com **Refazer nesta página**, **Desfazer** e **Manter**.
+- **Desfazer:** ⌘Z restaura os arquivos da última mudança; ⇧⌘Z devolve. O histórico fica guardado por projeto, fora do seu repositório, então sobrevive a reiniciar o `ilse` (`ILSE_UNDO_SAVE=0` mantém só em memória).
 
 ### Barra e configurações
 
@@ -83,7 +99,7 @@ Também em Configurações → **Atalhos de teclado**, e no tooltip de cada cont
 |---|---|
 | `V` | Alterna entre selecionar elementos e usar a página |
 | `I` `I` | Traz a barra de volta ao lugar padrão (depois de arrastá-la para fora da vista) |
-| `Esc` | Fecha o que estiver por cima (nota, scan, configurações) e, por fim, a barra |
+| `Esc` | Fecha o que estiver por cima (nota, painel, configurações) e, por fim, a barra |
 | `⌘`-clique (`Ctrl`-clique) | Seleciona o elemento exato dentro de um SVG |
 | `⌘↵` (`Ctrl+Enter`) | Envia a nota |
 | `Delete` (fn+⌫) | Remove o elemento selecionado, com a nota vazia |
@@ -106,9 +122,16 @@ ilse-design --mode mcp      # modo MCP só nesta execução
 ilse-design --inject        # põe <Ilse /> no seu layout em vez de usar o proxy
 ilse-design --reset         # responde de novo as perguntas do setup (modo, onde a Ilse abre)
 ilse-design --account       # escolhe de novo a conta do Claude deste projeto
-ilse-design changes         # o que a Ilse mudou e ainda não foi commitado
+ilse-design --version       # a versão instalada
+
 ilse-design ds              # escreve o design system do projeto em .ilse/ds/DESIGN.md, sem IA (Pro adiciona tokens.json, registry.json)
-ilse-design bookmarklet     # o bookmarklet que põe a barra em qualquer página local
+ilse-design changes         # o que a Ilse mudou e ainda não foi commitado (--json para as entradas cruas)
+ilse-design mcp install     # põe a Ilse nos seus agentes por MCP (veja abaixo); mcp uninstall tira
+ilse-design bookmarklet     # o bookmarklet que põe a barra em qualquer página local (--port <n>)
+ilse-design listen          # só o servidor de anotações, nada roda sozinho (--port, padrão 4747)
+ilse-design annotations     # lista as anotações (--status pending|sent|resolved)
+ilse-design resolve <id>    # marca uma anotação como resolvida (-m "resumo")
+ilse-design test            # modo teste — Ilse Pro; sem ele, diz onde conseguir
 ```
 
 Isso supõe a instalação global. Sem ela, use `npx ilse-design@latest` no lugar de `ilse-design`. O comando também existe como `ilse`.
@@ -299,3 +322,7 @@ Versões antigas da Ilse sempre escreviam o `<Ilse />` no layout. Por isso, quan
 | Claude Code | roda `claude -p` (automático) ou via MCP |
 | Codex, Cursor CLI, Gemini CLI | roda a CLI (automático), ainda não testado de ponta a ponta |
 | Qualquer outro | área de transferência |
+
+## Ilse Pro
+
+O modo teste (a chave Design / Teste: verificar a página, jornadas, o relatório) e, na Biblioteca, as cópias, arrastar para a página e o design system para outras ferramentas vêm com o Ilse Pro, instalado à parte. Sem ele, o modo teste aparece dormindo e tudo acima funciona como descrito. O que está em cada um: [Free × Pro](free-vs-pro.md) (em inglês).
