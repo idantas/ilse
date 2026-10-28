@@ -55,16 +55,32 @@ The first run asks how Ilse should hand annotations to your agent:
 - **None:** spacing, radius and stroke-weight lists start with *None* (zero) — no padding, square corners, no stroke.
 - **Stroke:** *+* adds one and shows its color, weight, style and sides; *−* takes it away.
 - **Apply to — only this one or all:** when the element belongs to a component repeated on the page. With *All · N*, panel edits preview on every instance at once.
-- **Edit text:** text elements get a *Text* field at the top of the panel. Text that comes from a variable, prop or translation goes to the agent, which changes it at the source.
+- **Edit text:** text elements get a *Text* field at the top of the panel. Formatted text (`<em>`, `<strong>`, `<span>`…) keeps each piece's formatting. Text that comes from a variable, prop or translation goes to the agent, which changes it at the source.
+- **Component section:** select a component and the panel shows where it comes from and its props and variants, with the values your code already uses or its type allows (a library's types too, such as MUI's). A prop left unset shows its default; picking the default removes the prop. Pick another value and Ilse rewrites that prop where this instance is written — no AI; when it can't find that exact usage, your agent gets the change written out.
+- **Duplicate:** *Duplicate* at the bottom of the panel, with the note still empty. A list row becomes a new item in the data behind the list (with a unique key); any other element, a copy of its JSX. The copy shows on the page right away: drag it where you want and restyle it in the panel before sending. The original stays as it was.
 - **Remove an element:** *Remove element* at the bottom of the panel, or the Delete key (fn+⌫ on a Mac) while the note is empty — ⌫ works once focus is out of the note. From a `.map` list, only that item goes unless *Apply to* says all.
 - **Move for real:** drag to reorder, or into and out of containers; the page re-flows live. The drag moves what is selected — a cell, not its row; a title, not its card. To move the container, select it first (↰ or the tree).
 - **Resize:** drag the handles, with snap-to-grid.
 - **Pencil:** sketch on the page; the strokes are read and sent along. A sketch over empty space is anchored on the element that holds it, so the agent gets its file like a click does.
 - **Reference images:** paste or upload a screenshot or SVG.
 
-### Review the page
+### The Library
 
-- **Scan:** checks the whole page and lists design issues by category — contrast, typography, spacing, accessibility, components. Hover an issue to see where it is.
+The toolbar's library button (*Component library*), or the panel's **Library** tab, lists the components your project already has, read from the code: its own and the library components it imports. No AI.
+
+- **Find:** search by name or by what a component is for (*"button"*, *"modal"*). Above the list: **All**, **On this page** or **Base**; grouped **by type** or **by folder**. Hover a component to see its props and variants.
+- **Where it is:** click a component to outline where it is on this page (or to hear it isn't here); click an instance to open its Component section.
+- **Create design system:** at the top of the Library, or `ilse ds`. Ilse writes `.ilse/ds/DESIGN.md` from your code — components with props, variants and an example, and tokens (colors, spacing, radius, type, shadows). No AI, in seconds. Once it exists, the top shows the file (click to open it again) and **Export**, which writes it again.
+- **Your agent follows it:** the design system window opens what was written. **Add to AGENTS.md** (or **CLAUDE.md**, whichever the project has) adds a short block pointing at `.ilse/ds/DESIGN.md`, written only on that click — or **Copy line** and paste it yourself. Claude Code, Codex, Cursor or Gemini then use your components and tokens, with or without Ilse running. Ilse reads it too.
+
+More in [How it works → The Library](how-it-works.md#the-library).
+
+### After a change
+
+- **It shows without a reload.** What you previewed — a style, a copy, a hidden element — stays on screen until the page re-renders with the real change. If it doesn't on its own, Ilse asks the framework to re-render (Next's App Router: no reload, state kept). It asks you to reload only as a last resort.
+- **The page must not break.** New errors the page logs after a change (a duplicated React key, an uncaught exception) show up with **Ask for a fix** (the error goes to your agent), **Undo** and **Ignore**.
+- **Wrong page:** if none of the components the agent edited is on this page, the toolbar says which file changed, with **Redo on this page**, **Undo** and **Keep**.
+- **Undo:** ⌘Z restores the files of the latest change; ⇧⌘Z puts it back. The history is kept per project outside your repo, so it survives restarting `ilse` (`ILSE_UNDO_SAVE=0` keeps it in memory only).
 
 ### Toolbar and settings
 
@@ -83,7 +99,7 @@ Also in Settings → **Keyboard shortcuts**, and in the tooltip of every control
 |---|---|
 | `V` | Switch between selecting elements and using the page |
 | `I` `I` | Bring the toolbar back to its default place (after dragging it out of sight) |
-| `Esc` | Close what is on top (note, scan, settings), then the toolbar |
+| `Esc` | Close what is on top (note, panel, settings), then the toolbar |
 | `⌘`-click (`Ctrl`-click) | Select the exact element inside an SVG |
 | `⌘↵` (`Ctrl+Enter`) | Send the note |
 | `Delete` (fn+⌫) | Remove the selected element, with the note empty |
@@ -106,9 +122,16 @@ ilse-design --mode mcp      # MCP mode for this run only
 ilse-design --inject        # put <Ilse /> in your layout instead of using the proxy
 ilse-design --reset         # answer the setup questions again (mode, where Ilse opens)
 ilse-design --account       # choose again which Claude account this project uses
-ilse-design changes         # what Ilse changed that isn't committed yet
+ilse-design --version       # the installed version
+
 ilse-design ds              # write the project's design system to .ilse/ds/DESIGN.md, no AI (Pro adds tokens.json, registry.json)
-ilse-design bookmarklet     # the bookmarklet that puts the toolbar on any local page
+ilse-design changes         # what Ilse changed that isn't committed yet (--json for the raw entries)
+ilse-design mcp install     # put Ilse in your agents over MCP (see below); mcp uninstall takes it out
+ilse-design bookmarklet     # the bookmarklet that puts the toolbar on any local page (--port <n>)
+ilse-design listen          # only the annotation server, nothing runs on its own (--port, default 4747)
+ilse-design annotations     # list the annotations (--status pending|sent|resolved)
+ilse-design resolve <id>    # mark an annotation resolved (-m "summary")
+ilse-design test            # test mode — Ilse Pro; without it, says where to get it
 ```
 
 These assume a global install. Without it, use `npx ilse-design@latest` instead of `ilse-design`. The command is also available as `ilse`.
@@ -299,3 +322,7 @@ Older versions of Ilse always wrote `<Ilse />` into the layout. So when it finds
 | Claude Code | runs `claude -p` (automatic) or via MCP |
 | Codex, Cursor CLI, Gemini CLI | runs the CLI (automatic), not yet tested end to end |
 | Anything else | clipboard |
+
+## Ilse Pro
+
+Test mode (the Design / Test switch: checking the page, journeys, the report) and the Library's copies, drag onto the page and design system for other tools come with Ilse Pro, installed separately. Without it, test mode shows asleep and everything above works as described. What's in each: [Free × Pro](free-vs-pro.md).

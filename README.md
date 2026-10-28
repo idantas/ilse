@@ -7,21 +7,24 @@
 
 <p align="center"><b>English</b> · <a href="https://github.com/idantas/ilse/blob/main/LEIAME.md">Português</a></p>
 
-**The designer's eye inside the code agent.**
+**Improve your app's interface in the browser, with your own coding agent.**
 
-You open your app in the browser, point at what's wrong and say how it should be — or adjust it right there, like in Figma. Your AI coding agent changes the code. You see the result on the page, and keep it or undo it.
+You open your app in the browser, point at what's wrong and say how it should be — or adjust it right there. Your AI coding agent changes the code. You see the result on the page, and keep it or undo it.
 
-> **Side project, in beta.** Made by a designer, for designers who work with code agents. Free to use, with the code open to read.
+> **Side project, in beta.** For whoever shapes the interface — designer, frontend developer, PM — working on the real app with a coding agent. Free to use, with the code open to read.
 
 ## What you can do
 
 - **Point and say.** Click an element, select a piece of text or draw an area, and write what should change: *"more space between the cards"*, *"this title should be stronger"*.
-- **Adjust it yourself.** A property panel like Figma's: size, layout, spacing, typography, colors, borders. You see the change live before sending it.
-- **Edit text and remove things.** Retype a text right in the panel, or remove an element.
+- **Adjust it yourself.** A property panel: size, position, layout, spacing, typography, colors, borders, effects. You see the change live before sending it.
+- **Change a component's props.** Select a component and the panel shows its props and variants, read from your code. Pick another variant and Ilse rewrites it in the code — no AI.
+- **Edit text, duplicate and remove things.** Retype a text right in the panel, duplicate an element (a list row becomes a new item in its data), or remove it.
 - **Move things around.** Drag to reorder, move into or out of a container, resize.
 - **Draw it.** Sketch on the page with the pencil, or paste a screenshot as a reference.
-- **Undo anything.** ⌘Z puts the code back exactly as it was. No need to ask the AI to revert.
-- **Keeps CI green.** After each change Ilse runs your project's typecheck and the tests that cover it. What the change broke, the agent fixes before it's called done.
+- **See your components.** The Library lists the components your project already has: search them, see where each one is on the page.
+- **Write your design system.** *Create design system* (or `ilse ds`) writes your components and tokens to `.ilse/ds/DESIGN.md`, from the code, no AI. *Add to AGENTS.md* points any agent at it, with or without Ilse running.
+- **Undo anything.** ⌘Z puts the code back exactly as it was, even after restarting Ilse. No need to ask the AI to revert.
+- **Keeps the page and CI working.** After each change Ilse runs your project's typecheck and the tests that cover it; what the change broke, the agent fixes before it's called done. New errors on the page show up with *Ask for a fix* and *Undo*.
 
 ## What you need
 
@@ -58,11 +61,12 @@ Ilse runs on your agent's plan, so it uses that plan's limits. It always picks t
 
 - [How it works](https://github.com/idantas/ilse/blob/main/docs/how-it-works.md) — how Ilse finds the code, the cost ladder, models, safety checks, usage limits, undo and commits.
 - [Reference](https://github.com/idantas/ilse/blob/main/docs/reference.md) — commands, settings, connecting your agent over MCP, logs, compatibility.
+- [Free × Pro](https://github.com/idantas/ilse/blob/main/docs/free-vs-pro.md) — what's free and what comes with Ilse Pro (test mode, journeys).
 - [AGENTS.md](https://github.com/idantas/ilse/blob/main/AGENTS.md) — for contributors and their agents.
 
 ## Why "Ilse"
 
-AI freed designers from the execution bottleneck, but craft still needs human judgment. Ilse is the designer's eye inside the agent: you point at what's wrong, the agent fixes it, you approve.
+AI took away much of the work of writing interface code, but craft still needs human judgment. Ilse puts that judgment next to the agent: you point at what's wrong, the agent fixes it, you approve.
 
 > "Design is a tool for improving humanity." — Ilse Crawford
 

@@ -25,7 +25,7 @@ Before your agent is called, Ilse does the searching for it:
 
 ## The cheapest step that works
 
-1. **Class swap — no AI.** A panel edit that maps cleanly to a Tailwind class (gap 12px → 16px, weight 500 → 600, a color from your tokens), or retyped text written as plain text in the JSX, is changed by Ilse itself. Instant, no tokens. The same goes for a component's prop picked in the panel's **Component** section (`variant="outlined"` → `"contained"`, any library, MUI included) and for a component dragged from the **Catalog** when every prop has a value.
+1. **Class swap — no AI.** A panel edit that maps cleanly to a Tailwind class (gap 12px → 16px, weight 500 → 600, a color from your tokens), or retyped text written as plain text in the JSX, is changed by Ilse itself. Instant, no tokens. The same goes for a component's prop picked in the panel's **Component** section (`variant="outlined"` → `"contained"`, any library, MUI included) and for a component dragged from the **Library** (Pro) when every prop has a value.
 2. **Quick — one call, fast model.** A note about one element that is really a class change ("a bit more space", "stronger title") goes to your agent's fast model with only that element's code and no tools. It answers "remove these classes, add those" and Ilse applies it. Much cheaper than the agent, and a few seconds. Notes that plainly need more ("remove", "swap the icon", "a carousel") skip straight to the agent.
 3. **Agent.** Anything bigger — new UI, structure, several files — runs your agent on a model sized to the task. If a cheap run changes no file, it is retried once a tier up.
 

@@ -7,21 +7,24 @@
 
 <p align="center"><a href="README.md">English</a> · <b>Português</b></p>
 
-**O olho do designer dentro do agente de código.**
+**Melhore a interface do seu app no navegador, com o seu próprio agente de código.**
 
-Você abre seu app no navegador, aponta o que está errado e diz como deveria ser — ou ajusta ali mesmo, como no Figma. Seu agente de IA muda o código. Você vê o resultado na página e decide se fica ou se desfaz.
+Você abre seu app no navegador, aponta o que está errado e diz como deveria ser — ou ajusta ali mesmo. Seu agente de IA muda o código. Você vê o resultado na página e decide se fica ou se desfaz.
 
-> **Projeto pessoal, em beta.** Feito por um designer, para designers que trabalham com agentes de código. Gratuito para usar, com o código aberto para ler.
+> **Projeto pessoal, em beta.** Para quem dá forma à interface — designer, dev frontend, PM — trabalhando no app de verdade com um agente de código. Gratuito para usar, com o código aberto para ler.
 
 ## O que dá para fazer
 
 - **Apontar e dizer.** Clique num elemento, selecione um trecho de texto ou desenhe uma área, e escreva o que deve mudar: *"mais espaço entre os cards"*, *"esse título mais forte"*.
-- **Ajustar você mesmo.** Um painel de propriedades como o do Figma: tamanho, layout, espaçamento, tipografia, cores, bordas. Você vê a mudança na hora, antes de enviar.
-- **Editar texto e remover coisas.** Reescreva um texto direto no painel, ou remova um elemento.
+- **Ajustar você mesmo.** Um painel de propriedades: tamanho, posição, layout, espaçamento, tipografia, cores, bordas, efeitos. Você vê a mudança na hora, antes de enviar.
+- **Trocar as props de um componente.** Selecione um componente e o painel mostra as props e variantes dele, lidas do seu código. Escolha outra variante e a Ilse reescreve no código — sem IA.
+- **Editar texto, duplicar e remover coisas.** Reescreva um texto direto no painel, duplique um elemento (uma linha de lista vira um item novo nos dados dela) ou remova.
 - **Mover as coisas.** Arraste para reordenar, para dentro ou para fora de um container, redimensione.
 - **Desenhar.** Rabisque na página com o lápis, ou cole um print como referência.
-- **Desfazer qualquer coisa.** ⌘Z devolve o código exatamente como estava. Não precisa pedir para a IA reverter.
-- **Mantém o CI verde.** Depois de cada mudança a Ilse roda o typecheck do projeto e os testes que cobrem o que mudou. O que a mudança quebrou, o agente corrige antes de dizer que terminou.
+- **Ver seus componentes.** A Biblioteca lista os componentes que o projeto já tem: busque, veja onde cada um está na página.
+- **Escrever seu design system.** *Criar design system* (ou `ilse ds`) escreve os componentes e tokens em `.ilse/ds/DESIGN.md`, a partir do código, sem IA. *Adicionar ao AGENTS.md* aponta qualquer agente pra ele, com ou sem a Ilse rodando.
+- **Desfazer qualquer coisa.** ⌘Z devolve o código exatamente como estava, mesmo depois de reiniciar a Ilse. Não precisa pedir para a IA reverter.
+- **Mantém a página e o CI funcionando.** Depois de cada mudança a Ilse roda o typecheck do projeto e os testes que cobrem o que mudou; o que a mudança quebrou, o agente corrige antes de dizer que terminou. Erros novos na página aparecem com *Pedir correção* e *Desfazer*.
 
 ## O que você precisa
 
@@ -58,11 +61,12 @@ A Ilse roda no plano do seu agente, então usa os limites dele. Ela sempre escol
 
 - [Como funciona](docs/how-it-works.pt-BR.md) — como a Ilse acha o código, a escada de custo, modelos, verificações de segurança, limites de uso, desfazer e commits.
 - [Referência](docs/reference.pt-BR.md) — comandos, configurações, conectar seu agente por MCP, logs, compatibilidade.
+- [Free × Pro](docs/free-vs-pro.md) — o que é grátis e o que vem com o Ilse Pro (modo teste, jornadas) (em inglês).
 - [AGENTS.md](AGENTS.md) — para quem contribui e para os agentes dessas pessoas (em inglês).
 
 ## Por que "Ilse"
 
-A IA livrou os designers do gargalo da execução, mas o ofício ainda precisa de julgamento humano. A Ilse é o olho do designer dentro do agente: você aponta o que está errado, o agente corrige, você aprova.
+A IA tirou boa parte do trabalho de escrever código de interface, mas o ofício ainda precisa de julgamento humano. A Ilse põe esse julgamento ao lado do agente: você aponta o que está errado, o agente corrige, você aprova.
 
 > "Design é uma ferramenta para melhorar a humanidade." — Ilse Crawford
 
