@@ -243,7 +243,8 @@ export function ScreensView({ initialDevice, initialRulers, onClose, onState, ac
                 ref={frameRef}
                 name={EMBED_FRAME_NAME}
                 src={src}
-                title={`${device.label} ${size.width} × ${size.height}`}
+                // aria-label, not title: Ilse's tooltip layer takes over any `title` in its UI — the frame's would stick
+                aria-label={`${device.label} ${size.width} × ${size.height}`}
                 onLoad={onLoad}
                 style={{
                   width: size.width, height: size.height, border: 'none', display: 'block',

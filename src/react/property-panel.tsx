@@ -230,6 +230,9 @@ export function PanelTabs({ tab, onTab }: { tab: PanelTab; onTab: (tab: PanelTab
   );
 }
 
+/** Properties the browser recomputes when another one changes (a font size moves its line height) */
+const FOLLOWS = ['lineHeight'] as const;
+
 /** Where the user last dragged the panel; null = docked top-right */
 let lastPosition: { top: number; left: number } | null = null;
 
@@ -294,6 +297,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   const targetEl = useRef<HTMLElement | null>(null);
   const dsTokens = getDSTokens();
   const [edits, setEdits] = useState<Record<string, string>>({});
+  // Values that follow another edit (line height follows the font size): read again
+  // from the element, so the panel doesn't keep showing what was captured
+  const [derived, setDerived] = useState<Record<string, string>>({});
+  const display: Record<string, string> = { ...styles, ...derived };
   // Mirror for apply(): the picker emits many values in a row while dragging,
   // faster than a render can refresh the closure.
   const editsRef = useRef<Record<string, string>>({});
@@ -481,6 +488,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
       else el.style.setProperty(cssProp, originalInline.current[spec.key] || null);
       if (value) previews.current[cssProp] = preview; else delete previews.current[cssProp];
       syncTwins();
+      const computed = getComputedStyle(el);
+      const follow: Record<string, string> = {};
+      for (const key of FOLLOWS) if (key !== spec.key) follow[key] = computed.getPropertyValue(key.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`));
+      setDerived(follow);
     }
 
     const next = { ...editsRef.current };
@@ -841,7 +852,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
               <PropertyRow
                 key={spec.key}
                 spec={textFill && spec.key === 'color' ? { ...spec, label: 'Fill' } : spec}
-                current={BLUR_KEYS.has(spec.key) ? blurOf(styles[spec.key]) : styles[spec.key] ?? (EFFECT_KEYS.has(spec.key) ? 'none' : spec.key === 'position' ? 'static' : '0px')}
+                current={BLUR_KEYS.has(spec.key) ? blurOf(display[spec.key]) : display[spec.key] ?? (EFFECT_KEYS.has(spec.key) ? 'none' : spec.key === 'position' ? 'static' : '0px')}
                 edited={BLUR_KEYS.has(spec.key)
                   ? (spec.key in edits ? blurOf(edits[spec.key]) : undefined)
                   : edits[spec.key] ?? (spec.key === 'backgroundColor' ? edits.backgroundImage : undefined)}
@@ -859,7 +870,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                   record(spec.label);
                   // X/Y typed as a bare number are pixels
                   const value = (spec.key === 'top' || spec.key === 'left') && /^-?\d+(\.\d+)?$/.test(v.trim()) ? `${v.trim()}px` : v;
-                  apply(spec, BLUR_KEYS.has(spec.key) ? withBlur(styles[spec.key], value) : value);
+                  apply(spec, BLUR_KEYS.has(spec.key) ? withBlur(display[spec.key], value) : value);
                 }}
               />
             ))}
@@ -946,7 +957,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
         const spec = PROPS.find(p => p.key === picker.key)!;
         return (
           <ColorPicker
-            value={edits[spec.key] ?? styles[spec.key] ?? ''}
+            value={edits[spec.key] ?? display[spec.key] ?? ''}
             tokens={colorTokens}
             tokenName={editTokens.current[spec.key] ?? tokenFromClasses(getElement(), spec.key, colorTokens)}
             {...(spec.key === 'backgroundColor' ? {
