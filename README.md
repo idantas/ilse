@@ -19,6 +19,7 @@ You open your app in the browser, point at what's wrong and say how it should be
 - **Adjust it yourself.** A property panel: size, position, layout, spacing, typography, colors, borders, effects. You see the change live before sending it.
 - **Change a component's props.** Select a component and the panel shows its props and variants, read from your code. Pick another variant and Ilse rewrites it in the code — no AI.
 - **Edit text, duplicate and remove things.** Retype a text right in the panel, duplicate an element (a list row becomes a new item in its data), or remove it.
+- **Every screen size.** Open the page at phone, tablet or desktop width, with rulers, and adjust each one with the same toolbar.
 - **Move things around.** Drag to reorder, move into or out of a container, resize.
 - **Draw it.** Sketch on the page with the pencil, or paste a screenshot as a reference.
 - **See your components.** The Library lists the components your project already has: search them, see where each one is on the page.

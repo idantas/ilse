@@ -12,6 +12,7 @@ import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { radius, color, shadow, font } from './tokens.js';
 import { t } from '../i18n/index.js';
+import { uiDocument, uiLayer, uiWindow } from './screens.js';
 
 export interface ValueOption { label: string; value: string; hint?: string }
 
@@ -57,11 +58,12 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
       setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
-    window.addEventListener('mousedown', onDown, true);
-    window.addEventListener('keydown', onKey, true);
+    const win = uiWindow();
+    win.addEventListener('mousedown', onDown, true);
+    win.addEventListener('keydown', onKey, true);
     return () => {
-      window.removeEventListener('mousedown', onDown, true);
-      window.removeEventListener('keydown', onKey, true);
+      win.removeEventListener('mousedown', onDown, true);
+      win.removeEventListener('keydown', onKey, true);
     };
   }, [open]);
 
@@ -73,7 +75,7 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
 
   // Below the trigger, or above when there's no room
   const listHeight = Math.min((shown.length + 3) * 24 + 12, 320);
-  const below = anchor ? window.innerHeight - anchor.bottom > listHeight + 8 : true;
+  const below = anchor ? uiWindow().innerHeight - anchor.bottom > listHeight + 8 : true;
 
   return (
     <>
@@ -105,9 +107,9 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
           style={{
-            position: 'fixed', zIndex: 100000,
+            position: 'fixed', zIndex: uiLayer(100000),
             left: anchor.left, minWidth: Math.max(anchor.width, 150),
-            ...(below ? { top: anchor.bottom + 4 } : { bottom: window.innerHeight - anchor.top + 4 }),
+            ...(below ? { top: anchor.bottom + 4 } : { bottom: uiWindow().innerHeight - anchor.top + 4 }),
             maxHeight: 320, overflowY: 'auto',
             padding: 4, borderRadius: radius.md,
             backgroundColor: color.popover, border: `1px solid ${color.border}`, boxShadow: shadow.lg,
@@ -144,7 +146,7 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
             </Item>
           )}
         </div>,
-        document.body,
+        uiDocument().body,
       )}
     </>
   );

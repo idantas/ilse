@@ -440,6 +440,54 @@ const messages = {
     pt: 'Modo seleção (clicar na página)',
     en: 'Selection mode (click on page)',
   },
+  'screens.open': {
+    pt: 'Telas (ver em outros tamanhos)',
+    en: 'Screens (see other sizes)',
+  },
+  'screens.title': {
+    pt: 'Telas',
+    en: 'Screens',
+  },
+  'screens.rulers': {
+    pt: 'Réguas',
+    en: 'Rulers',
+  },
+  'screens.rotate': {
+    pt: 'Girar (retrato / paisagem)',
+    en: 'Rotate (portrait / landscape)',
+  },
+  'screens.exit': {
+    pt: 'Sair das telas',
+    en: 'Leave screens',
+  },
+  'screens.device': {
+    pt: 'Aparelho',
+    en: 'Device',
+  },
+  'screens.hint': {
+    pt: 'Mesmo endereço, mesmo login. Ajuste no painel: o código muda e a tela atualiza.',
+    en: 'Same address, same login. Adjust in the panel: the code changes and the screen updates.',
+  },
+  'screens.select': {
+    pt: 'Selecionar elementos',
+    en: 'Select elements',
+  },
+  'screens.navigate': {
+    pt: 'Navegar (usar o app)',
+    en: 'Navigate (use the app)',
+  },
+  'screens.free': {
+    pt: 'Livre',
+    en: 'Free',
+  },
+  'screens.resize': {
+    pt: 'Arraste para mudar o tamanho',
+    en: 'Drag to change the size',
+  },
+  'screens.blocked': {
+    pt: 'Este app não deixa ser aberto dentro de um iframe. Rode pela Ilse (npx ilse-design) para abrir as telas.',
+    en: "This app won't open inside an iframe. Run it through Ilse (npx ilse-design) to open the screens.",
+  },
   'toolbar.pencil': {
     pt: 'Lápis (desenhar na tela)',
     en: 'Pencil (draw on the page)',

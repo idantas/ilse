@@ -35,6 +35,7 @@ import {
 } from './layout-flow.js';
 import { ValueSelect } from './value-select.js';
 import type { StyleChange } from '../types.js';
+import { EMBEDDED, SCREENS_BAR_H, uiDocument, uiLayer, uiWindow } from './screens.js';
 
 // ── Which properties the panel exposes, and how ────────────────────────────
 
@@ -242,8 +243,8 @@ export function rememberPanelPosition(p: { top: number; left: number }): void { 
 export function keptPosition(): { top: number; left: number } | null {
   if (!lastPosition) return null;
   return {
-    top: Math.max(0, Math.min(lastPosition.top, window.innerHeight - 80)),
-    left: Math.max(0, Math.min(lastPosition.left, window.innerWidth - 248)),
+    top: Math.max(0, Math.min(lastPosition.top, uiWindow().innerHeight - 80)),
+    left: Math.max(0, Math.min(lastPosition.left, uiWindow().innerWidth - 248)),
   };
 }
 
@@ -399,11 +400,13 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
       });
     };
     const onUp = () => { dragRef.current = null; };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    // The panel may live in the Screens host's document (embedded): drag there
+    const win = uiWindow();
+    win.addEventListener('mousemove', onMove);
+    win.addEventListener('mouseup', onUp);
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      win.removeEventListener('mousemove', onMove);
+      win.removeEventListener('mouseup', onUp);
     };
   }, []);
 
@@ -669,7 +672,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
       onMouseDown={(e) => e.stopPropagation()}
       style={{
         position: 'fixed', width: 248,
-        ...(pos ? { top: pos.top, left: pos.left } : { top: 16, right: 16 }),
+        ...(pos ? { top: pos.top, left: pos.left } : { top: EMBEDDED ? SCREENS_BAR_H + 12 : 16, right: 16 }),
         maxHeight: 'calc(100vh - 120px)',
         display: 'flex', flexDirection: 'column',
         backgroundColor: color.popover,
@@ -677,7 +680,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
         borderRadius: radius.xl,
         boxShadow: shadow.xl,
         fontFamily: font.sans,
-        zIndex: front ? 99999 : 99998,
+        zIndex: uiLayer(front ? 99999 : 99998),
         overflow: 'hidden',
       }}
     >
@@ -960,7 +963,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
         );
       })()}
     </div>,
-    document.body,
+    uiDocument().body,
   );
 }
 
