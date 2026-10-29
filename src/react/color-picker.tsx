@@ -22,6 +22,7 @@ import {
 } from './color.js';
 import { familyRows, colorSections, byBaseness, type ColorToken, type GradientToken, type Swatch } from './color-tokens.js';
 import { t } from '../i18n/index.js';
+import { uiDocument, uiLayer, uiWindow } from './screens.js';
 
 const WIDTH = 248;
 const PAD = 12;
@@ -112,11 +113,13 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
       if (rootRef.current?.contains(t) || anchorEl?.contains(t)) return;
       onClose();
     };
-    document.addEventListener('keydown', onKey, true);
-    document.addEventListener('mousedown', onDown, true);
+    // Embedded in Screens the picker sits in the host's document: listen there
+    const doc = uiDocument();
+    doc.addEventListener('keydown', onKey, true);
+    doc.addEventListener('mousedown', onDown, true);
     return () => {
-      document.removeEventListener('keydown', onKey, true);
-      document.removeEventListener('mousedown', onDown, true);
+      doc.removeEventListener('keydown', onKey, true);
+      doc.removeEventListener('mousedown', onDown, true);
     };
   }, [onClose, anchorEl]);
 
@@ -179,8 +182,8 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokens, matched, value]);
 
-  const top = Math.max(8, Math.min(anchor.top, window.innerHeight - 560));
-  const left = anchor.left - WIDTH - 10 >= 8 ? anchor.left - WIDTH - 10 : Math.min(anchor.right + 10, window.innerWidth - WIDTH - 8);
+  const top = Math.max(8, Math.min(anchor.top, uiWindow().innerHeight - 560));
+  const left = anchor.left - WIDTH - 10 >= 8 ? anchor.left - WIDTH - 10 : Math.min(anchor.right + 10, uiWindow().innerWidth - WIDTH - 8);
 
   // What the token section's caption names: the hovered swatch, else the applied token.
   const caption: Swatch | null = hovered ?? (matched ? { token: matched, all: tokens.filter(t => deltaE(t.rgba, matched.rgba) < 0.05) } : null);
@@ -197,7 +200,7 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
         backgroundColor: color.popover, color: color.foreground,
         border: `1px solid ${color.border}`, borderRadius: radius.lg,
         boxShadow: shadow.xl, fontFamily: font.sans, fontSize: 11,
-        zIndex: 99999, overflow: 'hidden',
+        zIndex: uiLayer(99999), overflow: 'hidden',
       }}
     >
       {/* ── Picker ── */}
@@ -340,7 +343,7 @@ export function ColorPicker({ value, tokens, tokenName, gradients = [], gradient
         )}
       </div>
     </div>,
-    document.body,
+    uiDocument().body,
   );
 }
 

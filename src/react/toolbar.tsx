@@ -24,6 +24,7 @@ import {
   IconRoute,
   IconListDetails,
   IconComponents,
+  IconDevices,
 } from '@tabler/icons-react';
 import { captureElement, captureTextSelection, captureArea, captureEnvironment, humanizeSelector, pageComponents, type ElementCapture } from './annotator.js';
 import { analyzeElement, scanPage, setDSTokens, getDSTokens, parseTokensJSON, type Suggestion, type PageIssue } from './analyze.js';
@@ -57,6 +58,10 @@ import { journeyFinding, parseReport, type JourneyReport } from './journey-repor
 import { useLift } from './above-stack.js';
 import { JourneysPanel, type JourneySummary, type JourneyLive, type JourneySuggestion } from './journeys-panel.js';
 import { TooltipLayer } from './tooltip-layer.js';
+import { PillBtn } from './pill-btn.js';
+// Inside the Screens iframe (EMBEDDED): select and edit, no toolbar — the host's Screens bar has Run / Undo
+import { EMBEDDED, uiDocument, type Device, type EmbedState, type ScreensAction } from './screens.js';
+import { ScreensMenu, ScreensView, useScreensEmbed, leaveScreens } from './screens-view.js';
 import { radius, color, shadow, ilse, font, modeAccent, proText } from './tokens.js';
 import { t, detectLocale, setLocale, getLocale, type Locale } from '../i18n/index.js';
 import { withShortcut, isTyping, doublePress, mod, SHORTCUT_GROUPS } from './shortcuts.js';
@@ -949,6 +954,7 @@ function clampToViewport(pos: { x: number; y: number }, buttonSize = 40): { x: n
 /** sessionStorage: the finding the report was on when it sent the dev to another page */
 const REPORT_FOCUS_KEY = 'ilse-report-focus';
 
+
 function getStorageKey(base: string): string {
   if (typeof window === 'undefined') return base;
   const host = window.location.host || 'unknown';
@@ -1417,6 +1423,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const isOpenRef = useRef(false);
   useEffect(() => { isOpenRef.current = isOpen; }, [isOpen]);
   const [annotating, setAnnotating] = useState(false);
+  const [screensMenuOpen, setScreensMenuOpen] = useState(false);
+  const [screens, setScreens] = useState<{ device: Device; rulers: boolean } | null>(null);
+  const screensOpenRef = useRef(false);
+  // Screens open: what the Ilse in the frame reports, and how to reach it
+  const [embedState, setEmbedState] = useState<EmbedState | null>(null);
+  const screensActRef = useRef<((action: ScreensAction) => void) | null>(null);
+  useEffect(() => { screensOpenRef.current = !!screens; }, [screens]);
+  // Embedded: the select / navigate choice from the Screens bar (selection comes back on after an edit)
+  const wantSelectRef = useRef(true);
   const [annotations, setAnnotations] = useState<AnnotationDraft[]>(() => {
     if (typeof window === 'undefined') return [];
     try {
@@ -2826,6 +2841,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       document.addEventListener('pointerdown', handleMouseDown, true);
       document.addEventListener('mousemove', handleMouseMove, true);
       document.addEventListener('pointerup', handleMouseUp, true);
+      // The pointer left the page (out of the window, or out of the Screens frame
+      // onto the host): nothing is under it any more, so the hover goes
+      const onLeavePage = (e: MouseEvent) => {
+        if (e.relatedTarget) return;
+        setHighlight(null); setHoverLabel(null); setHoverLabelRect(null);
+      };
+      document.addEventListener('mouseout', onLeavePage);
 
       // Block click-based page interactions — links, buttons, context menus
       const blocked = ['click', 'auxclick', 'dblclick', 'contextmenu'] as const;
@@ -2838,6 +2860,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         document.removeEventListener('pointerdown', handleMouseDown, true);
         document.removeEventListener('mousemove', handleMouseMove, true);
         document.removeEventListener('pointerup', handleMouseUp, true);
+        document.removeEventListener('mouseout', onLeavePage);
         for (const type of blocked) {
           document.removeEventListener(type, blockInteraction, { capture: true });
         }
@@ -2887,6 +2910,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // Screens mode open on this page: its view and the Ilse in the frame handle Esc
+      if (screensOpenRef.current) return;
       // Progressive close: dismiss the topmost layer first
       if (pendingCaptureForEsc.current) {
         // Same as cancel: every preview of this draft goes, selection mode stays
@@ -2927,11 +2952,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setShowSettings(false);
         return;
       }
+      if (EMBEDDED) { leaveScreens(); return; }
       setAnnotating(false);
       setIsOpen(false);
     };
-    document.addEventListener('keydown', onEsc);
-    return () => document.removeEventListener('keydown', onEsc);
+    // Embedded, the panel is in the host's document: its Esc comes from there too
+    const docs = EMBEDDED ? [document, uiDocument()] : [document];
+    for (const d of docs) d.addEventListener('keydown', onEsc);
+    return () => { for (const d of docs) d.removeEventListener('keydown', onEsc); };
   }, []);
 
   // ── Persistent selection drag (native events — bypasses React delegation) ─
@@ -4393,9 +4421,79 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // The panel keeps where it was dragged while the toolbar is open
   useEffect(() => { if (!isOpen) resetPanelPosition(); }, [isOpen]);
 
+  // In the Screens iframe the toolbar is open and selecting from the start
+  useEffect(() => { if (EMBEDDED) { setIsOpen(true); setAnnotating(true); } }, []);
+  // The toolbar's actions, shared by its pill and (embedded) the Screens bar's copy of it
+  const toggleSelect = () => {
+    if (drawMode) exitDrawMode();
+    setAnnotating(v => { wantSelectRef.current = !v; return !v; });
+  };
+  const togglePencil = () => {
+    if (drawMode) { exitDrawMode(); return; }
+    setAnnotating(false);
+    if (pendingCaptureRef.current) cancelCapture();
+    setActiveMarker(null);
+    setDrawMode(true);
+  };
+  const toggleCatalog = () => {
+    if (pendingCaptureRef.current) {
+      if (panelClosed) { setPanelClosed(false); setPanelTab('catalog'); loadCatalog(); return; }
+      const next = panelTab === 'catalog' ? 'props' : 'catalog';
+      setPanelTab(next);
+      if (next === 'catalog') loadCatalog();
+      return;
+    }
+    if (!catalogOpen) loadCatalog();
+    setCatalogOpen(o => !o);
+  };
+  const togglePause = () => { toggleFreeze(); setPaused(isFrozen()); };
+
+  useScreensEmbed(EMBEDDED, {
+    state: {
+      pending: pendingCount, processing: processingCount, undo: undo.count, notes: annotations.length,
+      selecting: annotating, drawing: drawMode, catalog: catalogOpen || (!!pendingCapture && !panelClosed && panelTab === 'catalog'),
+      paused, markers: markersVisible, clearConfirm,
+    },
+    selectedId: pendingCapture?.pixelTargetId,
+    act: (action) => {
+      if (action === 'run') { setRunListOpen(false); setScanHighlight(null); sendAll(); }
+      else if (action === 'stop') stopExecution();
+      else if (action === 'undo') undoLast();
+      else if (action === 'select') toggleSelect();
+      else if (action === 'pencil') togglePencil();
+      else if (action === 'catalog') toggleCatalog();
+      else if (action === 'pause') togglePause();
+      else if (action === 'markers') setMarkersVisible(v => !v);
+      else handleClear();
+    },
+  });
+  // Applying a change turns selection off on a normal page; in Screens there's no toolbar to turn it back on
+  useEffect(() => {
+    if (!EMBEDDED || !wantSelectRef.current || annotating || drawMode || pendingCapture) return;
+    const id = setTimeout(() => setAnnotating(true), 150);
+    return () => clearTimeout(id);
+  }, [annotating, drawMode, pendingCapture]);
+
+  // The device menu closes on a click anywhere else
+  useEffect(() => {
+    if (!screensMenuOpen) return;
+    const away = () => setScreensMenuOpen(false);
+    document.addEventListener('mousedown', away);
+    return () => document.removeEventListener('mousedown', away);
+  }, [screensMenuOpen]);
+
+  const openScreens = (device: Device, rulers: boolean) => {
+    // The page underneath is covered: nothing stays selected or selecting there
+    if (pendingCaptureRef.current) cancelCapture();
+    if (drawMode) exitDrawMode();
+    setAnnotating(false); setScreensMenuOpen(false); setShowSettings(false); setCatalogOpen(false);
+    setScreens({ device, rulers });
+  };
+
   const closeToolbar = () => {
     // The draft first: cancelling it turns selection back on, closing turns it off
     if (pendingCaptureRef.current) cancelCapture();
+    if (EMBEDDED) return;
     setIsOpen(false);
     setAnnotating(false);
     setDrawMode(false);
@@ -4418,6 +4516,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // terminal the toolbar appears. If the CLI dies, the toolbar disappears.
   // In demo mode, skip this check — no WS needed.
   if (!demoMode && !connected) return null;
+
+  // Screens open: this same pill drives the Ilse in the frame — its counts, its actions.
+  // The pill below shadows these names with the frame's when `sv` is set.
+  const sv = screens && !EMBEDDED ? embedState : null;
+  const closeScreens = () => { setScreens(null); setEmbedState(null); setAnnotating(true); };
+  const host = {
+    pendingCount, processingCount, undo, annotating, drawMode, paused, markersVisible, clearConfirm,
+    sendAll, stopExecution, undoLast, toggleSelect, togglePencil, toggleCatalog, togglePause, handleClear, setMarkersVisible, closeToolbar,
+  };
 
   return (
     <>
@@ -5494,7 +5601,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       })()}
 
       {/* ── Main toolbar ── */}
-      <div data-ilse-toolbar style={{ position: 'fixed', zIndex: 99999, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', ['--ilse-accent-rgb' as string]: accent.rgb }}>
+      <div data-ilse-toolbar style={{ display: EMBEDDED ? 'none' : undefined, position: 'fixed', zIndex: screens ? 100001 : 99999, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', ['--ilse-accent-rgb' as string]: accent.rgb }}>
 
         {/* Minimized circle button (draggable, animated border) */}
         {!isOpen && (
@@ -5543,6 +5650,28 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           // Flip direction if too close to left edge — extend rightward instead of leftward.
           const flipThreshold = 250; // approx pill width
           const extendsRight = toolbarPos.x < flipThreshold;
+          const act = (a: ScreensAction) => screensActRef.current?.(a);
+          const pendingCount = sv ? sv.pending : host.pendingCount;
+          const processingCount = sv ? sv.processing : host.processingCount;
+          const undo = sv ? { count: sv.undo } as typeof host.undo : host.undo;
+          const annotating = sv ? sv.selecting : host.annotating;
+          const drawMode = sv ? sv.drawing : host.drawMode;
+          const paused = sv ? sv.paused : host.paused;
+          const markersVisible = sv ? sv.markers : host.markersVisible;
+          const clearConfirm = sv ? sv.clearConfirm : host.clearConfirm;
+          const noteCount = sv ? sv.notes : annotations.length;
+          const catalogActive = sv ? sv.catalog : catalogOpen || (!!pendingCapture && !panelClosed && panelTab === 'catalog');
+          const sendAll = sv ? () => act('run') : host.sendAll;
+          const stopExecution = sv ? () => act('stop') : host.stopExecution;
+          const undoLast = sv ? () => act('undo') : host.undoLast;
+          const toggleSelect = sv ? () => act('select') : host.toggleSelect;
+          const togglePencil = sv ? () => act('pencil') : host.togglePencil;
+          const toggleCatalog = sv ? () => act('catalog') : host.toggleCatalog;
+          const togglePause = sv ? () => act('pause') : host.togglePause;
+          const handleClear = sv ? () => act('clear') : host.handleClear;
+          const setMarkersVisible = sv ? ((() => act('markers')) as typeof host.setMarkersVisible) : host.setMarkersVisible;
+          // Close leaves Screens first, like Esc
+          const closeToolbar = sv || screens ? closeScreens : host.closeToolbar;
           return (
           <div style={{
             position: 'fixed',
@@ -6351,7 +6480,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               <PillBtn accent={accent}
                 title={withShortcut(annotating ? t('toolbar.selectMode') : t('toolbar.annotateMode'), 'V')}
                 active={annotating}
-                onClick={() => { if (drawMode) exitDrawMode(); setAnnotating(v => !v); }}
+                onClick={toggleSelect}
               >
                 {annotating ? <IconCrosshair size={18} stroke={1.75} /> : <IconPointer size={18} stroke={1.75} />}
               </PillBtn>
@@ -6361,17 +6490,11 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               <PillBtn accent={accent}
                 title={t('toolbar.pencil')}
                 active={drawMode}
-                onClick={() => {
-                  if (drawMode) { exitDrawMode(); return; }
-                  setAnnotating(false);
-                  if (pendingCaptureRef.current) cancelCapture();
-                  setActiveMarker(null);
-                  setDrawMode(true);
-                }}
+                onClick={togglePencil}
               >
                 <IconPencil size={18} stroke={1.75} />
               </PillBtn>
-              {drawMode && (
+              {drawMode && !sv && (
                 <PencilControl
                   penColor={penColor}
                   strokeCount={strokes.length}
@@ -6387,27 +6510,29 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               {/* Catalog — the product's components, from the code */}
               <PillBtn accent={accent}
                 title={t('catalog.open')}
-                active={catalogOpen || (!!pendingCapture && !panelClosed && panelTab === 'catalog')}
-                onClick={() => {
-                  if (pendingCaptureRef.current) {
-                    if (panelClosed) { setPanelClosed(false); setPanelTab('catalog'); loadCatalog(); return; }
-                    const next = panelTab === 'catalog' ? 'props' : 'catalog';
-                    setPanelTab(next);
-                    if (next === 'catalog') loadCatalog();
-                    return;
-                  }
-                  if (!catalogOpen) loadCatalog();
-                  setCatalogOpen(o => !o);
-                }}
+                active={catalogActive}
+                onClick={toggleCatalog}
               >
                 <IconComponents size={18} stroke={1.75} />
               </PillBtn>
+
+              {/* Screens — the page at a phone, tablet or desktop width, with rulers */}
+              <span style={{ position: 'relative', display: 'inline-flex' }} onMouseDown={(e) => { if (screensMenuOpen) e.stopPropagation(); }}>
+                <PillBtn accent={accent}
+                  title={t('screens.open')}
+                  active={screensMenuOpen || !!screens}
+                  onClick={() => { if (screens) { closeScreens(); return; } setScreensMenuOpen(o => !o); setShowSettings(false); }}
+                >
+                  <IconDevices size={18} stroke={1.75} />
+                </PillBtn>
+                {screensMenuOpen && <ScreensMenu align={extendsRight ? 'left' : 'right'} onOpen={openScreens} />}
+              </span>
 
               {/* Pause */}
               <PillBtn accent={accent}
                 title={paused ? t('toolbar.resumeAnimations') : t('toolbar.pauseAnimations')}
                 active={paused}
-                onClick={() => { toggleFreeze(); setPaused(isFrozen()); }}
+                onClick={togglePause}
               >
                 {paused ? <IconPlayerPlay size={18} stroke={1.75} /> : <IconPlayerPause size={18} stroke={1.75} />}
               </PillBtn>
@@ -6486,7 +6611,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 active={clearConfirm}
                 danger={clearConfirm}
                 onClick={handleClear}
-                disabled={annotations.length === 0}
+                disabled={noteCount === 0}
               >
                 <IconTrash size={18} stroke={1.75} />
               </PillBtn>
@@ -6523,6 +6648,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                       onClick={() => {
                         if (on) return;
                         if (locked) { setProPitch(true); return; }
+                        if (screens) closeScreens();
                         setToolbarMode(mode);
                         setShowSettings(false); setChatOpen(false); setActiveMarker(null); setRunListOpen(false);
                         if (mode === 'test') {
@@ -6564,6 +6690,11 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           </div>
           );
         })()}
+
+        {screens && !EMBEDDED && (
+          <ScreensView initialDevice={screens.device} initialRulers={screens.rulers}
+            onState={setEmbedState} actRef={screensActRef} onClose={closeScreens} />
+        )}
 
         {/* Ilse-styled tooltips for every titled control in Ilse's UI */}
         <TooltipLayer />
@@ -6950,59 +7081,6 @@ function IlsePixelButton({ onClick, badge, processing, mode = 'design' }: { onCl
 }
 
 // ─── PillBtn helper ───────────────────────────────────────────────────────────
-
-function PillBtn({
-  children, title, onClick, active, danger, disabled, badge, pulsing, accent = modeAccent('design'),
-}: {
-  accent?: { hex: string; rgb: string };
-  children: React.ReactNode;
-  title?: string;
-  onClick?: () => void;
-  active?: boolean;
-  danger?: boolean;
-  disabled?: boolean;
-  badge?: number;
-  pulsing?: boolean;
-}) {
-  return (
-    <button
-      title={title}
-      onClick={(e) => { e.stopPropagation(); onClick?.(); }}
-      disabled={disabled}
-      style={{
-        background: pulsing
-          ? `rgba(${accent.rgb},0.1)`
-          : active ? (danger ? 'rgba(239,68,68,0.08)' : `rgba(${accent.rgb},0.1)`) : 'none',
-        border: 'none',
-        color: disabled ? '#c0c0c0' : pulsing ? accent.hex : danger ? '#ef4444' : active ? accent.hex : '#2D2D2D',
-        cursor: disabled ? 'default' : 'pointer',
-        fontSize: 16,
-        padding: '6px 9px',
-        borderRadius: 8,
-        lineHeight: 1,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        position: 'relative',
-        transition: 'color 0.15s, background 0.15s',
-        animation: pulsing ? 'ilse-run-pulse 1.2s ease-in-out infinite' : undefined,
-      }}
-      onMouseEnter={(e) => { if (!disabled && !pulsing) (e.currentTarget as HTMLElement).style.background = danger ? 'rgba(239,68,68,0.08)' : `rgba(${accent.rgb},0.06)`; }}
-      onMouseLeave={(e) => { if (!pulsing) (e.currentTarget as HTMLElement).style.background = active ? (danger ? 'rgba(239,68,68,0.08)' : `rgba(${accent.rgb},0.1)`) : 'none'; }}
-    >
-      {children}
-      {badge !== undefined && (
-        <span style={{
-          position: 'absolute', top: -4, right: -4,
-          backgroundColor: accent.hex, color: 'white',
-          fontSize: 9, borderRadius: 7, minWidth: 14, height: 14,
-          padding: '0 3px', boxSizing: 'border-box',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700,
-        }}>
-          {badge}
-        </span>
-      )}
-    </button>
-  );
-}
 
 // ─── PixelOverlay — white flickering pixels during edit ──────────────────────
 

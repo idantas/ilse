@@ -29,7 +29,7 @@ describe('startProxy', () => {
   beforeAll(async () => {
     upstream = http.createServer((req, res) => {
       if (req.url === '/') {
-        res.writeHead(200, { 'content-type': 'text/html', 'content-security-policy': "script-src 'none'" });
+        res.writeHead(200, { 'content-type': 'text/html', 'content-security-policy': "script-src 'none'", 'x-frame-options': 'DENY' });
         res.end('<html><body>app</body></html>');
       } else if (req.url === '/app.js') {
         res.writeHead(200, { 'content-type': 'text/javascript' });
@@ -64,6 +64,14 @@ describe('startProxy', () => {
   });
 
   const get = (path: string) => fetch(`http://127.0.0.1:${proxy.port}${path}`, { redirect: 'manual' });
+
+  it('lets the page into the Screens iframe, and only there', async () => {
+    const top = await get('/');
+    expect(top.headers.get('x-frame-options')).toBe('DENY');
+    const framed = await fetch(`http://127.0.0.1:${proxy.port}/`, { headers: { 'sec-fetch-dest': 'iframe' } });
+    expect(framed.headers.get('x-frame-options')).toBeNull();
+    expect(framed.headers.get('content-security-policy')).toBeNull();
+  });
 
   it('injects the toolbar into HTML and drops a blocking CSP', async () => {
     const res = await get('/');

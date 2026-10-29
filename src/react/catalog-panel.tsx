@@ -20,6 +20,7 @@ import type { CatalogItem, CatalogSnapshot } from './catalog-snapshot.js';
 import { searchCatalog } from '../design-context/catalog-search.js';
 import { KIND_ORDER, type CatalogKind } from '../design-context/catalog-kinds.js';
 import { keptPosition, rememberPanelPosition } from './property-panel.js';
+import { EMBEDDED, SCREENS_BAR_H, uiDocument, uiLayer, uiWindow } from './screens.js';
 
 const THUMB_W = 56;
 const THUMB_H = 36;
@@ -63,7 +64,7 @@ function HoverCard({ item, snap, at, copies, onEnter, onLeave }: { item: Catalog
   const height = (copies ? 120 : 0) + 70 + (choosable.length + (others.length ? 1 : 0)) * 17;
   return createPortal(
     <div data-ilse-toolbar onMouseEnter={onEnter} onMouseLeave={onLeave} style={{
-      position: 'fixed', left, top: Math.max(8, Math.min(at.top - 40, window.innerHeight - height - 8)), width, zIndex: 100002,
+      position: 'fixed', left, top: Math.max(8, Math.min(at.top - 40, uiWindow().innerHeight - height - 8)), width, zIndex: uiLayer(100002),
       background: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.lg, boxShadow: shadow.lg,
       padding: 10, fontFamily: font.sans, fontSize: 11, color: color.foreground, boxSizing: 'border-box', userSelect: 'text',
     }}>
@@ -86,7 +87,7 @@ function HoverCard({ item, snap, at, copies, onEnter, onLeave }: { item: Catalog
         <div style={{ color: color.mutedForeground, lineHeight: 1.5 }}>{others.map(p => p.name + (p.required ? '*' : '')).join(', ')}</div>
       )}
     </div>,
-    document.body,
+    uiDocument().body,
   );
 }
 
@@ -115,9 +116,9 @@ function Row({ item, selected, here, onHover, onPick, onDragStart, onSpot }: {
       onHover(null);
       onDragStart(item, m.clientX, m.clientY);
     };
-    const stop = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', stop); };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', stop);
+    const stop = () => { uiWindow().removeEventListener('mousemove', move); uiWindow().removeEventListener('mouseup', stop); };
+    uiWindow().addEventListener('mousemove', move);
+    uiWindow().addEventListener('mouseup', stop);
   };
   return (
     <div
@@ -168,9 +169,9 @@ function MoreOptions({ items }: { items: Array<{ label: string; hint?: string; o
     if (!open) return;
     const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
-    window.addEventListener('mousedown', away, true);
-    window.addEventListener('keydown', esc, true);
-    return () => { window.removeEventListener('mousedown', away, true); window.removeEventListener('keydown', esc, true); };
+    uiWindow().addEventListener('mousedown', away, true);
+    uiWindow().addEventListener('keydown', esc, true);
+    return () => { uiWindow().removeEventListener('mousedown', away, true); uiWindow().removeEventListener('keydown', esc, true); };
   }, [open]);
   return (
     <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
@@ -245,8 +246,8 @@ function DsBar({ ds, components, onCreate, onExport, onView }: { ds: DsInfo; com
   React.useEffect(() => {
     if (!open) return;
     const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    window.addEventListener('mousedown', away, true);
-    return () => window.removeEventListener('mousedown', away, true);
+    uiWindow().addEventListener('mousedown', away, true);
+    return () => uiWindow().removeEventListener('mousedown', away, true);
   }, [open]);
 
   if (!ds.exists) {
@@ -521,9 +522,9 @@ export function CatalogWindow({ onClose, children }: { onClose: () => void; chil
       setPos(p);
     };
     const up = () => { drag.current = null; };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+    uiWindow().addEventListener('mousemove', move);
+    uiWindow().addEventListener('mouseup', up);
+    return () => { uiWindow().removeEventListener('mousemove', move); uiWindow().removeEventListener('mouseup', up); };
   }, []);
   return createPortal(
     <div
@@ -533,10 +534,10 @@ export function CatalogWindow({ onClose, children }: { onClose: () => void; chil
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       style={{
-        position: 'fixed', width: 248, ...(pos ? { top: pos.top, left: pos.left } : { top: 16, right: 16 }),
+        position: 'fixed', width: 248, ...(pos ? { top: pos.top, left: pos.left } : { top: EMBEDDED ? SCREENS_BAR_H + 12 : 16, right: 16 }),
         maxHeight: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column',
         backgroundColor: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.xl,
-        boxShadow: shadow.xl, fontFamily: font.sans, zIndex: 99998, overflow: 'hidden',
+        boxShadow: shadow.xl, fontFamily: font.sans, zIndex: uiLayer(99998), overflow: 'hidden',
       }}
     >
       <div
@@ -559,6 +560,6 @@ export function CatalogWindow({ onClose, children }: { onClose: () => void; chil
       </div>
       <div style={{ padding: '10px 12px 12px', overflowY: 'auto', fontSize: 11 }}>{children}</div>
     </div>,
-    document.body,
+    uiDocument().body,
   );
 }

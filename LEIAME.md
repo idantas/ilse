@@ -19,6 +19,7 @@ Você abre seu app no navegador, aponta o que está errado e diz como deveria se
 - **Ajustar você mesmo.** Um painel de propriedades: tamanho, posição, layout, espaçamento, tipografia, cores, bordas, efeitos. Você vê a mudança na hora, antes de enviar.
 - **Trocar as props de um componente.** Selecione um componente e o painel mostra as props e variantes dele, lidas do seu código. Escolha outra variante e a Ilse reescreve no código — sem IA.
 - **Editar texto, duplicar e remover coisas.** Reescreva um texto direto no painel, duplique um elemento (uma linha de lista vira um item novo nos dados dela) ou remova.
+- **Todos os tamanhos de tela.** Abra a página na largura de celular, tablet ou desktop, com réguas, e ajuste cada uma com a mesma barra.
 - **Mover as coisas.** Arraste para reordenar, para dentro ou para fora de um container, redimensione.
 - **Desenhar.** Rabisque na página com o lápis, ou cole um print como referência.
 - **Ver seus componentes.** A Biblioteca lista os componentes que o projeto já tem: busque, veja onde cada um está na página.

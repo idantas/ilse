@@ -78,8 +78,10 @@ export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
           const body = Buffer.from(injectToolbar(Buffer.concat(chunks).toString('utf8')), 'utf8');
           delete outHeaders['content-length'];
           delete outHeaders['transfer-encoding'];
-          // A CSP from the dev server would block the injected script
+          // A CSP from the dev server would block the injected script (and its frame-ancestors the Screens iframe)
           delete outHeaders['content-security-policy'];
+          // Screens mode opens the page in an iframe: only those document loads drop the frame ban
+          if (req.headers['sec-fetch-dest'] === 'iframe') delete outHeaders['x-frame-options'];
           outHeaders['content-length'] = String(body.length);
           outHeaders[PROXY_HEADER] = '1';
           res.writeHead(up.statusCode ?? 200, outHeaders);
