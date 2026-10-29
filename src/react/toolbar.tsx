@@ -2841,6 +2841,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       document.addEventListener('pointerdown', handleMouseDown, true);
       document.addEventListener('mousemove', handleMouseMove, true);
       document.addEventListener('pointerup', handleMouseUp, true);
+      // The pointer left the page (out of the window, or out of the Screens frame
+      // onto the host): nothing is under it any more, so the hover goes
+      const onLeavePage = (e: MouseEvent) => {
+        if (e.relatedTarget) return;
+        setHighlight(null); setHoverLabel(null); setHoverLabelRect(null);
+      };
+      document.addEventListener('mouseout', onLeavePage);
 
       // Block click-based page interactions — links, buttons, context menus
       const blocked = ['click', 'auxclick', 'dblclick', 'contextmenu'] as const;
@@ -2853,6 +2860,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         document.removeEventListener('pointerdown', handleMouseDown, true);
         document.removeEventListener('mousemove', handleMouseMove, true);
         document.removeEventListener('pointerup', handleMouseUp, true);
+        document.removeEventListener('mouseout', onLeavePage);
         for (const type of blocked) {
           document.removeEventListener(type, blockInteraction, { capture: true });
         }
