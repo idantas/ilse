@@ -18,6 +18,13 @@ describe('injectToolbar', () => {
     expect(once.endsWith('</script>')).toBe(true);
     expect(injectToolbar(once)).toBe(once);
   });
+
+  it('puts the React hook first in <head>, before the app\'s scripts', () => {
+    const html = injectToolbar('<html><head lang="x"><script src="/app.js"></script></head><body></body></html>');
+    expect(html.indexOf('data-ilse-hook')).toBeGreaterThan(html.indexOf('<head lang="x">'));
+    expect(html.indexOf('data-ilse-hook')).toBeLessThan(html.indexOf('/app.js'));
+    expect(html.match(/data-ilse-hook/g)).toHaveLength(1);
+  });
 });
 
 describe('startProxy', () => {

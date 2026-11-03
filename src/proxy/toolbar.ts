@@ -14,16 +14,32 @@ export const TOOLBAR_PATH = '/__ilse/toolbar.js';
 export const PROXY_HEADER = 'x-ilse-proxy';
 const TOOLBAR_TAG = `<script src="${TOOLBAR_PATH}" defer></script>`;
 
+/**
+ * The smallest React DevTools hook React accepts, for pages where nothing
+ * installs one before React loads. With it, the panel shows a picked prop on
+ * the real component (`src/react/live-props.ts`). React Refresh and the
+ * DevTools extension keep or wrap it; one already there is left alone.
+ */
+export const HOOK_STUB = `document.currentScript&&document.currentScript.remove();(function(w){if(w.__REACT_DEVTOOLS_GLOBAL_HOOK__)return;var n=0,r=new Map();w.__REACT_DEVTOOLS_GLOBAL_HOOK__={renderers:r,supportsFiber:true,isDisabled:false,inject:function(x){var i=++n;r.set(i,x);return i},onCommitFiberRoot:function(){},onCommitFiberUnmount:function(){},onPostCommitFiberRoot:function(){},onScheduleFiberRoot:function(){},checkDCE:function(){}}})(window);`;
+// It takes itself out of <head> once it ran: Next hydrates <head>, and a script React didn't
+// render there is a hydration mismatch
+const HOOK_TAG = `<script data-ilse-hook>${HOOK_STUB}</script>`;
+
 export function defaultToolbarFile(): string {
   // dist/proxy/toolbar.js → dist/standalone/toolbar.js
   return join(dirname(fileURLToPath(import.meta.url)), '..', 'standalone', 'toolbar.js');
 }
 
-/** Inserts the toolbar script before </body>, or at the end if there is none. */
+/**
+ * Inserts the toolbar script before </body>, or at the end if there is none —
+ * and the hook first thing in <head>, before any of the app's scripts.
+ */
 export function injectToolbar(html: string): string {
   if (html.includes(TOOLBAR_PATH)) return html;
   const idx = html.lastIndexOf('</body>');
-  return idx === -1 ? html + TOOLBAR_TAG : html.slice(0, idx) + TOOLBAR_TAG + html.slice(idx);
+  const out = idx === -1 ? html + TOOLBAR_TAG : html.slice(0, idx) + TOOLBAR_TAG + html.slice(idx);
+  const head = /<head[^>]*>/i.exec(out);
+  return head ? out.slice(0, head.index + head[0].length) + HOOK_TAG + out.slice(head.index + head[0].length) : out;
 }
 
 /**

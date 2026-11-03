@@ -18,7 +18,7 @@ import { createPortal } from 'react-dom';
 import { radius, color, shadow, font, ilse } from './tokens.js';
 import { scopeTwins, itemLabel } from './live-layout.js';
 import { useFrontLayer } from './front-layer.js';
-import { t } from '../i18n/index.js';
+import { t, type MessageKey } from '../i18n/index.js';
 
 // For components that name a side `t` (top, right, bottom, left)
 const translate = t;
@@ -201,13 +201,22 @@ export interface PanelHistory {
 
 export interface TextEdit { from: string; to: string }
 
-export type PanelTab = 'props' | 'catalog';
+export type PanelTab = 'props' | 'catalog' | 'consistency';
 
-/** Properties | Catalog, under the panel's header */
-export function PanelTabs({ tab, onTab }: { tab: PanelTab; onTab: (tab: PanelTab) => void }) {
+/** A Pro tab shown in Free */
+export const lock = (size: number) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" />
+  </svg>
+);
+
+const TAB_LABEL: Record<PanelTab, MessageKey> = { props: 'panel.tabProps', catalog: 'panel.tabCatalog', consistency: 'panel.tabConsistency' };
+
+/** Properties | Library | Consistency, under the panel's header (the catalog window: Library | Consistency) */
+export function PanelTabs({ tab, onTab, tabs = ['props', 'catalog'], margin = '8px 12px 0', locked = [] }: { tab: PanelTab; onTab: (tab: PanelTab) => void; tabs?: PanelTab[]; margin?: string; /** Pro tabs shown in Free: a lock next to the name */ locked?: PanelTab[] }) {
   return (
-    <div role="tablist" style={{ display: 'flex', gap: 2, padding: 2, margin: '8px 12px 0', borderRadius: radius.sm, backgroundColor: color.muted }}>
-      {(['props', 'catalog'] as const).map(id => {
+    <div role="tablist" style={{ display: 'flex', gap: 2, padding: 2, margin, borderRadius: radius.sm, backgroundColor: color.muted }}>
+      {tabs.map(id => {
         const on = tab === id;
         return (
           <button
@@ -216,13 +225,14 @@ export function PanelTabs({ tab, onTab }: { tab: PanelTab; onTab: (tab: PanelTab
             aria-selected={on}
             onClick={() => { if (!on) onTab(id); }}
             style={{
-              flex: 1, height: 22, border: 'none', borderRadius: radius.sm - 2, cursor: on ? 'default' : 'pointer',
-              fontSize: 11, fontWeight: 500, fontFamily: font.sans,
+              flex: 1, minWidth: 0, height: 22, border: 'none', borderRadius: radius.sm - 2, cursor: on ? 'default' : 'pointer',
+              fontSize: 11, fontWeight: 500, fontFamily: font.sans, padding: '0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               backgroundColor: on ? color.background : 'transparent', boxShadow: on ? shadow.xs : 'none',
               color: on ? color.foreground : color.mutedForeground,
             }}
           >
-            {t(id === 'props' ? 'panel.tabProps' : 'panel.tabCatalog')}
+            {t(TAB_LABEL[id])}
+            {locked.includes(id) && <span style={{ marginLeft: 4, verticalAlign: '-1px', display: 'inline-flex', opacity: 0.7 }}>{lock(10)}</span>}
           </button>
         );
       })}
@@ -251,12 +261,16 @@ export function keptPosition(): { top: number; left: number } | null {
   };
 }
 
-export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep, onRemove, onDuplicate, removed, textEdit, onTextChange, mirrorAll, tab = 'props', onTab, catalog, componentSection }: {
+export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep, onRemove, onDuplicate, removed, textEdit, onTextChange, mirrorAll, tab = 'props', onTab, catalog, consistency, consistencyLocked, componentSection }: {
   /** Which tab shows: the element's properties, or the product's components */
   tab?: PanelTab;
   onTab?: (tab: PanelTab) => void;
   /** The Catalog tab's content (no tabs without it) */
   catalog?: React.ReactNode;
+  /** The Consistency tab's content (Pro) */
+  consistency?: React.ReactNode;
+  /** Free: the Consistency tab is shown locked */
+  consistencyLocked?: boolean;
   /** The Component section, on top of Properties, when the element is a catalog component */
   componentSection?: React.ReactNode;
   /** "Apply to: all of them" — preview the edits on the component's other instances too */
@@ -739,10 +753,10 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
         )}
       </div>
 
-      {catalog && onTab && <PanelTabs tab={tab} onTab={onTab} />}
+      {catalog && onTab && <PanelTabs tab={tab} onTab={onTab} tabs={consistency ? ['props', 'catalog', 'consistency'] : ['props', 'catalog']} locked={consistencyLocked ? ['consistency'] : []} />}
 
       <div style={{ padding: '10px 12px 12px', overflowY: 'auto', fontSize: 11 }}>
-        {tab === 'catalog' && catalog ? catalog : (<>
+        {tab === 'consistency' && consistency ? consistency : tab === 'catalog' && catalog ? catalog : (<>
         {componentSection}
         {isText && !textSelection && el && (
           <div style={{ marginBottom: GROUP_GAP }}>
@@ -911,7 +925,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
         </>)}
       </div>
 
-      {(onRemove || onDuplicate) && tab !== 'catalog' && (
+      {(onRemove || onDuplicate) && tab === 'props' && (
         <div style={{ borderTop: `1px solid ${color.border}`, padding: 8, display: 'flex', gap: 4 }}>
           {onDuplicate && (
             <button

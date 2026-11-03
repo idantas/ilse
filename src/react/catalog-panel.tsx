@@ -149,11 +149,11 @@ function Row({ item, selected, here, onHover, onPick, onDragStart, onSpot }: {
   );
 }
 
-const sectionButton: React.CSSProperties = {
+export const sectionButton: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '4px 2px', border: 'none', background: 'none',
   cursor: 'pointer', fontFamily: font.sans, textAlign: 'left',
 };
-const sectionLabel: React.CSSProperties = { fontSize: 9, fontWeight: 600, letterSpacing: 0.6, textTransform: 'uppercase', color: color.mutedForeground };
+export const sectionLabel: React.CSSProperties = { fontSize: 9, fontWeight: 600, letterSpacing: 0.6, textTransform: 'uppercase', color: color.mutedForeground };
 
 /** `data-sources` → Data sources */
 function featureLabel(f: string): string {
@@ -230,9 +230,12 @@ function changesLine(c: NonNullable<DsInfo['changes']>): string {
   ].filter(Boolean).join(' · ');
 }
 
-const primaryButton: React.CSSProperties = {
+export const primaryButton: React.CSSProperties = {
   border: 'none', borderRadius: radius.sm, background: ilse.brand, color: '#fff', cursor: 'pointer',
   fontSize: 11, fontWeight: 600, fontFamily: font.sans, padding: '6px 10px', whiteSpace: 'nowrap',
+};
+export const secondaryButton: React.CSSProperties = {
+  ...primaryButton, padding: '5px 10px', border: `1px solid ${color.border}`, background: color.background, color: color.foreground,
 };
 const proBadge: React.CSSProperties = { fontSize: 9, fontWeight: 600, padding: '1px 6px', borderRadius: radius.full, background: color.muted, flexShrink: 0 };
 
@@ -269,11 +272,12 @@ function DsBar({ ds, components, onCreate, onExport, onView }: { ds: DsInfo; com
     <>
     <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${color.border}` }}>
       {/* The DS itself, on screen: what Create DS gave the person */}
-      <button onClick={onView} disabled={!onView} title={t('dsv.open')} style={{ flex: 1, minWidth: 0, textAlign: 'left', border: 'none', background: 'transparent', padding: 0, cursor: onView ? 'pointer' : 'default', fontFamily: font.sans }}>
+      <div style={{ flex: 1, minWidth: 0, fontFamily: font.sans }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: color.foreground }}>{t('library.ds')}</div>
-        <div style={{ fontSize: 10, color: onView ? ilse.brand : color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: onView ? 'underline' : 'none', textUnderlineOffset: 2 }}>.ilse/ds/DESIGN.md</div>
-      </button>
-      <button onClick={() => setOpen(o => !o)} aria-expanded={open} style={primaryButton}>{t('library.export')} ▾</button>
+        <div style={{ fontSize: 10, color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>.ilse/ds/DESIGN.md</div>
+      </div>
+      {onView && <button onClick={onView} title={t('dsv.open')} style={secondaryButton}>{t('library.view')}</button>}
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open} style={secondaryButton}>{t('library.export')} ▾</button>
       {open && (
         <div role="menu" style={{
           position: 'absolute', right: 0, top: 34, width: 220, zIndex: 3, padding: 8,
@@ -383,6 +387,7 @@ export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDrag
   const [query, setQuery] = useState('');
   const [show, setShow] = useState<Show>(() => { try { const v = localStorage.getItem('ilse-catalog-show'); return v === 'page' || v === 'base' ? v : 'all'; } catch { return 'all'; } });
   const pickShow = (v: Show) => { setShow(v); try { localStorage.setItem('ilse-catalog-show', v); } catch { /* not kept */ } };
+  // The page tab reads the screen again: the person may have navigated since
   const [hover, setHover] = useState<{ item: CatalogItem; at: DOMRect } | null>(null);
   // Leaving a row waits a moment: the pointer may be on its way into the card, which then stays
   const closing = React.useRef<ReturnType<typeof setTimeout> | null>(null);

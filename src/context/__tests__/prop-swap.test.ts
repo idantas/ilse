@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parsePropEdit, planPropSwap, writeProp, type PropEdit } from '../prop-swap.js';
+import { parsePropEdit, planPropSwap, propSource, writeProp, type PropEdit } from '../prop-swap.js';
 
 function project(files: Record<string, string>): string {
   const cwd = mkdtempSync(join(tmpdir(), 'ilse-prop-'));
@@ -87,5 +87,28 @@ describe('prop swap', () => {
     expect(parsePropEdit({ component: 'Button', source: 'x', changes: [] })).toBeUndefined();
     expect(parsePropEdit({ component: 'Button', source: 'x', props: { a: 'b', f: () => 1, n: 2 }, changes: [{ prop: 'v', to: 'a' }] }))
       .toEqual({ component: 'Button', source: 'x', props: { a: 'b', n: 2 }, changes: [{ prop: 'v', to: 'a' }] });
+  });
+});
+
+describe('prop source', () => {
+  it('the instance as written, at its line', () => {
+    expect(propSource(mui({ props: { variant: 'contained' }, text: 'Save' }), cwd))
+      .toEqual({ file: 'src/header.tsx', line: 5, code: '<MuiButton variant="contained">Save</MuiButton>' });
+  });
+
+  it('with the changes in, as it will read once applied', () => {
+    const res = propSource(mui({ props: { variant: 'contained' }, text: 'Save', changes: [{ prop: 'variant', from: 'contained', to: 'text' }] }), cwd);
+    expect(res?.code).toBe('<MuiButton variant="text">Save</MuiButton>');
+    expect(res?.reason).toBeUndefined();
+  });
+
+  it('a prop from an expression: the code as it is, and why the agent will do it', () => {
+    const res = propSource(mui({ props: { variant: 'x' }, text: 'Dynamic', changes: [{ prop: 'variant', to: 'text' }] }), cwd);
+    expect(res?.code).toBe('<MuiButton variant={kind}>Dynamic</MuiButton>');
+    expect(res?.reason).toMatch(/express/);
+  });
+
+  it('not found: nothing rather than another instance', () => {
+    expect(propSource(mui({ props: { variant: 'nope' }, text: 'Save' }), cwd)).toBeNull();
   });
 });

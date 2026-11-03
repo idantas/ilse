@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatConsoleArgs, isNoise, newErrors } from '../page-errors.js';
+import { formatConsoleArgs, isNoise, newErrors, summarizeError } from '../page-errors.js';
 
 describe('formatConsoleArgs — React logs printf-style', () => {
   it('fills %s from the arguments', () => {
@@ -31,5 +31,22 @@ describe('newErrors — only what the change brought', () => {
   });
   it('nothing new, nothing to say', () => {
     expect(newErrors(seen, 40)).toEqual([]);
+  });
+});
+
+describe('summarizeError', () => {
+  it('keeps the message and the place, drops the code frame', () => {
+    const raw = "./components/regulatory/AgentSource.tsx:15:36 Error: Unterminated template 13 | const t = useTranslations('regulatory.agents') 14 | const mark = ( > 15 | <span className={`${styles.mark} text-primary-foreground inline-f";
+    expect(summarizeError(raw)).toEqual({ message: 'Unterminated template', where: 'components/regulatory/AgentSource.tsx:15:36' });
+  });
+
+  it('keeps a typed error name and works without a place', () => {
+    expect(summarizeError('Uncaught TypeError: Cannot read properties of undefined (reading \'map\')')).toEqual({
+      message: "TypeError: Cannot read properties of undefined (reading 'map')",
+    });
+  });
+
+  it('cuts a long message', () => {
+    expect(summarizeError('x'.repeat(300)).message.length).toBe(140);
   });
 });

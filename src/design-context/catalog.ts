@@ -126,19 +126,25 @@ export function folderOf(rel: string): string {
 interface TypeInfo { required: boolean; values: string[]; kind: CatalogProp['kind']; default?: string }
 type CvaMap = Map<string, Map<string, { values: string[]; def?: string }>>;
 
-function literalsOf(t: Node | null | undefined): TypeInfo['values'] | null {
-  if (!t) return null;
+function literalsOf(t: Node | null | undefined, local?: Map<string, Node>, depth = 0): TypeInfo['values'] | null {
+  if (!t || depth > 4) return null;
   if (t.type === 'TSLiteralType' && (t.literal.type === 'StringLiteral' || t.literal.type === 'NumericLiteral')) return [String(t.literal.value)];
   if (t.type === 'TSUnionType') {
-    const all = t.types.map(literalsOf);
+    const all = t.types.map(x => literalsOf(x, local, depth + 1));
     return all.every(Boolean) ? (all as string[][]).flat() : all.some(Boolean) ? (all.filter(Boolean) as string[][]).flat() : null;
+  }
+  // `variant?: Variant` with `type Variant = 'primary' | 'outline'` in the file: the alias's values,
+  // so a variant the code declares but doesn't use yet still shows up
+  if (local && t.type === 'TSTypeReference' && t.typeName.type === 'Identifier') {
+    const decl = local.get(t.typeName.name);
+    if (decl?.type === 'TSTypeAliasDeclaration') return literalsOf(decl.typeAnnotation, local, depth + 1);
   }
   return null;
 }
 
-function kindOf(t: Node | null | undefined): TypeInfo['kind'] {
+function kindOf(t: Node | null | undefined, local?: Map<string, Node>): TypeInfo['kind'] {
   if (!t) return 'other';
-  if (literalsOf(t)?.length) return 'enum';
+  if (literalsOf(t, local)?.length) return 'enum';
   if (t.type === 'TSBooleanKeyword') return 'boolean';
   if (t.type === 'TSStringKeyword' || t.type === 'TSNumberKeyword') return 'text';
   if (t.type === 'TSTypeReference' && t.typeName.type === 'TSQualifiedName' && t.typeName.right.name === 'ReactNode') return 'text';
@@ -156,7 +162,7 @@ function propsOfType(t: Node | null | undefined, local: Map<string, Node>, cva: 
     for (const m of members) {
       if (m.type !== 'TSPropertySignature' || m.key.type !== 'Identifier') continue;
       const ann = m.typeAnnotation?.typeAnnotation;
-      out.set(m.key.name, { required: !m.optional, values: literalsOf(ann) ?? (ann?.type === 'TSBooleanKeyword' ? ['true', 'false'] : []), kind: kindOf(ann) });
+      out.set(m.key.name, { required: !m.optional, values: literalsOf(ann, local) ?? (ann?.type === 'TSBooleanKeyword' ? ['true', 'false'] : []), kind: kindOf(ann, local) });
     }
   } else if (t.type === 'TSIntersectionType') {
     for (const part of t.types) merge(propsOfType(part, local, cva, depth + 1));

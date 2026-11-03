@@ -221,3 +221,34 @@ export function parsePropEdit(v: unknown): PropEdit | undefined {
     ...(typeof e.text === 'string' ? { text: e.text.slice(0, 200) } : {}),
   };
 }
+
+/** What the panel shows under the props: the instance's JSX where it's written, with the changes in */
+export interface PropSource { file: string; line: number; code: string; /** Why it won't apply without the agent */ reason?: string }
+
+const SNIPPET_LINES = 8;
+
+function lines(code: string, from: number, to: number): string {
+  const all = code.split('\n').slice(from - 1, to);
+  const cut = all.length > SNIPPET_LINES ? [...all.slice(0, SNIPPET_LINES - 1), '…'] : all;
+  const indent = Math.min(...cut.filter(l => l.trim() && l !== '…').map(l => /^\s*/.exec(l)![0].length));
+  return cut.map(l => l.slice(Number.isFinite(indent) ? indent : 0)).join('\n');
+}
+
+/**
+ * The `<Component …>` this instance is, as the file has it — and, with
+ * changes, as it will read once applied. Not found → null (the panel shows
+ * nothing rather than another instance).
+ */
+export function propSource(edit: PropEdit, cwd: string): PropSource | null {
+  const found = findInstance(edit, cwd);
+  if (!found.ok) return null;
+  const node = found.el ?? found.open;
+  const start = node.loc?.start.line ?? 1;
+  const end = node.loc?.end.line ?? start;
+  if (edit.changes.length === 0) return { file: found.file, line: start, code: lines(found.code, start, end) };
+  const plan = planPropSwap(edit, cwd);
+  if (!plan.ok) return { file: found.file, line: start, code: lines(found.code, start, end), ...(plan.reason !== 'nada a mudar' ? { reason: plan.reason } : {}) };
+  // Changes only touch the opening tag: the element grows or shrinks by the lines they add
+  const grew = plan.plan.after.split('\n').length - found.code.split('\n').length;
+  return { file: found.file, line: start, code: lines(plan.plan.after, start, end + grew) };
+}

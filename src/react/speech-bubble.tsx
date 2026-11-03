@@ -18,6 +18,38 @@ export const legibleText: React.CSSProperties = {
   opacity: 0.5,
 };
 
+/**
+ * The agent's answer in the chat: frosted glass over the page, so the words
+ * read over busy text and photos too, without a solid card or a glow.
+ */
+export const chatBubble: React.CSSProperties = {
+  backdropFilter: 'blur(8px)',
+  WebkitBackdropFilter: 'blur(8px)',
+  backgroundColor: 'rgba(128,128,128,0.08)',
+  padding: '5px 10px',
+  borderRadius: 10,
+  color: color.mutedForeground,
+  mixBlendMode: 'luminosity',
+};
+
+/**
+ * Words read in full over the page (an error, a reload ask): the chat's frosted
+ * bubble made opaque enough to read over grey, busy or dark pages (test 30/10:
+ * the faint chat glass vanished on a dimmed app behind a drawer).
+ */
+export function floatingText(): React.CSSProperties {
+  return {
+    ...chatBubble,
+    backdropFilter: 'blur(16px) saturate(1.4)',
+    WebkitBackdropFilter: 'blur(16px) saturate(1.4)',
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    boxShadow: '0 0 0 1px rgba(0,0,0,0.06)',
+    color: color.foreground,
+    mixBlendMode: 'normal',
+    opacity: 1, fontWeight: 500, padding: '8px 12px', justifySelf: 'start',
+  };
+}
+
 /** One line of reasoning floating above the toolbar: the newest bold, older ones fading */
 export function reasoningLine(fromBottom: number): React.CSSProperties {
   return {

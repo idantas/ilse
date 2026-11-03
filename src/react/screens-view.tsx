@@ -78,8 +78,12 @@ type Edge = 'x' | 'y' | 'xy';
  * The toolbar stays on top of this view and drives the frame: it gets the frame's
  * state through `onState` and sends its actions through `actRef`.
  */
-export function ScreensView({ initialDevice, initialRulers, onClose, onState, actRef }: {
-  initialDevice: Device; initialRulers: boolean; onClose: () => void;
+export function ScreensView({ initialDevice, initialRulers, onClose, onMinimize, onState, actRef }: {
+  initialDevice: Device; initialRulers: boolean;
+  /** Leave Screens (the arrow) */
+  onClose: () => void;
+  /** Fold the toolbar into the orb, the screen stays (Esc, the toolbar's close) */
+  onMinimize: () => void;
   onState: (state: EmbedState) => void;
   actRef: React.MutableRefObject<((action: ScreensAction) => void) | null>;
 }) {
@@ -125,18 +129,18 @@ export function ScreensView({ initialDevice, initialRulers, onClose, onState, ac
       const m: EmbedToHost = e.data;
       if (m.ilseScreens === 'state') onState(m.state);
       else if (m.ilseScreens === 'selection') setSelection(m.rect);
-      else onClose();
+      else onMinimize();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       // The embedded panel lives in this document: the Ilse in the frame hears this Esc and closes it first
       if (document.querySelector('[data-ilse-panel]')) return;
-      e.stopImmediatePropagation(); onClose();
+      e.stopImmediatePropagation(); onMinimize();
     };
     window.addEventListener('message', onMsg);
     document.addEventListener('keydown', onKey, true);
     return () => { window.removeEventListener('message', onMsg); document.removeEventListener('keydown', onKey, true); };
-  }, [onClose, onState]);
+  }, [onMinimize, onState]);
 
   useEffect(() => {
     actRef.current = (action) => frameRef.current?.contentWindow?.postMessage({ ilseScreens: 'action', action }, location.origin);

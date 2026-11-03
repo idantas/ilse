@@ -51,13 +51,15 @@ export interface MemoryData {
   pro?: boolean;
   /** Null when Pro is absent or older than this screen */
   test?: TestMemory | null;
+  /** Look-alikes ignored in the Library (Pro) */
+  looks?: Array<{ id: string; label: string; at: string }>;
 }
 
 /** "há 5 min", "ontem", "12/10" — short, in the user's language */
 export function ago(iso: string, now = Date.now()): string {
   const ms = now - Date.parse(iso);
   if (!Number.isFinite(ms)) return '';
-  const min = Math.round(ms / 60_000);
+  const min = Math.floor(ms / 60_000); // a run stamps its start: one that took 50 s was "just now"
   if (min < 1) return t('memory.justNow');
   if (min < 60) return t('memory.minutesAgo', { count: min });
   const h = Math.round(min / 60);
@@ -76,8 +78,9 @@ const CATEGORY_KEYS: Record<string, string> = {
 };
 const categoryName = (c: string) => CATEGORY_KEYS[c] ? t(CATEGORY_KEYS[c] as Parameters<typeof t>[0]) : c;
 
-export function MemoryPanel({ data, onClose, onUndoDecision, onForgetTest, onOpenPage }: {
+export function MemoryPanel({ data, onClose, onUndoDecision, onUnignoreLook, onForgetTest, onOpenPage }: {
   data: MemoryData | null;
+  onUnignoreLook: (id: string) => void;
   onClose: () => void;
   onUndoDecision: (id: string) => void;
   onForgetTest: () => void;
@@ -164,6 +167,21 @@ export function MemoryPanel({ data, onClose, onUndoDecision, onForgetTest, onOpe
           </>
         )}
 
+        {/* ── The Library's look-alikes ignored, and the way back ── */}
+        {data?.looks && data.looks.length > 0 && (
+          <>
+            <div style={heading}>{t('memory.looks', { count: data.looks.length })}</div>
+            <div style={{ ...muted, marginBottom: 6 }}>{t('memory.looksHint')}</div>
+            {data.looks.map(l => (
+              <div key={l.id} style={{ ...row, alignItems: 'center' }}>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.label}</span>
+                <span style={{ fontSize: 10, color: color.mutedForeground, flexShrink: 0 }}>{ago(l.at)}</span>
+                <button style={linkButton()} onClick={() => onUnignoreLook(l.id)}>{t('memory.unignoreLook')}</button>
+              </div>
+            ))}
+          </>
+        )}
+
         {/* ── Test mode: Pro ── */}
         {data && (
           <>
@@ -215,7 +233,7 @@ export function MemoryPanel({ data, onClose, onUndoDecision, onForgetTest, onOpe
                           <div key={f.id} style={{ ...row, alignItems: 'center' }}>
                             <span style={{ flex: 1, minWidth: 0, lineHeight: 1.35 }}>
                               <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.title}</span>
-                              {f.page && <span style={{ fontSize: 10, color: color.mutedForeground }}>{f.page}</span>}
+                              {f.page && <span style={{ fontSize: 10, color: color.mutedForeground }}>{t('report.otherPage', { page: f.page })}</span>}
                             </span>
                             <button style={linkButton()} onClick={() => onUndoDecision(f.id)}>{t('memory.unignore')}</button>
                           </div>
@@ -226,10 +244,11 @@ export function MemoryPanel({ data, onClose, onUndoDecision, onForgetTest, onOpe
                 )}
 
                 {/* Where the checks are right, and where they are noise */}
-                {test.byCategory.length > 0 && (
+                {/* A rate needs a few decisions behind it: one ignored finding isn't "0% right" */}
+                {test.byCategory.some(c => c.approved + c.discarded >= 3) && (
                   <>
                     <div style={heading}>{t('memory.accuracy')}</div>
-                    {test.byCategory.map(c => {
+                    {test.byCategory.filter(c => c.approved + c.discarded >= 3).map(c => {
                       const total = c.approved + c.discarded;
                       const rate = total ? c.approved / total : 0;
                       return (

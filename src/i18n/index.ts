@@ -57,7 +57,30 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
     }
   }
 
+  // "1 findings" → "1 finding": the messages are written for the plural
+  if (params?.count === 1 || params?.pages === 1) text = text.replace(ONE, (_, w: string) => `1 ${SINGULAR[w]}`);
+
   return text;
 }
 
+const SINGULAR: Record<string, string> = {
+  findings: 'finding', pages: 'page', places: 'place', files: 'file', steps: 'step', changes: 'change',
+  achados: 'achado', páginas: 'página', lugares: 'lugar', arquivos: 'arquivo', passos: 'passo', mudanças: 'mudança',
+  corrigidos: 'corrigido', voltaram: 'voltou', novos: 'novo',
+};
+const ONE = new RegExp(`(?<![\\d.,])1 (${Object.keys(SINGULAR).join('|')})(?![\\p{L}])`, 'gu');
+
 export type { Locale, MessageKey };
+
+// The server names the agent's tool calls in Portuguese (executor.ts describeToolUse); in English, say them in English
+const TOOL_WORDS: [RegExp, string][] = [
+  [/^Lendo página$/, 'Reading a page'], [/^Lendo /, 'Reading '], [/^Procurando arquivos /, 'Looking for files '],
+  [/^Procurando /, 'Searching '], [/^Editando (.+) \(múltiplas\)$/, 'Editing $1 (several)'], [/^Editando /, 'Editing '],
+  [/^Criando /, 'Creating '], [/^Rodando comando$/, 'Running a command'], [/^Planejando próximos passos$/, 'Planning next steps'],
+  [/^Pesquisando: /, 'Searching the web: '], [/^Usando /, 'Using '], [/^Corrigido$/, 'Fixed'],
+];
+export function toolActivity(text: string): string {
+  if (getLocale() === 'pt') return text;
+  for (const [from, to] of TOOL_WORDS) if (from.test(text)) return text.replace(from, to);
+  return text;
+}

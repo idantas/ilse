@@ -140,3 +140,20 @@ describe('catalog search', () => {
     expect(names('zzz')).toEqual([]);
   });
 });
+
+describe('prop values through a local type alias', () => {
+  it('`variant?: Variant` lists every value of `type Variant`, used or not, with the default', () => {
+    const cwd = project({
+      'app/button.tsx': `import Link from "next/link";
+import type { ComponentProps } from "react";
+type Variant = "primary" | "outline" | "dark" | "ghost";
+type ButtonProps = ComponentProps<typeof Link> & { variant?: Variant; size?: "sm" | "md" };
+export function Button({ variant = "primary", size = "md", ...props }: ButtonProps) { return <Link {...props} /> }`,
+      'app/page.tsx': `import { Button } from "./button";
+export default function P() { return <Button href="/" variant="outline">Go</Button> }`,
+    });
+    const variant = buildCatalog(cwd).find(e => e.name === 'Button')!.props.find(p => p.name === 'variant')!;
+    expect(variant).toMatchObject({ kind: 'enum', default: 'primary' });
+    expect(variant.values.sort()).toEqual(['dark', 'ghost', 'outline', 'primary']);
+  });
+});

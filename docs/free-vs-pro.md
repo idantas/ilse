@@ -10,10 +10,13 @@ Where each piece of Ilse lives, so nobody (human or agent) has to argue it again
 | MCP, proxy / same port, Vite plugin, extension, bookmarklet. **Screens** (phone / tablet / desktop / free size, rulers, the same toolbar on each) | `ilse test` and Pro's other commands |
 | The mascot, the Design / Test switch, test mode asleep without Pro | Project memory (approved / discarded, new / returned) |
 | | The Library's hands: copies of components (thumbnails, `src/catalog/`), "+ → Component…", dragging onto the page and the no-AI insert (also Duplicate of a component with its props and variant), **Edit organization** (`.ilse/catalog.md`). Pro puts new components on the page |
-| Rendering findings in the toolbar (it shows what Pro sends) | Taking the DS to other tools: Create DS also writes `tokens.json` (W3C — Figma, Tokens Studio, Style Dictionary) and `registry.json` (shadcn, installable elsewhere) (`ProPlugin.dsFormats`); the AI pass — when to use each component, by the user's agent (`ProPlugin.dsNotes`) —, keeping it up to date (the Library says what changed; Update), drift checks (test mode's Consistency), the fresh-agent test (`ProPlugin.dsCheck`), docs page |
+| Rendering findings in the toolbar (it shows what Pro sends) | Taking the DS to other tools: Create DS also writes `tokens.json` (W3C DTCG 2025.10 — Figma variables import, Tokens Studio, Style Dictionary) and `registry.json` (shadcn, installable elsewhere) (`ProPlugin.dsFormats`); the AI pass — when to use each component, by the user's agent (`ProPlugin.dsNotes`) —, keeping it up to date (the Library says what changed; Update), drift checks (test mode's Consistency), the fresh-agent test (`ProPlugin.dsCheck`), docs page |
 | **Create DS** (`ilse ds`, or the Library's *Create design system*; then *Export*): the project's components and tokens written to `.ilse/ds/DESIGN.md` from the code, no AI — the user reads their DS, any agent builds with it. Free = read and use your DS; Pro = take it to other tools and keep it alive | |
-| The memory screen and its design history (the ledger); its test part shows what Pro sends | License check, activation, updates of Pro |
+| The memory screen and its design history (the ledger); its test part shows what Pro sends | License check (offline: signed, bound to the machine, lapses after 30 days without checking in), updates of Pro |
+| The **Consistency** tab shown locked (what it does, the way to Pro); the rules it runs live in the core (`src/react/consistency.ts`) | The **Consistency** tab: the rules on the screen, the agent's review of each screen (`ProPlugin.consistencyReview`), look-alikes, fixes previewed on the page |
 | The plugin seam: `src/pro/types.ts`, `src/pro/load.ts` | |
+| Signing in (`ilse login`/`logout`, the daily account check): `src/account/` — it has to exist before Pro is there | |
+| Installing Pro (`ilse upgrade`: signed download, `~/.ilse/pro/<version>`): `src/pro/upgrade.ts` — same reason | |
 
 ## How Pro plugs in
 

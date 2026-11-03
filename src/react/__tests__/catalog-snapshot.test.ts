@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isReused, sameVariant, sourceNames, variantKey } from '../catalog-snapshot.js';
+import { componentAt, isReused, sameVariant, sourceNames, variantKey, writtenIn, type CatalogItem } from '../catalog-snapshot.js';
 
 describe('catalog on the page', () => {
   it('a drop climbs out of reused components only, never out of a section written once', () => {
@@ -13,6 +13,12 @@ describe('catalog on the page', () => {
     expect(sourceNames('Button2')).toEqual(['Button2', 'Button']);
     expect(sourceNames('Card')).toEqual(['Card']);
     expect(sourceNames('H1')).toEqual(['H1']);
+  });
+
+  it('a library component implemented under another name is also tried as exported', () => {
+    expect(sourceNames('LinkComponent')).toEqual(['LinkComponent', 'Link']);
+    expect(sourceNames('SelectImpl2')).toEqual(['SelectImpl2', 'SelectImpl', 'Select']);
+    expect(sourceNames('Component')).toEqual(['Component']);
   });
 
   it('the variant is the choosable props as the instance sets them', () => {
@@ -36,5 +42,15 @@ describe('catalog on the page', () => {
     expect(sameVariant(item, 'providerFixed=false', '')).toBe(true);
     expect(sameVariant(item, 'size=lg providerFixed=false', 'size=lg')).toBe(true);
     expect(sameVariant(item, 'providerFixed=true', '')).toBe(false);
+  });
+
+  it('a Server Component (no fiber of its own) is found by the name React left on what it returned', () => {
+    const chip = { name: 'Chip', env: 'Server', props: { variant: 'badge', children: 'ilse' } };
+    const span = { __reactFiber$x: { type: 'span', return: null, _debugInfo: [chip], _debugOwner: chip } } as unknown as Element;
+    const hit = componentAt(span, [{ name: 'Chip' } as CatalogItem]);
+    expect(hit?.item.name).toBe('Chip');
+    expect(hit?.props).toEqual({ variant: 'badge' });
+    expect(hit?.text).toBe('ilse');
+    expect(writtenIn(span)).toBe('Chip');
   });
 });

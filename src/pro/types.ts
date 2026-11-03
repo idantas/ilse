@@ -12,7 +12,7 @@ export const PLUGIN_API = 1;
 
 export type Decision = 'approved' | 'discarded';
 
-export type TestAction = 'run' | 'run-anon' | 'login' | 'login-done' | 'login-cancel' | 'setup';
+export type TestAction = 'run' | 'run-anon' | 'login' | 'login-done' | 'login-cancel' | 'setup' | 'stop';
 
 /** What a test run checks, picked in the toolbar before it starts */
 export type TestGroup = 'journeys' | 'accessibility' | 'errors' | 'layout' | 'consistency';
@@ -74,7 +74,7 @@ export interface ProContext {
   askAgent?: AskAgent;
   /** To every toolbar connected */
   send: (msg: Record<string, unknown>) => void;
-  /** A line in the terminal. Known codes ('no-browser', 'login-saved', 'retest:F:S', 'summary:C:P:report') are translated by the core */
+  /** A line in the terminal. Known codes ('no-browser', 'login-saved', 'test-stopped', 'retest:F:S', 'summary:C:P:report') are translated by the core */
   log: (line: string, tone?: 'dim' | 'warn') => void;
 }
 
@@ -158,6 +158,36 @@ export interface DsComponent {
   requires?: string[];
 }
 
+/** The Consistency tab: one screen's pieces, for the user's agent to judge against the DS */
+export interface ConsistencyReviewInput {
+  /** The project's name */
+  name: string;
+  route: string;
+  locale: 'pt' | 'en';
+  /** The standard: DS components with their props and values */
+  components: Array<{ name: string; file: string; props: string[] }>;
+  tokens: Array<{ name: string; value: string; type: string }>;
+  /** Every piece on the screen, numbered; `component` when it is a DS component (with its variant) */
+  pieces: Array<{ id: number; kind: string; text: string; owner?: string; component?: string; look: string }>;
+  /** The code of the components that write the pieces, lines numbered */
+  sources: Array<{ component: string; file: string; code: string }>;
+  /** What Ilse's own rules already reported — not to repeat */
+  known: string[];
+  /** What the person ignored (on this screen or another): never report it, nor the same problem on other pieces */
+  ignored?: string[];
+}
+
+/** One judged inconsistency: which pieces, where it's written, what it should be */
+export interface ConsistencyReviewFinding {
+  pieces: number[];
+  title: string;
+  detail: string;
+  /** What it should be, in the DS's terms: `<Badge color="gray" size="compact">` */
+  fix: string;
+  file?: string;
+  line?: number;
+}
+
 /** The fresh-agent test: each task, what the agent wrote, what it got wrong; rules that would have prevented it */
 export interface DsCheck {
   tasks: Array<{ task: string; code: string; problems: string[] }>;
@@ -179,9 +209,12 @@ export interface DsInput {
   /** The project's name (package.json, else the folder) */
   name: string;
   components: DsComponent[];
-  tokens: Array<{ name: string; value: string; type: string }>;
+  /** `type` is color | spacing | typography | font; `scale`: a Tailwind default the project uses, not one it declares */
+  tokens: Array<{ name: string; value: string; type: string; scale?: boolean }>;
   /** package.json's homepage, when it has one */
   homepage?: string;
+  /** Themes (dark, [data-theme=x]): per theme, the tokens whose value differs */
+  modes?: Array<{ name: string; values: Record<string, string> }>;
 }
 
 export interface ProPlugin {
@@ -200,4 +233,6 @@ export interface ProPlugin {
   dsNotes?: (input: DsInput, ask: AskAgent) => Promise<Record<string, DsNote>>;
   /** Create DS: an agent that knows only DESIGN.md does a few tasks; what it got wrong becomes suggested rules */
   dsCheck?: (input: DsInput & { designMd: string }, ask: AskAgent) => Promise<DsCheck>;
+  /** The Consistency tab: the user's agent reviews one screen against the DS (opening the tab runs it) */
+  consistencyReview?: (input: ConsistencyReviewInput, ask: AskAgent) => Promise<ConsistencyReviewFinding[]>;
 }

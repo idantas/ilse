@@ -158,6 +158,74 @@ if (pro?.registerCli) {
 }
 
 program
+  .command('login')
+  .description(t('cmd.login'))
+  .option('--no-open', t('cmd.noOpen'))
+  .action(async (options: { open?: boolean }) => {
+    const chalk = (await import('chalk')).default;
+    const { login } = await import('../account/session.js');
+    const { loadAccount } = await import('../account/store.js');
+    const { openBrowser } = await import('./open-browser.js');
+    const before = loadAccount();
+    if (before) console.log(chalk.dim(`\n  ${t('account.already', { email: before.email })}`));
+    const abort = new AbortController();
+    process.once('SIGINT', () => abort.abort());
+    const r = await login({
+      locale: _cfg.locale ?? detectLocale(),
+      signal: abort.signal,
+      onCode: (start) => {
+        console.log(`\n  ${t('account.code')} ${chalk.bold(start.userCode)}`);
+        console.log(chalk.dim(`  ${t('account.openPage')} ${start.verificationUri}`));
+        console.log(chalk.dim(`  ${t('account.waiting')}`));
+        if (options.open !== false) openBrowser(start.verificationUri);
+      },
+    });
+    if (r.status === 'ok') {
+      console.log(chalk.green(`\n  ✓ ${t('account.connected', { email: r.email })}`));
+      console.log(chalk.dim(`  ${t('account.oneMachine')}\n`));
+      // Paid but Pro isn't here yet: offer it now rather than leave them hunting for the command
+      const { existsSync } = await import('node:fs');
+      const { proEntry } = await import('../pro/load.js');
+      if (!existsSync(proEntry())) {
+        const p = await import('@clack/prompts');
+        const yes = process.stdin.isTTY ? await p.confirm({ message: t('account.installPro'), initialValue: true }) : false;
+        if (yes === true) await runUpgrade();
+        else console.log(chalk.dim(`  ${t('account.installLater')}\n`));
+      }
+    } else {
+      console.log(chalk.yellow(`\n  ${t(`account.${r.status}`)}\n`));
+      process.exitCode = 1;
+    }
+  });
+
+async function runUpgrade(): Promise<void> {
+  const chalk = (await import('chalk')).default;
+  const { upgradePro } = await import('../pro/upgrade.js');
+  console.log(chalk.dim(`\n  ${t('upgrade.downloading')}`));
+  const r = await upgradePro();
+  if (r.status === 'installed') console.log(chalk.green(`\n  ✓ ${t('upgrade.installed', { version: r.version })}\n`));
+  else if (r.status === 'up-to-date') console.log(`\n  ${t('upgrade.up-to-date', { version: r.version })}\n`);
+  else if (r.status === 'updates-ended') console.log(chalk.yellow(`\n  ${t('upgrade.updates-ended', { version: r.version, date: r.updatesUntil })}\n`));
+  else {
+    console.log(chalk.yellow(`\n  ${t(`upgrade.${r.status}`)}\n`));
+    process.exitCode = 1;
+  }
+}
+
+program
+  .command('upgrade')
+  .description(t('cmd.upgrade'))
+  .action(runUpgrade);
+
+program
+  .command('logout')
+  .description(t('cmd.logout'))
+  .action(async () => {
+    const { logout } = await import('../account/session.js');
+    console.log(`\n  ${t((await logout()) ? 'account.loggedOut' : 'account.notSignedIn')}\n`);
+  });
+
+program
   .command('changes')
   .description(t('cmd.changes'))
   .option('--json', 'Raw ledger entries')

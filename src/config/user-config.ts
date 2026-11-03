@@ -14,6 +14,8 @@ export interface UserConfig {
   setupDone: boolean;
   lastUpdateCheck?: number;
   latestKnownVersion?: string;
+  /** Last daily account check (signed-in only): versions sent, license renewed */
+  lastAccountCheck?: number;
   /** Claude account per project: project path → CLAUDE_CONFIG_DIR ('' = the default one) */
   claudeAccounts?: Record<string, string>;
   /**

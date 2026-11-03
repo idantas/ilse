@@ -19,7 +19,7 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 ## Rules — never break these
 
 1. **The AI is always the user's.** Ilse runs the agent CLI the user already has (Claude Code, Codex, Cursor CLI, Gemini CLI) or lets it pull work over MCP. Never add API keys, AI servers or charge for AI usage. A paid Ilse Pro license is allowed; it never stores or proxies an AI key.
-2. **Nothing leaves the machine.** Proxy, WebSocket and MCP bind to loopback. The journal stores timings and counts — never note text, prompts, code or file paths. The only exceptions: the anonymous update check, and Pro's download/activation (the only moment a license key is sent). Both have an off switch.
+2. **Nothing leaves the machine.** Proxy, WebSocket and MCP bind to loopback. The journal stores timings and counts — never note text, prompts, code or file paths. The only exceptions: the anonymous update check, and — signed in to Ilse Pro only — the daily account check (installed versions + the machine's token, `src/account/`; the owner's machine alone also sends activity per day and a project count, `usage.ts`) and Pro's download. The off switch for the account check is `ilse logout`.
 3. **Cheapest step that works.** Class swap (no AI) → quick path (one fast-model call) → full agent. A step that isn't sure hands over to the next one; it never guesses.
 4. **Don't touch the user's project uninvited.** Changes land only to apply a request (always undoable), plus the one-time commit note the user agrees to.
 5. **Every shortcut has an off switch** (`ILSE_QUICK`, `ILSE_HISTORY`, `ILSE_COMPONENT_CARD`, `ILSE_RESUME`, `ILSE_MODEL`, `ILSE_CHECK`), so runs can be compared in the journal.
@@ -51,6 +51,8 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/agent/changeset.ts` | File snapshots before a batch → diff → undo / redo |
 | `src/git/` | `.git/ilse/changes.jsonl` ledger (`ilse changes`), commit note for the project's agent |
 | `src/mcp/` | MCP tools served by the running `ilse` at `/mcp`; stdio bridge `ilse-mcp` |
+| `src/pro/upgrade.ts` | `ilse upgrade`: downloads Pro with the machine's token, checks the Ed25519 signature (key pair of ilse-pro's `pack:release`), installs in `~/.ilse/pro/<version>`, points `current` |
+| `src/account/` | `ilse login`/`logout` (device code against the Ilse site), the daily account check, `~/.ilse/account.json`, `license`, `install-id` |
 | `src/telemetry/journal.ts` | Session journal (toolbar → Settings → Logs) |
 | `src/react/toolbar.tsx` | The toolbar: capture, card, gestures, draft history, settings |
 | `src/react/shortcuts.ts` | Keyboard shortcuts: the list behind Settings → Keyboard shortcuts and the tooltips, `I I`, typing guard |
@@ -64,6 +66,8 @@ Run it on a real React app: start that app's dev server, then from the app's fol
 | `src/design-context/` | Codebase analysis, no AI: repeated JSX, component families, scattered tokens. `consistency.ts` is what Pro's test mode reads (Consistency group) |
 | `src/design-context/catalog.ts` | The catalog: project and imported library components, props and values from types / `cva()` / usage. `catalog-search.ts` (name + what it's for), `catalog-kinds.ts` (base/product, what it's for, feature — no AI), `catalog-file.ts` (`.ilse/catalog.md`: the team's names and moves), `design-system.ts` (Storybook titles, shadcn's kit folder, design system packages), `library-types.ts` (a library's choices from its `.d.ts`). In the toolbar it's the **Library**: list, search, spotting, the Component section and Create DS (`ds-export.ts`, DESIGN.md) are free; copies, drag/insert and the DS's other formats are Pro (`ProServer.catalog`, `ProPlugin.dsFormats`) |
 | `src/react/catalog-panel.tsx`, `catalog-snapshot.ts`, `component-section.tsx`, `component-drop.ts` | Catalog tab and window, copies of components on the page, the panel's Component section, dragging a component onto the page (drafts) |
+| `src/react/look-alike.ts` | The Library's look-alikes (Pro): pieces on the page grouped by computed shape, variants by paint, a one-property-off member as a near miss; families that are all one catalog component are dropped |
+| `src/react/live-props.ts`, `preview-stage.ts` | Through React's DevTools hook (the proxy and the Vite plugin put a stub first in `<head>`): a picked prop rendered on the real component before it's applied; components the page doesn't show drawn off screen inside the app for their copy |
 | `src/react/ds-viewer.tsx` | The DS window after Create DS / Export: one tab per file in `.ilse/ds`, who reads it and how to use it (`dsView` in `ds-export.ts`) |
 | `src/context/prop-swap.ts`, `insert-component.ts` | No AI: a component prop rewritten (or removed, back to its default) where that instance is written; a catalog component inserted next to / inside an element, with its import |
 | `src/context/chunk-source.ts` | React frames that point into a bundled chunk (Turbopack, Next 16) → the project file, read from the chunk's source map |
