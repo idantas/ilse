@@ -39,7 +39,9 @@ export interface CatalogSnapshot {
   text?: string;
 }
 
-type F = { type?: unknown; return?: F | null; child?: F | null; alternate?: F | null; stateNode?: unknown; memoizedProps?: Record<string, unknown>; _debugStack?: { stack?: string }; _debugOwner?: F | null };
+type F = { type?: unknown; return?: F | null; child?: F | null; alternate?: F | null; stateNode?: unknown; memoizedProps?: Record<string, unknown>; _debugStack?: { stack?: string }; _debugOwner?: F | null; _debugInfo?: ServerInfo[] | null };
+/** A Server Component, as React's dev build records it on what it rendered (RSC: Next's app router) */
+type ServerInfo = { name?: string; env?: string; props?: Record<string, unknown> };
 
 function fiberOf(el: Element): F | null {
   const k = Object.keys(el).find(key => key.startsWith('__reactFiber$'));
@@ -49,14 +51,23 @@ function fiberOf(el: Element): F | null {
 /**
  * A component's name as the source has it. Bundlers rename functions that clash
  * in one prebundled file (Vite's deps: `Button2`, `Box3`), so a trailing number
- * is also tried without it.
+ * is also tried without it. Libraries export under one name and implement under
+ * another (Next's `Link` is `function LinkComponent`), so an implementation
+ * suffix is too.
  */
 export function sourceNames(name: string): string[] {
+  const out = [name];
   const bare = name.replace(/\d+$/, '');
-  return bare !== name && bare.length > 1 ? [name, bare] : [name];
+  if (bare !== name && bare.length > 1) out.push(bare);
+  const exported = bare.replace(/(Component|Impl)$/, '');
+  if (exported !== bare && /^[A-Z]\w/.test(exported)) out.push(exported);
+  return out;
 }
 
 export interface Instance { name: string; root: HTMLElement; props: Record<string, unknown>; fiber?: unknown }
+
+/** Each catalog component's type as React renders it, from any page seen this session — the preview stage draws with it */
+export const seenTypes = new Map<string, unknown>();
 
 /** Instances of the named components on the page, each with its root element and props */
 export function findInstances(names: Set<string>, limitPerName = 12): Instance[] {
@@ -75,6 +86,7 @@ export function findInstances(names: Set<string>, limitPerName = 12): Instance[]
       const typeName = componentTypeName(x.type);
       const name = typeName ? sourceNames(typeName).find(n => names.has(n)) : undefined;
       if (!name) continue;
+      if (!seenTypes.has(name)) seenTypes.set(name, x.type);
       const n = count.get(name) ?? 0;
       if (n >= limitPerName) continue;
       count.set(name, n + 1);
@@ -102,6 +114,16 @@ export interface ComponentHit {
 export function componentAt(el: Element, items: CatalogItem[]): ComponentHit | null {
   const byName = new Map(items.map(i => [i.name, i]));
   let hit: ComponentHit | null = null;
+  // A Server Component leaves no fiber of its own: the element it returned carries its name
+  const server = (fiberOf(el)?._debugInfo ?? []).find(i => i?.name && byName.has(i.name));
+  if (server) {
+    const props: Record<string, string | number | boolean> = {};
+    for (const [k, v] of Object.entries(server.props ?? {})) {
+      if (k !== 'children' && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')) props[k] = v;
+    }
+    const children = server.props?.children;
+    hit = { item: byName.get(server.name!)!, props, ...(typeof children === 'string' ? { text: children } : {}) };
+  }
   for (let x = fiberOf(el)?.return ?? null, d = 0; x && typeof x.type !== 'string' && d < 40; x = x.return ?? null, d++) {
     const typeName = componentTypeName(x.type);
     const name = typeName ? sourceNames(typeName).find(n => byName.has(n)) : undefined;
@@ -119,6 +141,44 @@ export function componentAt(el: Element, items: CatalogItem[]): ComponentHit | n
     };
   }
   return hit;
+}
+
+/** The component whose JSX wrote this element (its owner in dev builds), or the nearest one above it */
+export function writtenIn(el: Element): string | undefined {
+  const f = fiberOf(el);
+  // A Server Component owner has a name and no type
+  const o = f?._debugOwner as (F & ServerInfo) | null | undefined;
+  const owner = o ? (o.type !== undefined ? componentTypeName(o.type) : o.name) : undefined;
+  if (owner) return owner;
+  for (let x = f?.return ?? null, d = 0; x && d < 60; x = x.return ?? null, d++) {
+    if (typeof x.type === 'string') continue;
+    const n = componentTypeName(x.type);
+    if (n) return n;
+  }
+  return undefined;
+}
+
+/** A wrapper that takes all its look from whoever uses it (a project's own `Link` passing className
+ *  through, nothing of its own): its copies aren't one look, they're still written by hand at each use.
+ *  A Button that adds its variant's classes to the caller's is one look */
+export function styledByCaller(el: Element): boolean {
+  const passed = fiberOf(el)?.return?.memoizedProps?.className;
+  if (typeof passed !== 'string' || !passed.trim()) return false;
+  const own = new Set((el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean));
+  const theirs = new Set(passed.split(/\s+/).filter(Boolean));
+  return own.size === theirs.size && [...own].every(c => theirs.has(c));
+}
+
+/** The app component whose JSX returns this element as its root (a local `function VsChip` the catalog
+ *  doesn't list, being unexported): its instances are one component already. Not a library's root —
+ *  Next's `<a>` is written inside LinkComponent — and not the screen's */
+export function ownRoot(el: Element): string | undefined {
+  const f = fiberOf(el);
+  const parent = f?.return;
+  if (!f || !parent || typeof parent.type === 'string' || !firstAppFrame(f._debugStack?.stack)) return undefined;
+  const name = componentTypeName(parent.type);
+  if (styledByCaller(el)) return undefined;
+  return name && name === writtenIn(el) && !SCREEN.test(name) ? name : undefined;
 }
 
 /** The component instance this element is the root of, for "next to it" in the code — or null */
@@ -307,7 +367,7 @@ const STYLE_PROPS = [
   'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
   'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
   'top', 'right', 'bottom', 'left', 'z-index', 'transform',
-  'flex-direction', 'flex-wrap', 'justify-content', 'align-items', 'align-self', 'align-content',
+  'flex-direction', 'flex-wrap', 'justify-content', 'justify-items', 'justify-self', 'align-items', 'align-self', 'align-content',
   'gap', 'row-gap', 'column-gap', 'flex-grow', 'flex-shrink', 'flex-basis', 'order',
   'grid-template-columns', 'grid-template-rows', 'grid-column', 'grid-row',
   'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing',
@@ -325,6 +385,29 @@ const MAX_NODES = 1500;
 
 const isClear = (bg: string) => bg === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(bg);
 const MAX_HTML = 250_000;
+/** A canvas or video in a copy: a picture this wide at most, a few per copy */
+const PICTURE_W = 360;
+const MAX_PICTURES = 4;
+
+/** What a canvas or video shows now, as a small image; null when the browser won't give it (another origin's pixels) */
+export function pictureOf(el: HTMLCanvasElement | HTMLVideoElement): string | null {
+  const w = el instanceof HTMLCanvasElement ? el.width : el.videoWidth;
+  const h = el instanceof HTMLCanvasElement ? el.height : el.videoHeight;
+  if (!w || !h) return null;
+  try {
+    // webp keeps a see-through background (a browser without it answers png); too heavy: smaller
+    for (const width of [PICTURE_W, PICTURE_W / 2]) {
+      const scale = Math.min(1, width / w);
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * scale));
+      c.height = Math.max(1, Math.round(h * scale));
+      c.getContext('2d')?.drawImage(el, 0, 0, c.width, c.height);
+      const url = c.toDataURL('image/webp', 0.8);
+      if (url.length <= 60_000) return url;
+    }
+    return null;
+  } catch { return null; } // tainted: drawn from another origin
+}
 
 /** Passed down from parent to child: a child that says the same as its parent needn't say it */
 const INHERITED = new Set([
@@ -378,15 +461,23 @@ export function snapshotOf(root: HTMLElement): CatalogSnapshot | null {
   if (box.width < 2 || box.height < 2) return null;
   // The whole window is a screen, not a piece to place
   if (box.width >= window.innerWidth * 0.9 && box.height >= window.innerHeight * 0.8) return null;
+  // Hidden but still taking room (a closed menu at opacity 0): a copy would be a blank box
+  if (root.checkVisibility && !root.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return null;
   const originals = [root, ...Array.from(root.querySelectorAll('*'))];
   if (originals.length > MAX_NODES) return null;
   const clone = root.cloneNode(true) as HTMLElement;
   const copies = [clone, ...Array.from(clone.querySelectorAll('*'))];
   if (copies.length !== originals.length) return null;
   const computed = new Map<Element, CSSStyleDeclaration>();
+  const pictures = new Map<Element, string>();
   for (let i = 0; i < copies.length; i++) {
     const src = originals[i], dst = copies[i];
-    if (/^(SCRIPT|IFRAME|STYLE|LINK|VIDEO|AUDIO|CANVAS|OBJECT|EMBED)$/.test(dst.tagName)) { dst.remove(); continue; }
+    // A canvas (a drawn field, a chart) or a video goes in as a picture of what it shows now, else the copy has a hole
+    if ((src instanceof HTMLCanvasElement || src instanceof HTMLVideoElement) && pictures.size < MAX_PICTURES) {
+      const url = pictureOf(src);
+      if (url) pictures.set(dst, url);
+    }
+    if (/^(SCRIPT|IFRAME|STYLE|LINK|AUDIO|OBJECT|EMBED)$/.test(dst.tagName) || ((dst.tagName === 'CANVAS' || dst.tagName === 'VIDEO') && !pictures.has(dst) && i > 0)) { dst.remove(); continue; }
     const cs = getComputedStyle(src);
     computed.set(src, cs);
     const parent = i === 0 ? null : (src.parentElement && computed.get(src.parentElement)) ?? null;
@@ -404,6 +495,19 @@ export function snapshotOf(root: HTMLElement): CatalogSnapshot | null {
     if (src instanceof HTMLImageElement && dst instanceof HTMLImageElement) dst.setAttribute('src', src.currentSrc || src.src);
     dst.setAttribute('style', style);
   }
+  // Swapped after the styles are read: the picture keeps the canvas's measured box and placement
+  let root2: HTMLElement = clone;
+  for (const [dst, url] of pictures) {
+    const img = document.createElement('img');
+    img.setAttribute('src', url);
+    img.setAttribute('alt', '');
+    img.setAttribute('style', `${dst.getAttribute('style') ?? ''};object-fit:fill`);
+    if (dst === clone) root2 = img; else dst.replaceWith(img);
+  }
+  return finish(root, root2, box);
+}
+
+function finish(root: HTMLElement, clone: HTMLElement, box: DOMRect): CatalogSnapshot | null {
   // The copy sits at the origin of its own box, whatever placed it on the page
   clone.style.position = 'relative';
   clone.style.top = clone.style.left = clone.style.right = clone.style.bottom = 'auto';

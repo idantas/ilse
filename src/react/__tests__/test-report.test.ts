@@ -37,3 +37,12 @@ describe('test setup', () => {
     expect(duration(150_000)).toBe('3 min');
   });
 });
+
+describe('findingDetail', () => {
+  it("says axe's contrast sentence plainly", async () => {
+    const { findingDetail } = await import('../test-findings.js');
+    const detail = 'Element has insufficient color contrast of 1.69 (foreground color: #cfc6b8, background color: #ffffff, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1';
+    expect(findingDetail({ rule: 'color-contrast', detail })).toBe('Contrast 1.69:1 (#cfc6b8 on #ffffff); text this size needs 4.5:1.');
+    expect(findingDetail({ rule: 'other', detail: 'x' })).toBe('x');
+  });
+});

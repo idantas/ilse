@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { resolveFrameUrl } from '../context/chunk-source.js';
-import { parsePropEdit } from '../context/prop-swap.js';
+import { parsePropEdit, type PropEdit, type PropSource } from '../context/prop-swap.js';
 import { parseInsert } from '../context/insert-component.js';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
@@ -86,6 +86,13 @@ export interface WsServerOptions {
   journeys?: (action: JourneyAction, origin: string) => void;
   /** Plain HTTP requests on the same port (the MCP endpoint). Return true when handled. */
   httpHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => Promise<boolean> | boolean;
+  /** Ilse Pro sign-in from the toolbar (src/account/control.ts). The page only gets the state, never the token. */
+  proAccount?: {
+    state: () => unknown;
+    login: () => void;
+    cancel: () => void;
+    logout: () => Promise<void>;
+  };
   /** Extra fields for the 'connected' payload — e.g. undo state after a page reload */
   connectExtras?: () => Record<string, unknown>;
   /** The owner's switch: Pro off (view as Free) or back on. Ignored without an owner license */
@@ -100,9 +107,14 @@ export interface WsServerOptions {
   tokens?: Array<{ name: string; value: string; type: string }>;
   libraries?: string[];
   /** The design panel's catalog: the product's components, read from the code, and the copies seen on pages */
-  getCatalog?: () => { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState };
+  getCatalog?: () => { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState; ignoredLooks?: unknown[] };
+  /** The Library's look-alikes: "Ignore" one, and Memory's way back (returns the list now) */
+  ignoreLook?: (id: string, label: string) => unknown[];
+  unignoreLook?: (id: string) => unknown[];
   /** Copies of catalog components the toolbar took on a page */
   saveSnapshots?: (items: unknown[]) => void;
+  /** The panel's Component section: the selected instance's JSX where it's written, changes in */
+  propSource?: (edit: PropEdit) => PropSource | null;
   /** `.ilse/catalog.md` created (or found) for the team to edit — on the user's click */
   catalogFile?: () => { path: string; created: boolean } | null;
   /** Create DS: the project's design system written to .ilse/ds from its code (ds-export.ts) */
@@ -114,7 +126,9 @@ export interface WsServerOptions {
   /** Pro: the fresh-agent test of the DS (a minute or two) */
   dsCheck?: () => Promise<unknown>;
   /** A rule from the test the person approved: kept, and the DS written again */
-  dsRule?: (rule: string) => Promise<unknown>;
+  dsRule?: (rules: string[]) => Promise<unknown>;
+  /** Pro: the Consistency tab's review of one screen by the user's agent (cached per screen); null = no agent or no Pro */
+  consistencyReview?: (req: { key: string; route: string; pieces: unknown[]; known: string[]; ignored: string[] }, fresh: boolean) => Promise<unknown[] | null>;
 }
 
 /**
@@ -469,7 +483,7 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
 
     case 'test': {
       // The origin this server was claimed by — the app the toolbar is on, never one the message names
-      const actions: TestAction[] = ['run', 'run-anon', 'login', 'login-done', 'login-cancel', 'setup'];
+      const actions: TestAction[] = ['run', 'run-anon', 'login', 'login-done', 'login-cancel', 'setup', 'stop'];
       if (allowedOrigin && actions.includes(msg.action as TestAction)) options.testControl?.(msg.action as TestAction, allowedOrigin, parseTestOptions(msg.options));
       break;
     }
@@ -492,20 +506,37 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       break;
     }
 
+    case 'look_ignore': {
+      if (typeof msg.id !== 'string') break;
+      const list = options.ignoreLook?.(msg.id, typeof msg.label === 'string' ? msg.label : '') ?? [];
+      ws.send(JSON.stringify({ type: 'looks_ignored', list }));
+      break;
+    }
+
     case 'memory':
     case 'memory_undo_decision':
+    case 'memory_unignore_look':
     case 'memory_forget_test': {
       if (msg.type === 'memory_undo_decision' && typeof msg.id === 'string') options.undoDecision?.(msg.id);
+      if (msg.type === 'memory_unignore_look' && typeof msg.id === 'string') options.unignoreLook?.(msg.id);
       if (msg.type === 'memory_forget_test') options.forgetTestMemory?.();
       ws.send(JSON.stringify({ type: 'memory', ...(options.getMemory?.() ?? {}) }));
       break;
     }
 
     case 'catalog': {
-      let data: { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState } = { entries: [], snapshots: {} };
+      let data: { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState; ignoredLooks?: unknown[] } = { entries: [], snapshots: {} };
       try { data = options.getCatalog?.() ?? data; } catch { /* a scan error leaves the list empty */ }
       // `lite`: just the list (copying starts on connect; the copies go when the catalog is shown)
-      ws.send(JSON.stringify(msg.lite ? { type: 'catalog', entries: data.entries, snapshots: {}, ds: data.ds, lite: true } : { type: 'catalog', ...data }));
+      ws.send(JSON.stringify(msg.lite ? { type: 'catalog', entries: data.entries, snapshots: {}, ds: data.ds, ignoredLooks: data.ignoredLooks, lite: true } : { type: 'catalog', ...data }));
+      break;
+    }
+
+    case 'prop_source': {
+      const edit = parsePropEdit(msg.propEdit);
+      let source: PropSource | null = null;
+      try { source = edit ? options.propSource?.(edit) ?? null : null; } catch { /* unreadable file: nothing shown */ }
+      ws.send(JSON.stringify({ type: 'prop_source', key: typeof msg.key === 'string' ? msg.key : '', source }));
       break;
     }
 
@@ -533,15 +564,27 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       break;
     }
 
-    case 'ds_rule': {
-      if (typeof msg.rule !== 'string') break;
+    case 'consistency_review': {
+      const key = typeof msg.key === 'string' ? msg.key : '';
+      const req = { key, route: typeof msg.route === 'string' ? msg.route : '/', pieces: Array.isArray(msg.pieces) ? msg.pieces : [], known: Array.isArray(msg.known) ? msg.known.filter((x: unknown): x is string => typeof x === 'string') : [], ignored: Array.isArray(msg.ignored) ? msg.ignored.filter((x: unknown): x is string => typeof x === 'string').slice(0, 60) : [] };
       void Promise.resolve()
-        .then(() => options.dsRule?.(msg.rule as string))
+        .then(() => options.consistencyReview?.(req, msg.fresh === true) ?? null)
+        .catch(() => null)
+        .then(findings => ws.send(JSON.stringify({ type: 'consistency_review', key, findings })));
+      break;
+    }
+
+    case 'ds_rule': {
+      // One message for "add all": the DS is written once, not once per rule racing each other
+      const rules = (Array.isArray(msg.rules) ? msg.rules : [msg.rule]).filter((r): r is string => typeof r === 'string');
+      if (!rules.length) break;
+      void Promise.resolve()
+        .then(() => options.dsRule?.(rules))
         .catch(() => null)
         .then(() => {
           let view: unknown = null;
           try { view = options.dsView?.() ?? null; } catch { /* unreadable */ }
-          ws.send(JSON.stringify({ type: 'ds_view', view, rule: msg.rule }));
+          ws.send(JSON.stringify({ type: 'ds_view', view, rules }));
         });
       break;
     }
@@ -563,6 +606,23 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
 
     case 'catalog_snapshot': {
       if (Array.isArray(msg.items)) options.saveSnapshots?.(msg.items);
+      break;
+    }
+
+    case 'pro_account': {
+      ws.send(JSON.stringify({ type: 'pro_account', state: options.proAccount?.state() ?? null }));
+      break;
+    }
+    case 'pro_account_login': {
+      options.proAccount?.login();
+      break;
+    }
+    case 'pro_account_cancel': {
+      options.proAccount?.cancel();
+      break;
+    }
+    case 'pro_account_logout': {
+      void options.proAccount?.logout();
       break;
     }
 

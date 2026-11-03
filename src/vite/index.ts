@@ -16,7 +16,7 @@
 import http from 'node:http';
 import { resolve, sep } from 'node:path';
 import type { Plugin } from 'vite';
-import { TOOLBAR_PATH } from '../proxy/toolbar.js';
+import { HOOK_STUB, TOOLBAR_PATH } from '../proxy/toolbar.js';
 import { readServerInfo, type ServerInfo } from '../config/local-token.js';
 import { loadUserConfig } from '../config/user-config.js';
 import { t, setLocale, detectLocale } from '../i18n/index.js';
@@ -84,7 +84,10 @@ export function ilse(opts: IlseViteOptions = {}): Plugin {
     name: 'ilse',
     apply: 'serve',
     transformIndexHtml() {
-      return [{ tag: 'script', attrs: { src: TOOLBAR_PATH, defer: true }, injectTo: 'body' }];
+      return [
+        { tag: 'script', attrs: { 'data-ilse-hook': true }, children: HOOK_STUB, injectTo: 'head-prepend' },
+        { tag: 'script', attrs: { src: TOOLBAR_PATH, defer: true }, injectTo: 'body' },
+      ];
     },
     configureServer(server) {
       setLocale(loadUserConfig().locale ?? detectLocale());

@@ -11,13 +11,14 @@
  * Written only when the user asks (`ilse ds`, or Create DS in the toolbar).
  */
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync, appendFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync, appendFileSync, readdirSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import type { CatalogEntry, CatalogProp } from './catalog.js';
 import type { DetectedToken } from '../setup/token-detect.js';
 import type { DsInput, DsNote, AskAgent } from '../pro/types.js';
 import { createHash } from 'node:crypto';
 import { instructionsFile } from '../git/commit-context.js';
+import { moreTokens, tokenModes, type DsToken, type DsMode } from './ds-tokens.js';
 
 export const DS_DIR = join('.ilse', 'ds');
 
@@ -63,9 +64,13 @@ export function contractOf(c: CatalogEntry): ComponentContract {
 // as a DTCG color it's invalid, and an agent would paint with a shadow string.
 const ONE_COLOR = /^(#[0-9a-f]{3,8}|[a-z]+|(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]*(\([^()]*\)[^()]*)*\))$/i;
 
-/** The tokens the DS can state truthfully: a "color" that isn't one color stays out */
-export function dsTokens(tokens: DetectedToken[]): DetectedToken[] {
-  return tokens.filter(t => t.type !== 'color' || ONE_COLOR.test(t.value.trim()));
+/**
+ * The tokens the DS can state truthfully: a "color" that isn't one color stays out.
+ * With the project's folder, also its fonts and the Tailwind steps it uses (ds-tokens.ts).
+ */
+export function dsTokens(tokens: Array<DetectedToken | DsToken>, cwd?: string): DsToken[] {
+  const own = tokens.filter(t => t.type !== 'color' || ONE_COLOR.test(t.value.trim()));
+  return cwd ? moreTokens(cwd, own) : own;
 }
 
 // Plain only when YAML can't misread it: `#` starts a comment, `:` a map, a leading digit a number
@@ -81,17 +86,23 @@ export function dedent(code: string): string {
 }
 
 /** DESIGN.md: the front matter Ilse itself reads back (design-md.ts), then prose for agents */
-export function buildDesignMd(name: string, catalog: CatalogEntry[], tokens: DetectedToken[], machine: string[] = [], notes: Record<string, DsNote> = {}, rules: string[] = []): string {
+export function buildDesignMd(name: string, catalog: CatalogEntry[], tokens: DsToken[], machine: string[] = [], notes: Record<string, DsNote> = {}, rules: string[] = [], modes: DsMode[] = []): string {
   const by = (prefix: string) => tokens.filter(t => t.name.startsWith(prefix + '.')).map(t => [t.name.slice(prefix.length + 1), t.value] as const);
+  // A scale reads small to large, however the tokens were found
+  const scale = (prefix: string) => by(prefix).sort((a, b) => (parseFloat(a[1]) || 0) - (parseFloat(b[1]) || 0));
   const front: string[] = ['---', `name: ${yamlValue(name)}`];
   const colors = by('color');
   if (colors.length) front.push('colors:', ...colors.map(([k, v]) => `  ${k}: ${yamlValue(v)}`));
-  const spacing = by('spacing');
+  const spacing = scale('spacing');
   if (spacing.length) front.push('spacing:', ...spacing.map(([k, v]) => `  ${k}: ${yamlValue(v)}`));
-  const rounded = by('rounded').concat(by('radius'));
+  const rounded = scale('rounded').concat(scale('radius'));
   if (rounded.length) front.push('rounded:', ...rounded.map(([k, v]) => `  ${k}: ${yamlValue(v)}`));
-  const type = by('typography');
-  if (type.length) front.push('typography:', ...type.flatMap(([k, v]) => [`  ${k}:`, `    fontSize: ${yamlValue(v)}`]));
+  const type = scale('typography');
+  const fonts = by('font');
+  // DESIGN.md's typography levels carry fontSize or fontFamily: a font is a level with only its family
+  if (type.length || fonts.length) front.push('typography:',
+    ...fonts.flatMap(([k, v]) => [`  font-${k}:`, `    fontFamily: ${yamlValue(v)}`]),
+    ...type.flatMap(([k, v]) => [`  ${k}:`, `    fontSize: ${yamlValue(v)}`]));
   front.push('---');
 
   const comps = dsComponents(catalog);
@@ -129,6 +140,8 @@ export function buildDesignMd(name: string, catalog: CatalogEntry[], tokens: Det
     // Learned from the fresh-agent test, approved by the person
     ...rules.map(r => `- ${r}`),
     '',
+    // Themes: what each one changes, so an agent writing for dark mode uses the right token
+    ...(modes.length ? ['## Themes', '', ...modes.map(m => `- **${m.name}**: ${Object.entries(m.values).map(([k, v]) => `\`${k}\` ${v}`).join(', ')}`), ''] : []),
     ...(base.length ? ['## Base', '', ...base.map(describe).flatMap(s => [s, ''])] : []),
     ...(product.length ? ['## Product', '', ...product.map(describe).flatMap(s => [s, ''])] : []),
     // Only what was written: Free has DESIGN.md alone
@@ -181,12 +194,13 @@ function homepageOf(cwd: string): string | undefined {
 }
 
 /** What Pro's formats are given: the core's reading, no paths to resolve again */
-export function dsInput(cwd: string, dir: string, name: string, catalog: CatalogEntry[], tokens: DetectedToken[], notes: Record<string, DsNote> = {}): DsInput {
+export function dsInput(cwd: string, dir: string, name: string, catalog: CatalogEntry[], tokens: DsToken[], notes: Record<string, DsNote> = {}): DsInput {
   const comps = dsComponents(catalog);
   const names = new Set(comps.map(c => c.name));
   const homepage = homepageOf(cwd);
+  const modes = tokenModes(cwd, tokens);
   return {
-    cwd, dir, name, tokens, ...(homepage ? { homepage } : {}),
+    cwd, dir, name, tokens, ...(homepage ? { homepage } : {}), ...(modes.length ? { modes } : {}),
     components: comps.map(c => {
       let code = '';
       try { code = readFileSync(join(cwd, c.source), 'utf8'); } catch { /* moved since the catalog was read */ }
@@ -201,14 +215,14 @@ export function writeDs(cwd: string, catalog: CatalogEntry[], tokens: DetectedTo
   const name = projectName(cwd);
   const dir = join(cwd, DS_DIR);
   mkdirSync(dir, { recursive: true });
-  tokens = dsTokens(tokens);
+  const all = dsTokens(tokens, cwd);
   let machine: string[] = [];
   // Pro failing must not cost the user the free file
-  try { machine = formats?.(dsInput(cwd, dir, name, catalog, tokens, notes)) ?? []; } catch { machine = []; }
+  try { machine = formats?.(dsInput(cwd, dir, name, catalog, all, notes)) ?? []; } catch { machine = []; }
   const rules = readDsState(cwd)?.rules ?? [];
-  writeFileSync(join(dir, 'DESIGN.md'), buildDesignMd(name, catalog, tokens, machine, notes, rules), 'utf8');
-  writeDsState(cwd, catalog, tokens, notes, rules);
-  return { dir: DS_DIR, files: ['DESIGN.md', ...machine].map(f => join(DS_DIR, f)), components: dsComponents(catalog).length, tokens: tokens.length };
+  writeFileSync(join(dir, 'DESIGN.md'), buildDesignMd(name, catalog, all, machine, notes, rules, tokenModes(cwd, all)), 'utf8');
+  writeDsState(cwd, catalog, all, notes, rules);
+  return { dir: DS_DIR, files: ['DESIGN.md', ...machine].map(f => join(DS_DIR, f)), components: dsComponents(catalog).length, tokens: all.length };
 }
 
 // ── What the DS was written from: `.ilse/ds/state.json` ─────────────────────
@@ -232,7 +246,7 @@ export function readDsState(cwd: string): DsState | null {
   try { return JSON.parse(readFileSync(join(cwd, DS_DIR, 'state.json'), 'utf8')) as DsState; } catch { return null; }
 }
 
-function writeDsState(cwd: string, catalog: CatalogEntry[], tokens: DetectedToken[], notes: Record<string, DsNote>, rules: string[] = []): void {
+function writeDsState(cwd: string, catalog: CatalogEntry[], tokens: DsToken[], notes: Record<string, DsNote>, rules: string[] = []): void {
   const state: DsState = {
     writtenAt: new Date().toISOString(),
     components: Object.fromEntries(dsComponents(catalog).map(c => [c.name, { hash: contractHash(c), ...(notes[c.name] ?? {}) }])),
@@ -269,7 +283,7 @@ export async function createDs(
     notes = kept;
     if (stale.length) {
       try {
-        const fresh = await pro.notes(dsInput(cwd, join(cwd, DS_DIR), projectName(cwd), stale, dsTokens(tokens)), pro.ask);
+        const fresh = await pro.notes(dsInput(cwd, join(cwd, DS_DIR), projectName(cwd), stale, dsTokens(tokens, cwd)), pro.ask);
         for (const [k, v] of Object.entries(fresh)) if (v?.whenToUse) notes[k] = v;
       } catch { /* the agent's turn failed: written without the new notes */ }
     }
@@ -298,6 +312,10 @@ export interface DsView {
   agents: { linked: string | null; target: string };
   /** Rules the person added from the fresh-agent test */
   rules: string[];
+  /** One tokens file per theme (`tokens.dark.json`), as on disk: each is a mode in Figma */
+  modes: Array<{ name: string; content: string }>;
+  /** The themes as read from the CSS: what each one changes */
+  themes: DsMode[];
 }
 
 export const DS_FILES = ['DESIGN.md', 'tokens.json', 'registry.json'];
@@ -306,6 +324,7 @@ const VIEW_MAX = 200_000;
 
 export function dsView(cwd: string, catalog: CatalogEntry[], tokens: DetectedToken[], formats: boolean): DsView {
   const notes = notesToKeep(cwd, catalog).kept;
+  const all = dsTokens(tokens, cwd);
   const files = DS_FILES.flatMap(name => {
     const path = join(cwd, DS_DIR, name);
     try {
@@ -314,11 +333,16 @@ export function dsView(cwd: string, catalog: CatalogEntry[], tokens: DetectedTok
       return [{ name, content: content.length > VIEW_MAX ? content.slice(0, VIEW_MAX) + '\n…' : content }];
     } catch { return []; }
   });
+  let modes: DsView['modes'] = [];
+  try {
+    modes = readdirSync(join(cwd, DS_DIR)).filter(f => /^tokens\.[\w-]+\.json$/.test(f)).sort()
+      .map(name => ({ name, content: readFileSync(join(cwd, DS_DIR, name), 'utf8') }));
+  } catch { /* no DS folder yet */ }
   return {
     dir: DS_DIR, files, formats,
     agents: { linked: dsInstructionsIn(cwd), target: relative(cwd, instructionsFile(cwd).path) },
-    rules: readDsState(cwd)?.rules ?? [],
-    tokens: dsTokens(tokens),
+    rules: readDsState(cwd)?.rules ?? [], modes, themes: tokenModes(cwd, all),
+    tokens: all,
     components: dsComponents(catalog).map(c => ({
       name: c.name, uses: c.uses, ...(notes[c.name] ?? {}),
       ...(c.layer ? { layer: c.layer } : {}),
@@ -373,7 +397,7 @@ export function dsChanges(cwd: string, catalog: CatalogEntry[], tokens: Detected
   const added = now.filter(c => !prev.components[c.name]).map(c => c.name);
   const changed = now.filter(c => prev.components[c.name] && prev.components[c.name].hash !== contractHash(c)).map(c => c.name);
   const removed = Object.keys(prev.components).filter(n => !names.has(n));
-  const cur = Object.fromEntries(dsTokens(tokens).map(t => [t.name, t.value]));
+  const cur = Object.fromEntries(dsTokens(tokens, cwd).map(t => [t.name, t.value]));
   const keys = new Set([...Object.keys(cur), ...Object.keys(prev.tokens)]);
   return { added, removed, changed, tokens: [...keys].filter(k => cur[k] !== prev.tokens[k]).sort() };
 }

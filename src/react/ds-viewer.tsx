@@ -8,7 +8,7 @@
  * Laid out like the expanded test report: centered over a dimmed page, the same size.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { Fragment, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { IconX } from '@tabler/icons-react';
 import { color, font, ilse, proText, radius, shadow } from './tokens.js';
@@ -23,6 +23,9 @@ export interface DsViewData {
   formats: boolean;
   agents: { linked: string | null; target: string };
   rules?: string[];
+  /** Pro's tokens file per theme (`tokens.dark.json`) */
+  modes?: Array<{ name: string; content: string }>;
+  themes?: Array<{ name: string; values: Record<string, string> }>;
 }
 
 /** The fresh-agent test's state in the toolbar (Pro) */
@@ -32,50 +35,68 @@ export type DsCheckState =
   | { status: 'done'; tasks: Array<{ task: string; code: string; problems: string[] }>; rules: string[] };
 
 /** Pro: an agent that knows only DESIGN.md does a few tasks; its mistakes become rules the person can add */
-function CheckSection({ state, rules, onRun, onAddRule }: { state: DsCheckState | null; rules: string[]; onRun: () => void; onAddRule: (rule: string) => void }) {
+function CheckSection({ state, rules, onRun, onAddRule }: { state: DsCheckState | null; rules: string[]; onRun: () => void; onAddRule: (rules: string[]) => void }) {
   const [open, setOpen] = useState<number | null>(null);
-  return (
-    <div style={{ marginBottom: 14, padding: 10, borderRadius: radius.md, border: `1px solid ${color.border}` }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: color.foreground }}>{t('dsv.check')}</div>
-          <div style={{ fontSize: 10.5, lineHeight: 1.45, color: color.mutedForeground, marginTop: 2 }}>{t('dsv.checkHint')}</div>
+  const done = state?.status === 'done' ? state : null;
+  if (!done) {
+    return (
+      <div style={{ paddingBottom: 10, borderBottom: `1px solid ${color.border}`, marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span title={t('dsv.checkHint')} style={{ flex: 1, minWidth: 0, fontSize: 11, color: color.mutedForeground }}>{t('dsv.check')}</span>
+          {state?.status !== 'running' && <button onClick={onRun} title={t('dsv.checkHint')} style={button}>{t('dsv.checkRun')}</button>}
         </div>
-        {state?.status !== 'running' && (
-          <button onClick={onRun} style={state ? button : primary}>{t(state ? 'dsv.checkAgain' : 'dsv.checkRun')}</button>
-        )}
+        {state?.status === 'running' && <div style={{ fontSize: 11, color: ilse.brand, marginTop: 8 }}>{t('dsv.checkRunning')}</div>}
+        {state?.status === 'failed' && <div style={{ fontSize: 11, color: color.mutedForeground, marginTop: 8 }}>{t('dsv.checkFailed')}</div>}
       </div>
-      {state?.status === 'running' && <div style={{ fontSize: 11, color: ilse.brand, marginTop: 8 }}>{t('dsv.checkRunning')}</div>}
-      {state?.status === 'failed' && <div style={{ fontSize: 11, color: color.mutedForeground, marginTop: 8 }}>{t('dsv.checkFailed')}</div>}
-      {state?.status === 'done' && (
-        <div style={{ marginTop: 8 }}>
-          {state.tasks.map((task, i) => (
-            <div key={i} style={{ padding: '4px 0', borderTop: `1px solid ${color.border}`, fontSize: 11 }}>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-                <span style={{ width: 12, color: task.problems.length ? '#ef4444' : '#16a34a' }}>{task.problems.length ? '✗' : '✓'}</span>
-                <span style={{ flex: 1, color: color.foreground }}>{task.task}</span>
-                {task.code && <button onClick={() => setOpen(open === i ? null : i)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 10, color: color.mutedForeground, textDecoration: 'underline' }}>{t('dsv.checkCode')}</button>}
-              </div>
-              {task.problems.map(p => <div key={p} style={{ marginLeft: 18, fontSize: 10.5, color: color.mutedForeground, fontFamily: font.mono }}>{p}</div>)}
-              {open === i && <pre style={{ ...pre, marginTop: 6, maxHeight: 220, overflow: 'auto' }}>{task.code}</pre>}
+    );
+  }
+  // The result is the proof the DS works (or where it doesn't), so it gets the stage: a score, then what the DS is missing
+  const ok = done.tasks.filter(task => !task.problems.length).length;
+  const isIn = (r: string) => rules.includes(r.trim().replace(/^[-*]\s*/, ''));
+  const pending = done.rules.filter(r => !isIn(r));
+  return (
+    <div style={{ padding: 14, borderRadius: radius.md, background: ilse.orangePale, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={label}>{t('dsv.check')}</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 4 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: color.foreground, fontVariantNumeric: 'tabular-nums' }}>{t('dsv.checkScore', { ok, n: done.tasks.length })}</span>
+            <span style={{ fontSize: 12, color: color.foreground }}>{t('dsv.checkScoreLabel')}</span>
+          </div>
+          <div style={{ fontSize: 11, color: color.mutedForeground, marginTop: 2 }}>{t('dsv.checkWho', { n: done.tasks.length })}</div>
+        </div>
+        <button onClick={onRun} style={button}>{t('dsv.checkAgain')}</button>
+      </div>
+      <div style={{ marginTop: 10, borderRadius: radius.sm, background: color.background, padding: '2px 10px' }}>
+        {done.tasks.map((task, i) => (
+          <div key={i} style={{ padding: '6px 0', borderTop: i ? `1px solid ${color.border}` : 'none', fontSize: 11 }}>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+              <span style={{ width: 12, color: task.problems.length ? '#ef4444' : '#16a34a' }}>{task.problems.length ? '✗' : '✓'}</span>
+              <span style={{ flex: 1, color: color.foreground }}>{task.task}</span>
+              {task.code && <button onClick={() => setOpen(open === i ? null : i)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 10, color: color.mutedForeground, textDecoration: 'underline' }}>{t('dsv.checkCode')}</button>}
+            </div>
+            {task.problems.map(p => <div key={p} style={{ marginLeft: 18, fontSize: 10.5, color: color.mutedForeground, fontFamily: font.mono }}>{p}</div>)}
+            {open === i && <pre style={{ ...pre, marginTop: 6, maxHeight: 220, overflow: 'auto' }}>{task.code}</pre>}
+          </div>
+        ))}
+      </div>
+      {done.tasks.length > 0 && ok === done.tasks.length && (
+        <div style={{ fontSize: 11, color: '#16a34a', marginTop: 8 }}>{t('dsv.checkAllGood')}</div>
+      )}
+      {done.rules.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: color.foreground }}>{t('dsv.rules')}</span>
+            {pending.length > 1 && <button onClick={() => onAddRule(pending)} style={primary}>{t('dsv.addAll', { n: pending.length })}</button>}
+          </div>
+          {done.rules.map(r => (
+            <div key={r} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 10px', marginTop: 4, borderRadius: radius.sm, background: color.background, fontSize: 11, lineHeight: 1.45, color: color.foreground }}>
+              <span style={{ flex: 1 }}>{r}</span>
+              {isIn(r)
+                ? <span style={{ fontSize: 10.5, color: ilse.brand, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ {t('dsv.ruleAdded')}</span>
+                : <button onClick={() => onAddRule([r])} style={pending.length > 1 ? button : primary}>{t('dsv.addRule')}</button>}
             </div>
           ))}
-          {state.tasks.length > 0 && state.tasks.every(task => !task.problems.length) && (
-            <div style={{ fontSize: 11, color: '#16a34a', marginTop: 6 }}>{t('dsv.checkAllGood')}</div>
-          )}
-          {state.rules.length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div style={{ ...label, marginBottom: 4 }}>{t('dsv.rules')}</div>
-              {state.rules.map(r => (
-                <div key={r} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '3px 0', fontSize: 11, color: color.foreground }}>
-                  <span style={{ flex: 1 }}>{r}</span>
-                  {rules.includes(r.trim().replace(/^[-*]\s*/, ''))
-                    ? <span style={{ fontSize: 10.5, color: ilse.brand, fontWeight: 600 }}>✓ {t('dsv.ruleAdded')}</span>
-                    : <button onClick={() => onAddRule(r)} style={button}>{t('dsv.addRule')}</button>}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -95,8 +116,28 @@ const pre: React.CSSProperties = {
   fontFamily: font.mono, fontSize: 10.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
 };
 
-function save(name: string, content: string) {
-  const url = URL.createObjectURL(new Blob([content], { type: name.endsWith('.json') ? 'application/json' : 'text/markdown' }));
+type SavePicker = (o: { suggestedName: string; types: { description: string; accept: Record<string, string[]> }[] }) =>
+  Promise<{ createWritable(): Promise<{ write(d: Blob): Promise<void>; close(): Promise<void> }> }>;
+
+/** Asks where to save (Chrome/Edge's save dialog); browsers without it download to the usual folder */
+async function save(name: string, content: string) {
+  const json = name.endsWith('.json');
+  const blob = new Blob([content], { type: json ? 'application/json' : 'text/markdown' });
+  const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
+  if (picker) {
+    try {
+      const handle = await picker({ suggestedName: name, types: [json
+        ? { description: 'JSON', accept: { 'application/json': ['.json'] } }
+        : { description: 'Markdown', accept: { 'text/markdown': ['.md'] } }] });
+      const out = await handle.createWritable();
+      await out.write(blob);
+      await out.close();
+      return;
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return; // closed the dialog: nothing saved, on purpose
+    }
+  }
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
@@ -115,16 +156,15 @@ function CopyButton({ text, children, style }: { text: string; children: React.R
 }
 
 /** Who reads the file and how it gets there */
-function ForWhom({ who, how, action }: { who: string; how: string; action?: React.ReactNode }) {
+function ForWhom({ who, how, action, quiet }: { who: string; how: string; action?: React.ReactNode; quiet?: boolean }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '64px 1fr', gap: '4px 8px', fontSize: 11, lineHeight: 1.45, marginBottom: 12 }}>
-      <span style={{ color: color.mutedForeground }}>{t('dsv.for')}</span>
-      <span style={{ color: color.foreground }}>{who}</span>
-      <span style={{ color: color.mutedForeground }}>{t('dsv.how')}</span>
-      <span style={{ color: color.foreground }}>
-        {how}
-        {action}
-      </span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingBottom: 10, marginBottom: 12, borderBottom: `1px solid ${color.border}`, fontSize: 11, lineHeight: 1.45 }}>
+      <div title={quiet ? how : undefined} style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ color: color.foreground }}>{who}</div>
+        {/* The steps matter where the file goes to another tool; for agents one line is enough */}
+        {!quiet && <div style={{ color: color.mutedForeground, marginTop: 2 }}>{how}</div>}
+      </div>
+      {action}
     </div>
   );
 }
@@ -139,7 +179,8 @@ function Visual({ data }: { data: DsViewData }) {
   const spacing = by('spacing');
   const radii = by('radius', 'rounded');
   const type = by('typography');
-  const other = data.tokens.filter(tk => !['color', 'spacing', 'radius', 'rounded', 'typography'].includes(group(tk.name)));
+  const fonts = by('font');
+  const other = data.tokens.filter(tk => !['color', 'spacing', 'radius', 'rounded', 'typography', 'font'].includes(group(tk.name)));
   const base = data.components.filter(c => c.layer === 'base');
   const product = data.components.filter(c => c.layer !== 'base');
   const chip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: color.foreground };
@@ -213,6 +254,27 @@ function Visual({ data }: { data: DsViewData }) {
           ))}
         </div>
       ))}
+      {fonts.length > 0 && section(t('dsv.fonts'), (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {fonts.map(tk => (
+            <span key={tk.name} style={{ ...chip, gap: 10 }}>
+              {/* next/font renames the family on the page; its variable still points at it */}
+              <span style={{ fontSize: 16, lineHeight: 1.2, fontFamily: `"${tk.value}", var(--font-${short(tk.name)}), inherit` }}>Aa</span>
+              {short(tk.name)} <span style={value}>{tk.value}</span>
+            </span>
+          ))}
+        </div>
+      ))}
+      {(data.themes ?? []).map(m => <Fragment key={m.name}>{section(t('dsv.theme', { name: m.name }), (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
+          {Object.entries(m.values).map(([k, v]) => (
+            <span key={k} style={chip}>
+              {group(k) === 'color' && <span style={{ width: 18, height: 18, borderRadius: radius.sm, background: v, border: `1px solid ${color.border}`, flexShrink: 0 }} />}
+              {short(k)} <span style={value}>{v}</span>
+            </span>
+          ))}
+        </div>
+      ))}</Fragment>)}
       {other.length > 0 && section(t('dsv.otherTokens'), (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
           {other.map(tk => <span key={tk.name} style={chip}>{tk.name} <span style={value}>{tk.value}</span></span>)}
@@ -246,7 +308,7 @@ function shadcnExample(data: DsViewData): { ns: string; item: string } {
 export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, check, onCheck, onAddRule }: {
   data: DsViewData; justWritten: boolean; onClose: () => void; onExport: () => void; onLinkAgents: () => void;
   /** Pro: the fresh-agent test */
-  check: DsCheckState | null; onCheck: () => void; onAddRule: (rule: string) => void;
+  check: DsCheckState | null; onCheck: () => void; onAddRule: (rules: string[]) => void;
 }) {
   const [tab, setTab] = useState<Tab>('DESIGN.md');
   const [raw, setRaw] = useState(false);
@@ -260,18 +322,23 @@ export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, c
   const tabs: Array<{ id: Tab; pro: boolean }> = [{ id: 'DESIGN.md', pro: false }, { id: 'tokens.json', pro: true }, { id: 'registry.json', pro: true }];
   // Linked: any agent reads the DS on its own. Not yet: one click adds the block (or copy the line by hand)
   const linked = data.agents?.linked ?? null;
+  const modes = data.formats ? data.modes ?? [] : [];
   const target = data.agents?.target ?? 'AGENTS.md';
   const agentsAction = linked
-    ? <span style={{ display: 'block', marginTop: 4, color: ilse.brand, fontWeight: 600 }}>✓ {t('dsv.linked', { file: linked })}</span>
+    ? <span style={{ color: ilse.brand, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ {t('dsv.linked', { file: linked })}</span>
     : (
-      <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+      <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+        <CopyButton text={t('dsv.agentsLine')} style={{ border: 'none', background: 'none', color: color.mutedForeground }}>{t('dsv.copyLine')}</CopyButton>
         <button onClick={onLinkAgents} style={primary}>{t('dsv.link', { file: target })}</button>
-        <CopyButton text={t('dsv.agentsLine')}>{t('dsv.copyLine')}</CopyButton>
       </span>
     );
-  const about: Record<Tab, { who: string; how: string; action?: React.ReactNode }> = {
-    'DESIGN.md': { who: t('dsv.agents'), how: linked ? t('dsv.agentsLinkedHow') : t('dsv.agentsHow', { file: target }), action: agentsAction },
-    'tokens.json': { who: t('dsv.figma'), how: t('dsv.figmaHow') },
+  const about: Record<Tab, { who: string; how: string; action?: React.ReactNode; quiet?: boolean }> = {
+    'DESIGN.md': { who: t('dsv.agents'), how: linked ? t('dsv.agentsLinkedHow') : t('dsv.agentsHow', { file: target }), action: agentsAction, quiet: true },
+    'tokens.json': { who: t('dsv.figma'), how: t('dsv.figmaHow'), action: modes.length > 0 && (
+      <span title={t('dsv.modes')} style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+        {modes.map(m => <button key={m.name} onClick={() => save(m.name, m.content)} style={button}>{m.name} ↓</button>)}
+      </span>
+    ) },
     'registry.json': { who: t('dsv.shadcn'), how: t('dsv.shadcnHow', shadcnExample(data)) },
   };
 

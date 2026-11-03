@@ -1,12 +1,13 @@
 import chalk from 'chalk';
 import { canViewAsFree, readViewAsFree, writeViewAsFree } from '../pro/view-as.js';
-import { loadPro } from '../pro/load.js';
+import { loadPro, proEntry } from '../pro/load.js';
 import { askAgent } from '../agent/ask.js';
 import { buildCatalog } from '../design-context/catalog.js';
 import { createCatalogFile } from '../design-context/catalog-file.js';
-import { planPropSwap } from '../context/prop-swap.js';
+import { planPropSwap, propSource } from '../context/prop-swap.js';
 import { planInsert } from '../context/insert-component.js';
 import { checkConsistency } from '../design-context/consistency.js';
+import { ignoreLook, readIgnoredLooks, unignoreLook } from '../design-context/looks-ignored.js';
 import * as p from '@clack/prompts';
 import { loadUserConfig, saveUserConfig, isFirstRun, type IlseMode } from '../config/user-config.js';
 import { detectAgent, executeAnnotation, executeBatch, buildBatchPrompt, killAllActiveProcesses, type AgentDetection } from '../agent/executor.js';
@@ -19,13 +20,16 @@ import { Journal } from '../telemetry/journal.js';
 import { detectFramework, type Framework, type FrameworkDetection } from '../setup/framework-detect.js';
 import { removeIlseComponent, type RemoveResult } from '../setup/remove-component.js';
 import { choseInjectedToolbar, saveInjectedToolbarChoice, readProjectRc } from '../config/project-rc.js';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { injectIlseComponent } from '../setup/inject-component.js';
 import { detectTokens } from '../setup/token-detect.js';
 import { t, detectLocale, setLocale, getLocale } from '../i18n/index.js';
 import type { Annotation } from '../types.js';
 import { checkForUpdate } from './update-check.js';
+import { openBrowser } from './open-browser.js';
+import { dailyCheck } from '../account/session.js';
+import { createAccountControl } from '../account/control.js';
 import { startProxy, type DevTarget } from '../proxy/server.js';
 import { serveToolbar } from '../proxy/toolbar.js';
 import { serveBookmarklet } from '../proxy/bookmarklet.js';
@@ -52,6 +56,7 @@ import { checkSetup, checkChange } from '../agent/check-run.js';
 import { hasProblems, checkRepairPrompt, describeReport, type CheckReport } from '../agent/project-check.js';
 import type { FileChange } from '../agent/changeset.js';
 import { projectDir } from '../config/project-dir.js';
+import { cleanPieces, reviewInput, reviewKey } from '../design-context/consistency-review.js';
 import { createDs, hasDs, dsTokens, dsView, addDsInstructions, dsChanges, dsInput, notesToKeep, projectName, addDsRule, DS_DIR } from '../design-context/ds-export.js';
 import { planClassEdit } from '../context/token-swap.js';
 import { hasCommitContext, addCommitContext, commitContextChoice, saveCommitContextChoice, instructionsFile } from '../git/commit-context.js';
@@ -232,15 +237,6 @@ export interface DefaultOptions {
   port?: number;
 }
 
-function openBrowser(url: string): void {
-  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
-  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
-  try {
-    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
-    child.on('error', () => { /* no browser opener — the URL is printed anyway */ });
-    child.unref();
-  } catch { /* same */ }
-}
 
 /**
  * Same port: Ilse starts the dev script on a hidden port and takes the app's
@@ -523,6 +519,10 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
 
   // Fire update check in parallel — never blocks startup
   const updatePromise = checkForUpdate();
+  // Signed in only: once a day, the installed versions go to the site and the license comes back renewed
+  const accountPromise = loadPro().then((p) =>
+    dailyCheck({ ilseVersion: (createRequire(import.meta.url)('../../package.json') as { version: string }).version, proVersion: p?.version ?? null }),
+  ).catch(() => 'unreachable' as const);
 
   const agent = detectAgent();
   let config = loadUserConfig();
@@ -617,6 +617,8 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   if (update?.hasUpdate) {
     console.log(chalk.yellow(`  ↑ ${t('cli.updateAvailable', { version: update.latest })}`) + chalk.dim(` · ${update.install}`));
   }
+  const account = await accountPromise;
+  if (account === 'replaced' || account === 'revoked') console.log(chalk.yellow(`  ${t(`account.${account}`)}`));
 
   // Port printed after startServer() — placeholder updated below
   console.log('');
@@ -1380,6 +1382,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       const journey = /^journey:(.*):(\w+)(?:\/(\w+))?$/.exec(line);
       const text = line === 'no-browser' ? `${t('test.noBrowser')} npx playwright install chromium`
         : line === 'login-saved' ? `✓ ${t('test.loginSaved')}`
+        : line === 'test-stopped' ? t('test.stopped')
         : retest ? t('test.retest', { fixed: retest[1], still: retest[2] })
         : summary ? `${t('test.summary', { count: summary[1], pages: summary[2] })} · ${summary[3]}`
         // journey:<goal>:<desktop>[/<mobile>]
@@ -1392,6 +1395,17 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   let viewAsFree = ownerCanSwitch && readViewAsFree();
   // Read on every use, so the switch takes effect without restarting
   let proServer = viewAsFree ? undefined : loadedPro;
+  // The Consistency tab's reviews, per screen, while this ilse runs
+  const reviewCache = new Map<string, unknown[]>();
+
+  // Settings → Sign in to Ilse Pro: the same login as `ilse login`, the toolbar only sees its state
+  const proAccount = createAccountControl({
+    locale: () => (loadUserConfig().locale === 'en' ? 'en' : 'pt'),
+    broadcast: (state) => broadcast({ type: 'pro_account', state }),
+    openBrowser,
+    proActive: !!proServer,
+    proInstalled: existsSync(proEntry()),
+  });
 
   const server = await startServer({
     // The toolbar for pages that load it from this port rather than the proxy:
@@ -1416,7 +1430,10 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       // null: Pro is there but older than the memory screen; absent pro: test mode asleep
       pro: !!proServer?.testControl,
       test: proServer?.getMemory?.() ?? null,
+      looks: readIgnoredLooks(cwdRoot),
     }),
+    ignoreLook: (id, label) => ignoreLook(cwdRoot, id, label),
+    unignoreLook: (id) => unignoreLook(cwdRoot, id),
     // The code's components are read for everyone (the Component section); copies are Pro's
     getCatalog: () => {
       const entries = buildCatalog(cwdRoot);
@@ -1424,14 +1441,16 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       return {
         entries,
         snapshots: proServer?.catalog?.snapshots() ?? {},
+        ignoredLooks: readIgnoredLooks(cwdRoot),
         // The Library: "Create design system" until .ilse/ds exists, then "Export".
         // Pro keeps it alive: what changed since it was written, for the person to approve
         ds: {
-          exists: hasDs(cwdRoot), tokens: dsTokens(tokens).length, formats: !!(proServer && pro?.dsFormats),
+          exists: hasDs(cwdRoot), tokens: dsTokens(tokens, cwdRoot).length, formats: !!(proServer && pro?.dsFormats),
           ...(proServer && pro?.dsFormats ? { changes: dsChanges(cwdRoot, entries, tokens) } : {}),
         },
       };
     },
+    propSource: (edit) => propSource(edit, cwdRoot),
     catalogFile: () => {
       if (!proServer?.catalog) return null;
       const areas = new Set(buildCatalog(cwdRoot).flatMap(e => e.layer === 'product' && e.feature ? [e.feature] : []));
@@ -1448,13 +1467,26 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     dsCheck: async () => {
       if (!proServer || !pro?.dsCheck || !hasDs(cwdRoot)) return null;
       const catalog = buildCatalog(cwdRoot);
-      const tokens = dsTokens(detectTokens(cwdRoot).tokens);
+      const tokens = dsTokens(detectTokens(cwdRoot).tokens, cwdRoot);
       const input = dsInput(cwdRoot, join(cwdRoot, DS_DIR), projectName(cwdRoot), catalog, tokens, notesToKeep(cwdRoot, catalog).kept);
       const designMd = readFileSync(join(cwdRoot, DS_DIR, 'DESIGN.md'), 'utf8');
       return pro.dsCheck({ ...input, designMd }, (prompt, opts) => askAgent(cwdRoot, prompt, opts));
     },
-    dsRule: async (rule) => {
-      if (!addDsRule(cwdRoot, rule)) return;
+    // The Consistency tab: opening it asks the user's agent once per screen (route + its pieces); ↻ asks again
+    consistencyReview: async (req, fresh) => {
+      if (!proServer || !pro?.consistencyReview) return null;
+      const pieces = cleanPieces(req.pieces);
+      if (!pieces.length) return [];
+      const input = reviewInput(cwdRoot, buildCatalog(cwdRoot), dsTokens(detectTokens(cwdRoot).tokens, cwdRoot), { route: req.route, pieces, known: req.known, ignored: req.ignored }, projectName(cwdRoot), getLocale() === 'pt' ? 'pt' : 'en');
+      // Keyed by the code too: after a fix the same screen is asked again, about the new code
+      const key = reviewKey(req.key, input);
+      if (!fresh && reviewCache.has(key)) return reviewCache.get(key)!;
+      const found = await pro.consistencyReview(input, (prompt, opts) => askAgent(cwdRoot, prompt, { timeoutMs: 240_000, ...opts }));
+      reviewCache.set(key, found);
+      return found;
+    },
+    dsRule: async (rules) => {
+      if (!rules.map(rule => addDsRule(cwdRoot, rule)).some(Boolean)) return;
       // Written again with the rule; the notes are kept (same contracts), so no new question to the agent
       await createDs(cwdRoot, buildCatalog(cwdRoot), detectTokens(cwdRoot).tokens, proServer ? { formats: pro?.dsFormats } : undefined);
     },
@@ -1469,7 +1501,9 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       console.log(chalk.dim(`  ${t(free ? 'cli.viewAsFree' : 'cli.viewAsPro')}`));
     },
     appliedIds: () => appliedAnnotationIds(cwdRoot),
+    proAccount,
     connectExtras: () => ({
+      proAccount: proAccount.state(),
       // The toolbar shows test mode awake only when Pro can run it
       pro: { test: !!proServer?.testControl, journeys: !!proServer?.journeys, catalog: !!proServer?.catalog },
       // The owner's switch: the badge in settings flips Pro ↔ Free

@@ -96,6 +96,8 @@ function Square({ pulsing, tone }: { pulsing?: boolean; tone?: 'ok' | 'bad' }) {
   );
 }
 
+const FADE_TOP = 'linear-gradient(to bottom, transparent 0, #000 28px)';
+
 export function JourneysPanel({ journeys, recording, live, error, extendsRight, suggestions, suggesting, onAdd, onRun, onRemove, onConfirm, onFocus, onSuggest, onShare, onReport, onClose }: {
   journeys: JourneySummary[];
   /** The core can ask the agent: new journeys can be recorded */
@@ -125,6 +127,7 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
   const [wantsNew, setWantsNew] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrolled, setScrolled] = useState(false);
   const running = !!live && !live.done;
 
   // Suggestions are picked first (any number), then one CTA records them, one after another
@@ -238,6 +241,50 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
   const finished = live?.done ? (journeys.find(j => j.id === live.id) ?? live.done) : null;
 
 
+  // While recording, the rest of the suggestions wait; they come back when the line is done
+  const suggestionsBlock = suggestions && !suggesting && !busy && (
+    suggestions.length === 0
+      ? <div style={agentBubble}><Square />{t('journeys.noSuggestions')}</div>
+      : offered.length > 0 && (
+        <div style={agentBubble}>
+          <Square />{t('journeys.suggested')}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+            {offered.map(sg => {
+              const on = picked.has(sg.goal);
+              return (
+                <button
+                  key={sg.goal}
+                  role="checkbox"
+                  aria-checked={on}
+                  onClick={() => togglePick(sg.goal)}
+                  title={sg.start}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, textAlign: 'left', padding: '5px 8px', borderRadius: 8,
+                    border: `1px solid ${on ? ilse.test : ilse.testLight}`, background: on ? ilse.testPale : '#fff', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600, color: '#171717', fontFamily: font.sans,
+                  }}
+                >
+                  {on
+                    ? <IconSquareCheckFilled size={14} color={ilse.test} style={{ flexShrink: 0 }} />
+                    : <IconSquare size={14} stroke={2} color={ilse.test} style={{ flexShrink: 0 }} />}
+                  <span style={{ flex: 1, minWidth: 0 }}>{sg.goal}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+            <button
+              disabled={picked.size === 0}
+              onClick={recordPicked}
+              style={{ ...speechButton('test', picked.size > 0), opacity: picked.size ? 1 : 0.45, cursor: picked.size ? 'pointer' : 'default' }}
+            >
+              {picked.size ? t('journeys.recordPicked', { count: picked.size }) : t('journeys.pickSome')}
+            </button>
+          </div>
+        </div>
+      )
+  );
+
   return (
     <div
       data-ilse-toolbar
@@ -248,7 +295,13 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
         width: 340, display: 'flex', flexDirection: 'column', gap: 8, fontFamily: font.sans,
       }}
     >
-      <div ref={scrollRef} className="ilse-hidden-scroll" style={{ overflowY: 'auto', maxHeight: 320, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div
+        ref={scrollRef}
+        className="ilse-hidden-scroll"
+        onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 0)}
+        // Scrolled: the top fades out instead of a bubble cut in half
+        style={{ overflowY: 'auto', maxHeight: 320, display: 'flex', flexDirection: 'column', gap: 6, ...(scrolled ? { maskImage: FADE_TOP, WebkitMaskImage: FADE_TOP } : {}) }}
+      >
         {/* Opened with journeys and nothing going on: start a new one, or go on with the last */}
         {journeys.length > 0 && !live && !busy && !suggesting && !suggestions && (
           <div style={{ ...agentBubble, color: '#171717' }}>
@@ -299,6 +352,8 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
             </React.Fragment>
           );
         })}
+        {/* After a run the suggestions go above it: what just happened stays in view, at the bottom */}
+        {live && suggestionsBlock}
         {/* The one running (or just finished): one bubble per step */}
         {live && (
           <>
@@ -345,49 +400,7 @@ export function JourneysPanel({ journeys, recording, live, error, extendsRight, 
 
         {suggesting && <div style={agentBubble}><Square pulsing />{t('journeys.suggesting')}</div>}
         {queue.length > 0 && <div style={{ ...agentBubble, fontSize: 11 }}><Square />{t('journeys.queued', { count: queue.length })}</div>}
-        {/* While recording, the rest of the suggestions wait; they come back when the line is done */}
-        {suggestions && !suggesting && !busy && (
-          suggestions.length === 0
-            ? <div style={agentBubble}><Square />{t('journeys.noSuggestions')}</div>
-            : offered.length > 0 && (
-              <div style={agentBubble}>
-                <Square />{t('journeys.suggested')}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
-                  {offered.map(sg => {
-                    const on = picked.has(sg.goal);
-                    return (
-                      <button
-                        key={sg.goal}
-                        role="checkbox"
-                        aria-checked={on}
-                        onClick={() => togglePick(sg.goal)}
-                        title={sg.start}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 6, textAlign: 'left', padding: '5px 8px', borderRadius: 8,
-                          border: `1px solid ${on ? ilse.test : ilse.testLight}`, background: on ? ilse.testPale : '#fff', cursor: 'pointer',
-                          fontSize: 12, fontWeight: 600, color: '#171717', fontFamily: font.sans,
-                        }}
-                      >
-                        {on
-                          ? <IconSquareCheckFilled size={14} color={ilse.test} style={{ flexShrink: 0 }} />
-                          : <IconSquare size={14} stroke={2} color={ilse.test} style={{ flexShrink: 0 }} />}
-                        <span style={{ flex: 1, minWidth: 0 }}>{sg.goal}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-                  <button
-                    disabled={picked.size === 0}
-                    onClick={recordPicked}
-                    style={{ ...speechButton('test', picked.size > 0), opacity: picked.size ? 1 : 0.45, cursor: picked.size ? 'pointer' : 'default' }}
-                  >
-                    {picked.size ? t('journeys.recordPicked', { count: picked.size }) : t('journeys.pickSome')}
-                  </button>
-                </div>
-              </div>
-            )
-        )}
+        {!live && suggestionsBlock}
         {error && <div style={{ ...agentBubble, color: '#ef4444' }}><Square tone="bad" />{error}</div>}
         {!recording && <div style={{ ...agentBubble, fontSize: 11 }}>{t('journeys.noRecording')}</div>}
       </div>

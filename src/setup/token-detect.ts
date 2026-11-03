@@ -84,14 +84,15 @@ function extractTailwindTokens(cwd: string): DetectedToken[] | null {
 
 // ── CSS variables extraction (globals.css, theme) ──────────────────────────
 
-function extractCSSVariableTokens(cwd: string): DetectedToken[] | null {
-  const candidates = [
-    'src/app/globals.css', 'app/globals.css', 'src/globals.css',
-    'src/styles/globals.css', 'styles/globals.css',
-    'src/index.css', 'src/app/layout.css',
-  ];
+/** Where a project keeps its CSS theme (also read by the DS for themes and fonts) */
+export const CSS_CANDIDATES = [
+  'src/app/globals.css', 'app/globals.css', 'src/globals.css',
+  'src/styles/globals.css', 'styles/globals.css',
+  'src/index.css', 'src/app/layout.css',
+];
 
-  for (const file of candidates) {
+function extractCSSVariableTokens(cwd: string): DetectedToken[] | null {
+  for (const file of CSS_CANDIDATES) {
     const content = readFile(join(cwd, file));
     if (!content) continue;
 

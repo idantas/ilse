@@ -55,7 +55,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     items: [
       { keys: 'Mod+click', label: 'shortcuts.deepSelect' },
       { keys: 'Mod+Enter', label: 'shortcuts.send' },
-      { keys: 'Delete', label: 'shortcuts.remove' },
+      { keys: isMac ? '⌘⌫' : 'Delete', label: 'shortcuts.remove' },
     ],
   },
   {

@@ -71,6 +71,24 @@ function append(cwd: string, line: LedgerEntry | Tombstone): void {
   } catch { /* the ledger is a convenience — never break a run over it */ }
 }
 
+/**
+ * What the change was, in the designer's words, else in a few words of its own
+ * (the memory and the commit read this). Never the instructions Ilse wrote for
+ * the agent: a dropped component's or a prop's note is a prompt.
+ */
+/** A test finding sent to fix ("Fix: <title>. <the checker's sentence>…"): its title only */
+const plainNote = (s: string) => /^Fix: /.test(s) ? s.split(/\.\s/)[0] : s;
+
+function noteOf(a: Annotation): string | undefined {
+  const own = a.designerNote?.trim().split('\n')[0];
+  if (own) return plainNote(own).slice(0, 200);
+  if (a.insert) return `+ <${a.insert.component}> (${a.insert.placement})`;
+  if (a.propEdit) return `<${a.propEdit.component}> ${a.propEdit.changes.map(c => `${c.prop}: ${c.to}`).join(', ')}`;
+  if (a.designerNote !== undefined) return undefined; // only Ilse's blocks (panel edits: \`style\` says them)
+  const first = a.note?.trim().split('\n')[0];
+  return first && !/^Ajustes do painel:/.test(first) ? plainNote(first).slice(0, 200) : undefined;
+}
+
 export function describeAnnotation(a: Annotation | undefined, id: string): LedgerAnnotation {
   if (!a) return { id };
   const best = a.source?.[0];
@@ -78,7 +96,7 @@ export function describeAnnotation(a: Annotation | undefined, id: string): Ledge
   return {
     id,
     intent: a.intent,
-    note: a.note?.trim().split('\n')[0].slice(0, 200) || undefined,
+    note: noteOf(a),
     element: [owner, a.element].filter(Boolean).join(' · ') || undefined,
     style: a.styleData?.changes.map(c => `${c.property}: ${c.from || '—'} → ${c.to}${c.token ? ` (${c.token})` : ''}`),
     summary: a.resolvedSummary,
@@ -148,7 +166,7 @@ export function ledgerSummary(cwd: string, limit = 8): LedgerSummary {
     id: e.id,
     at: e.at,
     path: e.path,
-    text: e.annotations.map(a => a.note?.trim() || a.summary || '').filter(Boolean).join(' · ') || e.label || '',
+    text: e.annotations.map(a => plainNote(a.note?.trim() || '') || a.summary || '').filter(Boolean).join(' · ') || e.label || '',
     files: e.files.map(f => f.path),
     pending: pending.has(e.id),
   }));

@@ -27,23 +27,28 @@ import {
   IconDevices,
 } from '@tabler/icons-react';
 import { captureElement, captureTextSelection, captureArea, captureEnvironment, humanizeSelector, pageComponents, type ElementCapture } from './annotator.js';
-import { analyzeElement, scanPage, setDSTokens, getDSTokens, parseTokensJSON, type Suggestion, type PageIssue } from './analyze.js';
+import { analyzeElement, scanPage, setDSTokens, type Suggestion, type PageIssue } from './analyze.js';
 import { connect, disconnect, send, onMessage, onStatus, isConnected } from './ws-client.js';
 import { watchRepaints, REPAINT_WAIT_MS, sameText, softRefresh } from './repaint-watch.js';
 import { copyPlacement, lineOf, type Neighbour } from './copy-place.js';
-import { watchPageErrors, newErrors } from './page-errors.js';
+import { watchPageErrors, newErrors, summarizeError } from './page-errors.js';
 import { useImageInput, InlineAttachments } from './image-input.js';
 import { CatalogPanel, CatalogWindow, bestSnapshot, type DsInfo } from './catalog-panel.js';
+import { lookNote, readLookAlikes, type LookAlikeView } from './look-alike.js';
+import { readConsistency, reviewEstimate, screenKey, swapStyles, type ReviewPiece } from './consistency.js';
+import { ConsistencyLocked, ConsistencyPanel, agentRow, ruleRow, type AgentFinding, type ConsistencyRow, type ConsistencyState, type ReviewState, type RowAction } from './consistency-panel.js';
 import { DsViewer, type DsViewData, type DsCheckState } from './ds-viewer.js';
-import { componentAt, findInstances, instanceAt, liftAnchor, namesOnPage, sameVariant, snapshotPage, variantKey, type InstanceRef, type CatalogItem, type CatalogSnapshot } from './catalog-snapshot.js';
-import { ComponentSection, type PropChange } from './component-section.js';
+import { componentAt, findInstances, type ComponentHit, instanceAt, liftAnchor, namesOnPage, sameVariant, snapshotPage, variantKey, type InstanceRef, type CatalogItem, type CatalogSnapshot } from './catalog-snapshot.js';
+import { ComponentSection, type PropChange, type PropSourceView } from './component-section.js';
+import { endLiveProps, hasLiveProps, setLiveProps } from './live-props.js';
+import { canStage, exampleRequest, stage, type StageRequest } from './preview-stage.js';
 import { previewVariant, makeDraft, placeDraft, placeholderHtml, removeDraft, restyleDraft, jsxPreview, type DropTarget, type Placement } from './component-drop.js';
-import { PropertyPanel, resetPanelPosition, type PanelTab, type PanelHistory, type TextEdit } from './property-panel.js';
+import { PropertyPanel, PanelTabs, resetPanelPosition, type PanelTab, type PanelHistory, type TextEdit } from './property-panel.js';
 import { useFrontLayer } from './front-layer.js';
 import { SketchLayer, PencilControl, PEN_COLORS } from './sketch-layer.js';
 import { ElementTree } from './element-tree.js';
 import { IlseMascot, type MascotActivity, type MascotMode, type MascotReaction } from './mascot.js';
-import { SpeechBubble, speechButton, reasoningLine, ReasoningDot } from './speech-bubble.js';
+import { SpeechBubble, speechButton, reasoningLine, ReasoningDot, floatingText, chatBubble } from './speech-bubble.js';
 import { findingsForPage, findingNote, findingElement, findingRef, type TestFinding, type TestFindingRef, type TestRunMeta } from './test-findings.js';
 import { analyzeSketch, renderSketchImage, formatSketchNote, drawnContainer, pageElementAt, type Stroke } from './sketch.js';
 import { recordScrollers, scrollShift, scrollerNow, visibleIn } from './scroll-anchor.js';
@@ -60,10 +65,10 @@ import { JourneysPanel, type JourneySummary, type JourneyLive, type JourneySugge
 import { TooltipLayer } from './tooltip-layer.js';
 import { PillBtn } from './pill-btn.js';
 // Inside the Screens iframe (EMBEDDED): select and edit, no toolbar — the host's Screens bar has Run / Undo
-import { EMBEDDED, uiDocument, type Device, type EmbedState, type ScreensAction } from './screens.js';
+import { EMBEDDED, uiDocument, uiLayer, type Device, type EmbedState, type ScreensAction } from './screens.js';
 import { ScreensMenu, ScreensView, useScreensEmbed, leaveScreens } from './screens-view.js';
 import { radius, color, shadow, ilse, font, modeAccent, proText } from './tokens.js';
-import { t, detectLocale, setLocale, getLocale, type Locale } from '../i18n/index.js';
+import { t, detectLocale, setLocale, getLocale, toolActivity, type Locale } from '../i18n/index.js';
 import { withShortcut, isTyping, doublePress, mod, SHORTCUT_GROUPS } from './shortcuts.js';
 
 // ── Clipboard fallback: format annotations as markdown ──────────────────────
@@ -265,7 +270,6 @@ function insertCommand(d: InsertDraft, styled = false): Pick<AutoContext, 'inser
  * bubble (it blends with its own transparent layer, so it shows as light grey) — solid ink with
  * a light halo reads on light and dark pages
  */
-const STALE_TEXT: React.CSSProperties = { color: color.foreground, mixBlendMode: 'normal', opacity: 1, textShadow: '0 0 2px #fff, 0 0 8px #fff' };
 
 /** A copy of an element that isn't a component: the chip, and what the agent works out in the code */
 function copyCommand(d: InsertDraft, styled = false): Pick<AutoContext, 'insert' | 'insertLabel'> {
@@ -310,6 +314,10 @@ function componentCommand(item: CatalogItem): Pick<AutoContext, 'component' | 'c
 }
 
 const hasAuto = (auto?: AutoContext) => !!auto && Object.values(auto).some(Boolean);
+
+/** Selected and nothing changed yet: no note, no command, no panel edit, no image, no sketch */
+const untouchedDraft = (pc: PendingCapture) =>
+  !pc.note.trim() && !hasAuto(pc.auto) && !(pc.styleChanges?.length) && !(pc.imageRefs?.length) && !pc.sketch;
 
 function moveText(dx: number, dy: number): string {
   const parts: string[] = [];
@@ -1415,6 +1423,13 @@ if (typeof navigator !== 'undefined') setLocale(detectLocale());
 /** A toast: what Ilse says, and what her mascot does while saying it (none when there's nothing to say) */
 const saying = (text: string | null, reaction?: MascotReaction) => (text ? { text, reaction } : null);
 type AgentInfo = { name?: string; email?: string; plan?: string; calls?: number; model?: string };
+/** src/account/control.ts AccountState, as the toolbar receives it */
+type ProAccountState = {
+  email: string | null;
+  pending: { userCode: string; uri: string } | null;
+  last: 'ok' | 'denied' | 'expired' | 'cancelled' | 'failed' | null;
+  restartNeeded: boolean;
+};
 
 export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; demoEndpoint?: string } = {}) {
   const [mounted, setMounted] = useState(false);
@@ -1429,6 +1444,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // Screens open: what the Ilse in the frame reports, and how to reach it
   const [embedState, setEmbedState] = useState<EmbedState | null>(null);
   const screensActRef = useRef<((action: ScreensAction) => void) | null>(null);
+  const embedStateRef = useRef<EmbedState | null>(null);
+  useEffect(() => { embedStateRef.current = embedState; }, [embedState]);
   useEffect(() => { screensOpenRef.current = !!screens; }, [screens]);
   // Embedded: the select / navigate choice from the Screens bar (selection comes back on after an edit)
   const wantSelectRef = useRef(true);
@@ -1493,6 +1510,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [panelClosed, setPanelClosed] = useState(false);
   // A variant picked for an instance on the page has no copy yet: the panel says it shows once applied
   const [variantMissing, setVariantMissing] = useState(false);
+  // The selected instance's JSX where it's written (with the picked props in), from the CLI
+  const [propSource, setPropSource] = useState<{ key: string; source: PropSourceView | null } | null>(null);
+  const propSourceKey = useRef('');
   const [catalog, setCatalog] = useState<{ items: CatalogItem[]; snapshots: Record<string, CatalogSnapshot[]> } | null>(null);
   // The Library's design system: "Create" until .ilse/ds exists, then "Export"
   const [dsInfo, setDsInfo] = useState<DsInfo | null>(null);
@@ -1521,6 +1541,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [mcpInfo, setMcpInfo] = useState<{ url: string; token: string } | null>(null);
   // The account the agent runs on ("me@company.com · Team (Acme)") — which limit applies
   const [agentAccount, setAgentAccount] = useState<string | null>(null);
+  // Ilse Pro sign-in (Settings): what the CLI shares — never the token
+  const [proAccount, setProAccount] = useState<ProAccountState | null>(null);
+  // "Switch" on the agent's account: switching is a terminal question (ilse --account), so it says how
+  const [switchHint, setSwitchHint] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
   const [connectTarget, setConnectTarget] = useState<'claude-code' | 'desktop' | 'json'>('claude-code');
   const [copied, setCopied] = useState(false);
@@ -1599,45 +1623,6 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   // Bumped to throw away the panel's edits (the designer removed the command)
   const [panelEpoch, setPanelEpoch] = useState(0);
-
-  // DS Tokens
-  const [dsTokensInput, setDsTokensInput] = useState('');
-  const [dsTokensLoaded, setDsTokensLoaded] = useState(false);
-  // Load DS tokens from localStorage on mount
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(getStorageKey('ilse-ds-tokens'));
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        const tokens = parseTokensJSON(parsed);
-        if (tokens.length > 0) {
-          setDSTokens(tokens);
-          setDsTokensLoaded(true);
-          setDsTokensInput(saved);
-        }
-      }
-    } catch { /* ignore */ }
-  }, []);
-
-  const handleLoadTokens = useCallback((input: string) => {
-    try {
-      const parsed = JSON.parse(input);
-      const tokens = parseTokensJSON(parsed);
-      if (tokens.length > 0) {
-        setDSTokens(tokens);
-        setDsTokensLoaded(true);
-        localStorage.setItem(getStorageKey('ilse-ds-tokens'), input);
-        setClipboardToast(saying(`${tokens.length} tokens loaded`));
-        setTimeout(() => setClipboardToast(null), 3000);
-      } else {
-        setClipboardToast(saying(t('toolbar.clipboard.noTokens')));
-        setTimeout(() => setClipboardToast(null), 4000);
-      }
-    } catch {
-      setClipboardToast(saying(t('toolbar.clipboard.invalidJson')));
-      setTimeout(() => setClipboardToast(null), 4000);
-    }
-  }, []);
 
   // Page scan
   const [scanOpen, setScanOpen] = useState(false);
@@ -1733,13 +1718,25 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     return (
       <div style={{ position: 'absolute', bottom: typeof gap === 'number' ? `calc(100% + ${gap}px)` : gap, right: 0, display: 'flex', flexDirection: 'column-reverse', alignItems: 'flex-end', gap: 4, pointerEvents: 'none' }}>
         {lines.map((line, i) => (
-          <div key={`${testSteps.length - i}-${line}`} style={{ fontSize, fontFamily: font.sans, maxWidth, ...reasoningLine(i) }}>
+          <div key={`${testSteps.length - i}-${line}`} style={{ fontSize, fontFamily: font.sans, maxWidth, ...reasoningLine(i), ...stepHalo() }}>
             {i === 0 && <ReasoningDot mode="test" />}
             {line}
           </div>
         ))}
       </div>
     );
+  };
+  /**
+   * The test runs over every page, photos included, where the blended grey of the agent's
+   * reasoning disappears (test 28/10): solid text with a halo of the page's own background
+   */
+  const stepHalo = (): React.CSSProperties => {
+    // The page's own background says light or dark: the OS setting doesn't, on an app with one theme
+    const bg = (el: Element) => (getComputedStyle(el).backgroundColor.match(/[\d.]+/g) ?? []).map(Number);
+    const [r, g, b, a = 1] = [document.body, document.documentElement].map(bg).find(([, , , alpha = 1]) => alpha > 0) ?? [255, 255, 255];
+    const dark = a > 0 && 0.299 * r + 0.587 * g + 0.114 * b < 128;
+    const halo = dark ? '0,0,0' : '255,255,255';
+    return { color: dark ? '#e4e4e7' : '#3f3f46', mixBlendMode: 'normal', textShadow: `0 0 2px rgba(${halo},0.9), 0 0 8px rgba(${halo},0.9), 0 0 14px rgba(${halo},0.7)` };
   };
   /** One line of the test's reasoning: the page it opens, then what it found there */
   const testStepText = (msg: Record<string, unknown>): string => {
@@ -1752,7 +1749,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const kinds = (Array.isArray(msg.kinds) ? msg.kinds : []).map(k => t(`toolbar.cat.${k}` as Parameters<typeof t>[0])).join(', ');
     return t('toolbar.testStepFound', { page, count: found, kinds });
   };
-  const testAction = (action: 'run' | 'run-anon' | 'login' | 'login-done' | 'login-cancel' | 'setup', options?: { groups: TestGroup[]; sizes: ScreenSize[] }) =>
+  const testAction = (action: 'run' | 'run-anon' | 'login' | 'login-done' | 'login-cancel' | 'setup' | 'stop', options?: { groups: TestGroup[]; sizes: ScreenSize[] }) =>
     send({ type: 'test', action, ...(options ? { options } : {}) });
   /** ↻: first the list of what to test; Pro answers with what this project can run */
   const openTestSetup = () => {
@@ -1916,6 +1913,18 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const stylePreviewCommitted = useRef(false);
   /** Per element: how to undo the on-screen preview of a draft that was added but not sent */
   const previewReverts = useRef(new Map<string, () => void>());
+  // A Consistency fix on its note: ✓ only once the note is sent. With token swaps every piece is
+  // previewed on the page at once, like a panel edit, and sent as one panel edit per piece — Ilse
+  // writes the class without AI when it can, the agent when it can't
+  // `cls`: the piece's class before the preview took its caller's classes off (an override going back to the standard)
+  type FixPiece = { el: HTMLElement; capture: ElementCapture; changes: StyleChange[]; orig: Record<string, string>; cls?: string; drop?: string[] };
+  // `edits`: the pieces go as panel edits (token swaps); else the preview only shows what the agent's note will write
+  const consFix = useRef<{ targetId?: string; onSent: (ids: string[]) => void; pieces: FixPiece[]; edits: boolean } | null>(null);
+  const paintBack = (p: FixPiece) => {
+    for (const [k, v] of Object.entries(p.orig)) p.el.style.setProperty(k.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`), v || null);
+    if (p.cls !== undefined) p.el.setAttribute('class', p.cls);
+  };
+  const dropFix = () => { consFix.current?.pieces.forEach(paintBack); consFix.current = null; };
   // A new selection starts uncommitted, whichever way it was made — else a
   // cancel after an earlier send would leave this draft's preview on the page
   useEffect(() => { if (pendingCapture?.pixelTargetId) stylePreviewCommitted.current = false; }, [pendingCapture?.pixelTargetId]);
@@ -2017,6 +2026,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const unsub = onMessage((msg) => {
       // The owner flipped Pro ↔ Free: a fresh page, so every Pro piece comes up (or stays down) from scratch
       if (msg.type === 'view_as_free') { window.location.reload(); return; }
+      if (msg.type === 'pro_account' && msg.state && typeof msg.state === 'object') setProAccount(msg.state as ProAccountState);
       if (msg.type === 'connected' && typeof msg.port === 'number') {
         setWsPort(msg.port);
         setConnected(true);
@@ -2041,6 +2051,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           setAgentAccount(msg.account);
         }
         if (msg.agent && typeof msg.agent === 'object') setAgentInfo(msg.agent as AgentInfo);
+        if (msg.proAccount && typeof msg.proAccount === 'object') setProAccount(msg.proAccount as ProAccountState);
         if (msg.undo && typeof (msg.undo as { count?: unknown }).count === 'number') {
           setUndo(msg.undo as { count: number; label?: string });
         }
@@ -2052,7 +2063,6 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         if (Array.isArray(msg.tokens) && msg.tokens.length > 0) {
           const tokens = msg.tokens as Array<{ name: string; value: string; type: 'color' | 'spacing' | 'typography' }>;
           setDSTokens(tokens);
-          setDsTokensLoaded(true);
         }
       }
       if (msg.type === 'code-changed') {
@@ -2108,6 +2118,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         }
         if (draft?.propEdit && draft.pixelTargetId) {
           const id = draft.pixelTargetId;
+          // Applied: the edited file renders the same value, the live override just stops
+          endLiveProps(id, false);
           setTimeout(() => { const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${id}"]`); if (el) previewVariant(el, id, null); }, 900);
         }
         if (draft?.pixelTargetId) expireElement(document.querySelector(`[data-ilse-pixel-target="${draft.pixelTargetId}"]`));
@@ -2212,6 +2224,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (msg.type === 'test_login_needed') { setTestRun({ phase: 'login-ask', expired: msg.expired === true }); if (toolbarModeRef.current === 'test') setScanOpen(true); }
       if (msg.type === 'test_login_open') setTestRun({ phase: 'login-open' });
       if (msg.type === 'test_login_cancelled') setTestRun(null);
+      if (msg.type === 'test_stopped') {
+        setTestRun(null);
+        setTestSteps([]);
+        setClipboardToast(saying(t('toolbar.testStopped')));
+        setTimeout(() => setClipboardToast(null), 2200);
+      }
       if (msg.type === 'test_progress') {
         setTestRun({ phase: 'running' });
         setTestSteps(prev => [...prev, testStepText(msg)].slice(-20));
@@ -2282,6 +2300,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         const lite = msg.lite === true;
         if (!lite) catalogFullRef.current = true;
         if (msg.ds && typeof msg.ds === 'object') setDsInfo(msg.ds as DsInfo);
+        if (Array.isArray(msg.ignoredLooks)) ignoredLooksRef.current = new Set((msg.ignoredLooks as Array<{ id?: unknown }>).flatMap(x => typeof x?.id === 'string' ? [x.id] : [])); ignoredLabelsRef.current = new Map((msg.ignoredLooks as Array<{ id?: unknown; label?: unknown }>).flatMap(x => typeof x?.id === 'string' && typeof x?.label === 'string' ? [[x.id, x.label] as [string, string]] : []));
         setCatalog(prev => {
           if (lite) return { items, snapshots: prev?.snapshots ?? {} };
           const merged = { ...snapshots };
@@ -2294,6 +2313,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         });
         catalogItemsRef.current = items;
         setTimeout(() => captureCopiesRef.current(), 60);
+      }
+      if (msg.type === 'prop_source') {
+        if (msg.key === propSourceKey.current) setPropSource({ key: msg.key, source: (msg.source as PropSourceView | null) ?? null });
       }
       if (msg.type === 'catalog_file') {
         const path = typeof msg.path === 'string' ? msg.path : '.ilse/catalog.md';
@@ -2312,6 +2334,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           send({ type: 'ds_view' });
         }
       }
+      if (msg.type === 'consistency_review') onReviewRef.current(typeof msg.key === 'string' ? msg.key : '', msg.findings);
       if (msg.type === 'ds_check') {
         const r = msg.result as { tasks?: unknown; rules?: unknown } | null;
         setDsCheck(r && Array.isArray(r.tasks) && r.tasks.length
@@ -2327,7 +2350,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         dsJustWritten.current = false;
       }
       if (msg.type === 'memory') {
-        setMemoryData({ design: msg.design as MemoryData['design'], pro: !!msg.pro, test: (msg.test ?? null) as MemoryData['test'] });
+        setMemoryData({ design: msg.design as MemoryData['design'], pro: !!msg.pro, test: (msg.test ?? null) as MemoryData['test'], looks: Array.isArray(msg.looks) ? msg.looks as MemoryData['looks'] : [] });
+        if (Array.isArray(msg.looks)) ignoredLooksRef.current = new Set((msg.looks as Array<{ id?: unknown }>).flatMap(x => typeof x?.id === 'string' ? [x.id] : [])); ignoredLabelsRef.current = new Map((msg.ignoredLooks as Array<{ id?: unknown; label?: unknown }>).flatMap(x => typeof x?.id === 'string' && typeof x?.label === 'string' ? [[x.id, x.label] as [string, string]] : []));
       }
       if (msg.type === 'check-failed' && typeof msg.changeSetId === 'string') {
         setCheckFailed({
@@ -2380,7 +2404,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (msg.type === 'thinking' && typeof msg.text === 'string') {
         const id = ++thinkingIdRef.current;
         if (msg.activity === 'edit' || msg.activity === 'think') setAgentActivity(msg.activity);
-        const text = msg.text as string;
+        const text = toolActivity(msg.text as string);
         // Don't stream intermediate thinking into aiAnalysis —
         // only the final resolved summary should appear there.
         // Stream AI scan summary when scan panel is open
@@ -2506,6 +2530,22 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const inferred = inferDraftIntent(pendingCapture.note, hasElement);
     const styleChanges = pendingCapture.styleChanges ?? [];
     const intent = resolveIntent(inferred, { hasStyle: styleChanges.length > 0, orig, curr });
+    const fix = consFix.current && consFix.current.targetId === pendingCapture.pixelTargetId ? consFix.current : null;
+    consFix.current = null;
+    // The fix's other pieces: one panel edit each, previewed already, sent in the same batch
+    const twins: AnnotationDraft[] = (fix?.edits ? fix.pieces.slice(1) : []).map(p => {
+      const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      p.el.setAttribute('data-ilse-pixel-target', id);
+      previewReverts.current.set(id, () => paintBack(p));
+      return {
+        capture: p.capture, note: '', status: 'pending' as const, markerType: 'element' as const, pixelTargetId: id,
+        intent: 'style' as const, severity: 'important' as DraftSeverity,
+        auto: { style: formatStyleNote(p.changes) }, styleData: { selector: p.capture.element, changes: p.changes },
+      };
+    });
+
+    // The row knows its notes: it keeps its ✓ until they land
+    fix?.onSent([pendingCapture.pixelTargetId, ...twins.map(x => x.pixelTargetId)].filter((x): x is string => !!x));
 
     setAnnotations(prev => [...prev, {
       capture: pendingCapture.capture,
@@ -2537,11 +2577,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           currentRect: { x: curr.left, y: curr.top, width: curr.width, height: curr.height },
         },
       } : {}),
-    }]);
+    }, ...twins]);
     // Sent — leave the preview standing until the agent rewrites the source.
     stylePreviewCommitted.current = styleChanges.length > 0 || !!pendingCapture.textEdit;
     // …but keep a way back: deleting this draft before it's sent undoes it on screen
-    const revert = panelHistoryRef.current?.detachPreview();
+    const panelRevert = panelHistoryRef.current?.detachPreview();
+    // Panel edits: each piece has its own note and revert. A preview of the agent's note: all of them go back together
+    const mine = fix ? (fix.edits ? fix.pieces.slice(0, 1) : fix.pieces) : [];
+    const revert = mine.length ? () => { panelRevert?.(); mine.forEach(paintBack); } : panelRevert;
     if (revert && pendingCapture.pixelTargetId) previewReverts.current.set(pendingCapture.pixelTargetId, revert);
     setPendingCapture(null);
     setAnnotating(true);
@@ -2549,6 +2592,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
   const cancelCapture = useCallback(() => {
     stylePreviewCommitted.current = false;
+    // A fix dropped: its pieces look as they did, and its row isn't marked
+    dropFix();
     liveDragRef.current?.cancel();
     liveDragRef.current = null;
     setLiveDragging(false);
@@ -2559,6 +2604,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     if (pc?.propEdit && pc.pixelTargetId) {
       const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`);
       if (el) previewVariant(el, pc.pixelTargetId, null);
+      endLiveProps(pc.pixelTargetId);
     }
     if (pc?.pixelTargetId) settleElement(document.querySelector(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`));
     if (pc?.pixelTargetId) unhide(pc.pixelTargetId);
@@ -2688,8 +2734,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (!pc) return;
       const selected = pc.pixelTargetId ? document.querySelector(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`) : null;
       if (selected && (selected === target || selected.contains(target))) return; // that's a drag of the selection
-      const untouched = !pc.note.trim() && !hasAuto(pc.auto) && !(pc.styleChanges?.length) && !(pc.imageRefs?.length) && !pc.sketch;
-      if (!untouched) return;
+      if (!untouchedDraft(pc)) return;
       e.preventDefault();
       e.stopPropagation();
       const swallow = (ev: Event) => { ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation(); };
@@ -3426,17 +3471,25 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     pushDraftStep({ kind: 'gesture', key: 'remove', label: t('undo.remove') });
   }, []);
 
-  // Delete / Backspace removes the selected element, like in a design tool —
-  // never while typing. The note takes focus as soon as the card opens; there
-  // only the forward Delete (fn+⌫ on a Mac) counts: ⌫ in an empty box is a
-  // reflex — it once queued a removal on top of a whole new page request.
+  // ⌘⌫ (Ctrl+⌫ elsewhere) or Delete removes the selected element, like a
+  // file in Finder — but only right after selecting it. Once something changed
+  // (retyped text, a panel edit, a note) the keys belong to editing: Enter in
+  // the panel's text field blurs it, and the next ⌫ used to take the whole
+  // element with it; then it's the panel's Remove button. A plain ⌫ in the
+  // note (it has the caret as the card opens) only ever edits text — pressing
+  // it there is a reflex, never a removal. Out of any text box it removes.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key !== 'Delete' && e.key !== 'Backspace') || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
-      const el = e.target as HTMLElement | null;
-      const emptyNote = e.key === 'Delete' && el?.hasAttribute('data-ilse-note') && !el.textContent;
-      if (el && !emptyNote && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
-      if (!pendingCaptureRef.current || pendingCaptureRef.current.markerType !== 'element') return;
+      if ((e.key !== 'Delete' && e.key !== 'Backspace') || e.altKey || e.shiftKey || e.repeat) return;
+      const withMod = e.metaKey || e.ctrlKey;
+      if (withMod && e.key !== 'Backspace') return;
+      const pc = pendingCaptureRef.current;
+      if (!pc || pc.markerType !== 'element' || !untouchedDraft(pc)) return;
+      const el = (e.composedPath()[0] ?? e.target) as HTMLElement | null;
+      const note = !!el?.hasAttribute?.('data-ilse-note');
+      if (note ? !(withMod || e.key === 'Delete') : isTyping(el)) return;
+      // Text selected on the page: the designer means that text, not the element
+      if (!note && !(window.getSelection()?.isCollapsed ?? true)) return;
       e.preventDefault();
       removeSelected();
     };
@@ -3457,6 +3510,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const pc = pendingCaptureRef.current;
       const el = pc?.pixelTargetId ? document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`) : null;
       if (el) previewVariant(el, pc!.pixelTargetId!, null);
+      if (pc?.pixelTargetId) endLiveProps(pc.pixelTargetId);
       setVariantMissing(false);
       setPendingCapture(prev => prev ? { ...prev, propEdit: undefined, auto: { ...prev.auto, props: undefined, propsLabel: undefined } } : null);
       return;
@@ -3625,6 +3679,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     if (gone?.propEdit && gone.pixelTargetId && gone.status === 'pending') {
       const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${gone.pixelTargetId}"]`);
       if (el) previewVariant(el, gone.pixelTargetId, null);
+      endLiveProps(gone.pixelTargetId);
     }
     if (gone?.pixelTargetId) settleElement(document.querySelector(`[data-ilse-pixel-target="${gone.pixelTargetId}"]`));
     // Never sent: nothing will make its preview real, so it goes (panel edits, text, removal)
@@ -3753,6 +3808,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         if (a.propEdit && a.status === 'pending') {
           const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${a.pixelTargetId}"]`);
           if (el) previewVariant(el, a.pixelTargetId, null);
+          endLiveProps(a.pixelTargetId);
         }
         if (a.status === 'pending') { previewReverts.current.get(a.pixelTargetId)?.(); unhide(a.pixelTargetId); }
         previewReverts.current.delete(a.pixelTargetId);
@@ -3831,6 +3887,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const wasDraggedRef = useRef(false);
   const openToolbar = () => {
     if (wasDraggedRef.current) { wasDraggedRef.current = false; return; }
+    // Screens still open under the orb: selecting goes back on inside the frame, not on this page
+    if (screensOpenRef.current) {
+      setIsOpen(true);
+      if (embedStateRef.current && !embedStateRef.current.selecting) screensActRef.current?.('select');
+      return;
+    }
     setIsOpen(true); setAnnotating(true);
   };
   /**
@@ -3989,7 +4051,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const el = document.querySelector(`[data-ilse-pixel-target="${id}"]`);
       return !!el && (root.contains(el) || el.contains(root));
     });
-    const seen = snapshotPage(items, copiedRef.current, shows);
+    addCopies(snapshotPage(items, copiedRef.current, shows));
+  };
+
+  const addCopies = (seen: Array<{ id: string } & CatalogSnapshot>) => {
     if (seen.length === 0) return;
     for (const { id, variant } of seen) copiedRef.current.add(`${id}|${variant}`);
     // In batches: the store takes a bounded number per message (a busy page has more)
@@ -4001,6 +4066,150 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       return { ...prev, snapshots: next };
     });
   };
+
+  // The preview stage: components the catalog shows without a copy are drawn inside the app
+  // (its theme and providers) and copied — never visited, behind a closed menu. Each one tried once.
+  const stagedRef = useRef(new Set<string>());
+  const stagingRef = useRef(false);
+  const runStage = async (requests: StageRequest[]) => {
+    if (stagingRef.current || !requests.length || !canStage()) return [];
+    stagingRef.current = true;
+    try {
+      for (const r of requests) stagedRef.current.add(`${r.item.id}|${variantKey(r.item, r.props)}`);
+      const seen = await stage(requests);
+      addCopies(seen);
+      return seen;
+    } finally { stagingRef.current = false; }
+  };
+  const libraryShown = catalogOpen || (!!pendingCapture && !panelClosed && panelTab === 'catalog');
+  // The catalog window (nothing selected): Library | Consistency
+  const [windowTab, setWindowTab] = useState<'catalog' | 'consistency'>('catalog');
+  // Pro: the page's look-alikes, read when the Library opens (after the page settles)
+  const [lookAlikes, setLookAlikes] = useState<LookAlikeView[] | null>(null);
+  // Looks the person ignored (kept in the project by the CLI)
+  const ignoredLooksRef = useRef(new Set<string>());
+  // Their labels: the agent's review is told what the person ignored, so it doesn't bring it back
+  const ignoredLabelsRef = useRef(new Map<string, string>());
+  const readLooks = () => {
+    let list: LookAlikeView[];
+    try { list = readLookAlikes(catalogRef.current?.items ?? [], ignoredLooksRef.current); } catch { list = []; }
+    setLookAlikes([...list, ...heldLooks().filter(v => !list.some(x => x.id === v.id))]);
+  };
+  const ignoreLookAlike = (v: LookAlikeView) => {
+    ignoredLooksRef.current.add(v.id);
+    ignoredLabelsRef.current.set(v.id, `${t(`catalog.look.kind.${v.kind}`)}${v.text ? ` “${v.text}”` : ''}`);
+    setLookAlikes(prev => prev?.filter(x => x.id !== v.id) ?? prev);
+    send({ type: 'look_ignore', id: v.id, label: `${t(`catalog.look.kind.${v.kind}`)}${v.text ? ` “${v.text}”` : ''}` });
+  };
+  // Pro: the Consistency tab — a panel tab with an element selected, the catalog window's tab without
+  const panelShown = !!pendingCapture && !panelClosed && !pendingCapture.sketch && !!pendingCapture.capture.styles && Object.keys(pendingCapture.capture.styles).length > 0;
+  const consistencyShown = proCatalog && (panelShown ? panelTab === 'consistency' : catalogOpen && windowTab === 'consistency');
+  const [consState, setConsState] = useState<ConsistencyState | null>(null);
+  const [consRows, setConsRows] = useState<ConsistencyRow[]>([]);
+  const [review, setReview] = useState<ReviewState>({ status: 'off' });
+  // The screen the last read saw: an answer for another one is stale
+  const consKeyRef = useRef('');
+  const consElsRef = useRef<HTMLElement[]>([]);
+  const consPiecesRef = useRef<ReviewPiece[]>([]);
+  const ruleRowsRef = useRef<ConsistencyRow[]>([]);
+  // The agent's review per route, its pieces by what they are (not their number): a re-read after a
+  // fix maps them again with no new question — a fixed piece is gone, so is its finding. ↻ or another
+  // route asks the agent again
+  type KeptFinding = { title: string; detail: string; fix: string; file?: string; line?: number; pieces: string[] };
+  const reviewsRef = useRef(new Map<string, KeptFinding[]>());
+  const queuedRef = useRef<Set<string>>(new Set());
+  const askedRef = useRef(new Map<string, { route: string; pieces: ReviewPiece[]; at: number }>());
+  // How long reviews take here, for the meter: kept in this browser, a convenience only
+  const readReviewMs = (): number[] => { try { return JSON.parse(localStorage.getItem('ilse-review-ms') ?? '[]') as number[]; } catch { return []; } };
+  const [reviewExpect, setReviewExpect] = useState(() => reviewEstimate(readReviewMs()));
+  const reviewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pieceId = (p: ReviewPiece) => `${p.kind}|${p.text}|${p.owner ?? ''}|${p.component ?? ''}`;
+  const showReview = (kept: KeptFinding[]) => {
+    const at = new Map<string, HTMLElement[]>();
+    consPiecesRef.current.forEach((p, i) => { const el = consElsRef.current[i]; if (el) at.set(pieceId(p), [...(at.get(pieceId(p)) ?? []), el]); });
+    const found: AgentFinding[] = [];
+    for (const f of kept) {
+      const els = [...new Set(f.pieces.flatMap(id => at.get(id) ?? []))].filter(el => el.isConnected);
+      if (els.length) found.push({ title: f.title, detail: f.detail, fix: f.fix, file: f.file, line: f.line, els });
+    }
+    setReview({ status: 'done', findings: found });
+    setConsRows([...ruleRowsRef.current, ...found.filter(f => !ignoredLooksRef.current.has(`agent:${f.title}`)).map(agentRow)]);
+  };
+  const readScreen = (fresh = false) => {
+    readLooks();
+    let read: ReturnType<typeof readConsistency>;
+    try { read = readConsistency(catalogRef.current?.items ?? []); } catch { setConsState({ findings: [], checked: { pieces: 0, standards: 0, colors: 0 } }); return; }
+    const route = location.pathname;
+    const key = screenKey(route, read.pieces);
+    consKeyRef.current = key;
+    consElsRef.current = read.els;
+    consPiecesRef.current = read.pieces;
+    ruleRowsRef.current = read.findings.filter(f => !ignoredLooksRef.current.has(f.id)).map(ruleRow);
+    // A rule row being fixed stays until its notes land, even once the page shows the fix
+    ruleRowsRef.current.push(...heldRows().filter(r => r.by === 'rules' && !ruleRowsRef.current.some(x => x.key === r.key)));
+    setConsState({ findings: read.findings, checked: read.checked });
+    setConsRows(ruleRowsRef.current);
+    const kept = reviewsRef.current.get(route);
+    if (kept && !fresh) { showReview(kept); return; }
+    // Already asked for this route and still waiting: a re-read doesn't ask again, and its meter keeps going
+    const waiting = fresh ? undefined : [...askedRef.current.values()].find(a => a.route === route);
+    setReview({ status: 'running', since: waiting?.at ?? Date.now() });
+    if (waiting) return;
+    askedRef.current.set(key, { route, pieces: read.pieces, at: Date.now() });
+    // An ilse started before this toolbar doesn't answer; the agent has 4 minutes
+    if (reviewTimer.current) clearTimeout(reviewTimer.current);
+    reviewTimer.current = setTimeout(() => { if (consKeyRef.current === key) setReview(r => r.status === 'running' ? { status: 'off' } : r); }, 260_000);
+    send({
+      type: 'consistency_review', key, route, pieces: read.pieces, fresh, ignored: [...ignoredLabelsRef.current.values()].slice(-40),
+      known: [
+        ...read.findings.map(f => `${f.type}: ${f.standard ?? f.props.join(', ')} "${f.text}"${f.owner ? ` in <${f.owner}>` : ''}`),
+        // Fixed on a note already: a new look at the code doesn't bring the same finding back
+        ...[...queuedRef.current].filter(k => k.startsWith('agent:')).map(k => `fixed by the person: ${k.slice(6)}`),
+      ],
+    });
+  };
+  const readScreenRef = useRef(readScreen);
+  readScreenRef.current = readScreen;
+  const onReview = (key: string, findings: unknown) => {
+    const asked = askedRef.current.get(key);
+    if (!asked) return;
+    askedRef.current.delete(key);
+    if (!Array.isArray(findings)) { if (key === consKeyRef.current) setReview({ status: 'off' }); return; }
+    const took = [...readReviewMs(), Date.now() - asked.at].slice(-5);
+    try { localStorage.setItem('ilse-review-ms', JSON.stringify(took)); } catch { /* not kept */ }
+    setReviewExpect(reviewEstimate(took));
+    const kept: KeptFinding[] = findings.flatMap(r => {
+      const f = r as { pieces?: number[]; title?: string; detail?: string; fix?: string; file?: string; line?: number };
+      const pieces = (f.pieces ?? []).map(i => asked.pieces[i]).filter(Boolean).map(pieceId);
+      // "#17" means nothing to the person or to the agent that applies it: the piece's words
+      const named = (x = '') => x.replace(/#(\d+)/g, (m, n) => asked.pieces[+n] ? `“${asked.pieces[+n].text}”` : m);
+      return f.title && pieces.length ? [{ title: named(f.title), detail: named(f.detail), fix: named(f.fix), file: f.file, line: f.line, pieces }] : [];
+    });
+    reviewsRef.current.set(asked.route, kept);
+    if (asked.route === location.pathname) showReview(kept);
+  };
+  const onReviewRef = useRef(onReview);
+  onReviewRef.current = onReview;
+  useEffect(() => {
+    if (!consistencyShown || !catalog?.items) return;
+    const timer = setTimeout(() => readScreen(), 400);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [consistencyShown, catalog?.items]);
+  useEffect(() => {
+    if (!libraryShown || !proCatalog || !catalog?.items.length) return;
+    const timer = setTimeout(() => {
+      const missing = catalog.items
+        .filter(it => !catalog.snapshots[it.id]?.length)
+        .map(exampleRequest)
+        .filter(r => !stagedRef.current.has(`${r.item.id}|${variantKey(r.item, r.props)}`))
+        .slice(0, 16);
+      void runStage(missing);
+    }, 600);
+    return () => clearTimeout(timer);
+  // The list and its copies arrive after the window opens
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libraryShown, proCatalog, catalog?.items]);
 
   // The list is read on connect, Free or Pro: it names the selected component and its props and
   // variants in the Component section (Free). With Pro, copying can also start before anyone opens the toolbar
@@ -4027,15 +4236,35 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   }, [proCatalog]);
 
   // The catalog component the selected element is, if any (the <Button> the app wrote)
+  const lastHit = useRef<{ id: string; hit: ComponentHit } | null>(null);
   const componentHit = useMemo(() => {
     const ins = pendingCapture?.insert;
     if (ins?.copy) return null;
     if (ins) return { item: ins.item, props: ins.props, ...(ins.text ? { text: ins.text } : {}) };
     const id = pendingCapture?.pixelTargetId;
     if (!id || !catalog?.items.length || pendingCapture?.markerType !== 'element') return null;
+    // Rendering with picked props: the fiber now holds those, the code's are the ones read before
+    if (hasLiveProps(id) && lastHit.current?.id === id) return lastHit.current.hit;
     const el = document.querySelector(`[data-ilse-pixel-target="${id}"]`);
-    return el ? componentAt(el, catalog.items) : null;
+    const hit = el ? componentAt(el, catalog.items) : null;
+    lastHit.current = hit ? { id, hit } : null;
+    return hit;
   }, [pendingCapture?.pixelTargetId, pendingCapture?.markerType, pendingCapture?.insert, catalog]);
+
+  // Ask the CLI where this instance is written, and how it reads with the picked props
+  const propChanges = pendingCapture?.propEdit?.changes;
+  useEffect(() => {
+    if (!componentHit || pendingCapture?.insert) { propSourceKey.current = ''; setPropSource(null); return; }
+    const changes = propChanges ?? [];
+    const key = `${pendingCapture?.pixelTargetId}|${JSON.stringify(changes)}`;
+    if (key === propSourceKey.current) return;
+    propSourceKey.current = key;
+    const timer = setTimeout(() => send({
+      type: 'prop_source', key,
+      propEdit: { component: componentHit.item.name, source: componentHit.item.source, frameUrl: componentHit.frameUrl, props: componentHit.props, text: componentHit.text, changes },
+    }), 120);
+    return () => clearTimeout(timer);
+  }, [componentHit, propChanges, pendingCapture?.insert, pendingCapture?.pixelTargetId]);
 
   // ── Dragging a component from the catalog onto the page ──
   // Same engine as moving an element on the page (live-layout): the copy stands in for real,
@@ -4246,17 +4475,170 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [spot, setSpot] = useState<{ rects: DOMRect[]; none: boolean } | null>(null);
   const spotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spotComponent = (item: CatalogItem) => {
-    const roots = findInstances(new Set([item.name])).map(i => i.root).filter(el => !el.closest('[data-ilse-toolbar]'));
+    spotElements(findInstances(new Set([item.name])).map(i => i.root).filter(el => !el.closest('[data-ilse-toolbar]')));
+  };
+  const spotFrame = useRef(0);
+  /** Outlines that stay until let go: a Consistency row open, its fix on a note */
+  const spotHeld = useRef(false);
+  const releaseSpot = () => {
+    if (!spotHeld.current) return;
+    spotHeld.current = false;
+    cancelAnimationFrame(spotFrame.current);
+    setSpot(null);
+  };
+  const spotElements = (roots: HTMLElement[], hold = false) => {
+    spotHeld.current = hold;
     if (roots[0]) {
       const r = roots[0].getBoundingClientRect();
       if (r.bottom < 0 || r.top > window.innerHeight) roots[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
-    const show = () => setSpot({ rects: roots.map(el => el.getBoundingClientRect()), none: roots.length === 0 });
-    show();
-    setTimeout(show, 350); // after a smooth scroll
+    // The outlines follow the elements every frame: a smooth scroll moves them for longer than any fixed wait
+    cancelAnimationFrame(spotFrame.current);
+    const until = performance.now() + 2400;
+    const follow = () => {
+      setSpot({ rects: roots.map(el => el.getBoundingClientRect()), none: roots.length === 0 });
+      if (hold ? spotHeld.current : performance.now() < until) spotFrame.current = requestAnimationFrame(follow);
+    };
+    follow();
     if (spotTimer.current) clearTimeout(spotTimer.current);
-    spotTimer.current = setTimeout(() => setSpot(null), 2400);
+    if (!hold) spotTimer.current = setTimeout(() => { cancelAnimationFrame(spotFrame.current); setSpot(null); }, 2400);
   };
+  /** "Make it a component": the first one selected, the request as a chip on its new note — the person adds words or sends */
+  const makeLookComponent = (v: LookAlikeView) => {
+    const all = v.family.variants.reduce((n, x) => n + x.members.length, 0) + v.family.nearMisses.length;
+    setCatalogOpen(false);
+    selectElement(v.family.variants[0].members[0].ref);
+    dropFix();
+    consFix.current = { onSent: (ids) => { setQueued(q => new Set(q).add(v.id)); fixesRef.current.set(v.id, { ids, landed: false, look: v }); }, pieces: [], edits: false };
+    setPendingCapture(prev => {
+      if (prev && consFix.current) consFix.current.targetId = prev.pixelTargetId;
+      return prev ? {
+      ...prev,
+      scope: undefined,
+      auto: { ...prev.auto, component: lookNote(v.family, v.kind, v.text), componentLabel: t('catalog.look.chip', { n: all, kind: t(`catalog.look.kind.${v.kind}`) }) },
+      } : prev;
+    });
+  };
+
+  // Fix and "Make it a component" open a note on the piece: the tab stays in the panel meanwhile,
+  // and comes back in the window once the note is sent or dropped — only ✕ or Esc close it
+  const backToConsistency = useRef(false);
+  const keepConsistency = () => { backToConsistency.current = true; setPanelTab('consistency'); setWindowTab('consistency'); };
+  useEffect(() => {
+    if (pendingCapture || !backToConsistency.current) return;
+    backToConsistency.current = false;
+    // The note was sent or dropped: its pieces let go
+    releaseSpot();
+    setConsOpen(null);
+    setCatalogOpen(true);
+  }, [pendingCapture]);
+  // The open row: kept across re-reads and between the panel and the window; its pieces stay outlined
+  const [consOpen, setConsOpen] = useState<string | null>(null);
+  useEffect(() => {
+    if (consistencyShown || pendingCapture) return;
+    releaseSpot();
+    setConsOpen(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [consistencyShown, pendingCapture]);
+  /** Rows whose fix is on a note already (this session) */
+  const [queued, setQueued] = useState<Set<string>>(() => new Set());
+  queuedRef.current = queued;
+  /** Fixes on their way: the row stays, with its ✓, until its notes land — then the screen is read
+   *  again and it goes. Its notes dropped before they ran: it comes back as it was */
+  const fixesRef = useRef(new Map<string, { ids: string[]; landed: boolean; row?: ConsistencyRow; look?: LookAlikeView }>());
+  const heldRows = () => [...fixesRef.current.values()].flatMap(f => f.row ? [f.row] : []);
+  const heldLooks = () => [...fixesRef.current.values()].flatMap(f => f.look ? [f.look] : []);
+
+  /** "Fix" in the Consistency tab: the piece selected, the request as a chip on its note */
+  const fixRow = (row: ConsistencyRow, action: RowAction) => {
+    // With token swaps: the pieces that use the value, each with the property it uses it in
+    const pieces: FixPiece[] = action.swaps ? row.els.flatMap(el => {
+      const st = getComputedStyle(el);
+      const style = swapStyles(st, action.swaps!);
+      if (!Object.keys(style).length) return [];
+      const token = (prop: string) => action.swaps!.find(w => (prop === 'fontSize') === (w.role === 'size') && w.value === style[prop])?.token.replace(/^--/, '');
+      const changes: StyleChange[] = Object.entries(style).map(([property, to]) => ({ property, from: st.getPropertyValue(property.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`)), to, token: token(property) }));
+      return [{ el, capture: captureElement(el), changes, orig: Object.fromEntries(Object.keys(style).map(k => [k, el.style.getPropertyValue(k.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`))])) }];
+    }) : [];
+    // Back to the standard: each piece without its caller's classes — the agent writes that, the page shows it now
+    const shown: FixPiece[] = action.drop ? action.drop.filter(([el]) => el.isConnected).map(([el, classes]) => ({ el, capture: captureElement(el), changes: [], orig: {}, cls: el.getAttribute('class') ?? '', drop: classes })) : [];
+    const el = pieces[0]?.el ?? row.els[0];
+    if (!el) return;
+    keepConsistency();
+    selectElement(el);
+    dropFix();
+    consFix.current = { onSent: (ids) => { setQueued(prev => new Set(prev).add(row.key)); fixesRef.current.set(row.key, { ids, landed: false, row }); }, pieces: pieces.length ? pieces : shown, edits: pieces.length > 0 };
+    // Seen at once, every piece, like a panel edit: the page shows the fix before it's sent
+    for (const p of pieces) for (const c of p.changes) p.el.style.setProperty(c.property.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`), c.to);
+    for (const p of shown) p.el.classList.remove(...p.drop!);
+    // Every piece it's about stays outlined while the note is open: the note is for all of them
+    spotElements(row.els, true);
+    const n = pieces.length || row.els.length;
+    const label = n > 1 ? t('consistency.chipMany', { n, title: row.title.slice(0, 32) }) : t('consistency.chip', { title: row.title.slice(0, 40) });
+    setPendingCapture(prev => {
+      if (!prev) return prev;
+      if (consFix.current) consFix.current.targetId = prev.pixelTargetId;
+      // No "only this <X>" scope: it told the agent to leave the other pieces this note is about
+      return pieces.length
+        // A panel edit on this piece (its twins go with it): a class swap when it can, else the agent reads it
+        ? { ...prev, scope: undefined, styleChanges: pieces[0].changes, auto: { ...prev.auto, style: formatStyleNote(pieces[0].changes), componentLabel: label } }
+        : { ...prev, scope: undefined, auto: { ...prev.auto, component: action.note, componentLabel: label } };
+    });
+  };
+  // A fix's notes landed (or were dropped): the row lets go of its ✓ and the screen is read again
+  useEffect(() => {
+    let done = false;
+    for (const [key, f] of fixesRef.current) {
+      const anns = f.ids.map(id => annotations.find(a => a.pixelTargetId === id));
+      if (anns.some(a => a?.status === 'resolved')) f.landed = true;
+      if (anns.some(a => a && a.status !== 'resolved')) continue;
+      fixesRef.current.delete(key);
+      done = true;
+      setQueued(q => { const n = new Set(q); n.delete(key); return n; });
+      // The agent's finding is fixed: its review is kept without it, no new question — and the project
+      // remembers it, so a later review on new code doesn't bring the same judgement back (Memory undoes it)
+      if (f.landed && key.startsWith('agent:')) {
+        const kept = reviewsRef.current.get(location.pathname);
+        if (kept) reviewsRef.current.set(location.pathname, kept.filter(k => `agent:${k.title}` !== key));
+        const label = `${t('consistency.fixedLabel')} ${key.slice(6)}`;
+        ignoredLooksRef.current.add(key);
+        ignoredLabelsRef.current.set(key, `${label}${f.row ? ` — ${f.row.detail}` : ''}`.slice(0, 200));
+        send({ type: 'look_ignore', id: key, label });
+      }
+    }
+    // After the page repaints with the new code: an agent's batch can land its files a while apart
+    if (done && consistencyShown) for (const ms of [1200, 3500, 7000]) setTimeout(() => readScreenRef.current(), ms);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [annotations]);
+  // Another element picked while a fix's note was open: that note is gone, and so is its preview
+  useEffect(() => {
+    if (consFix.current?.targetId && consFix.current.targetId !== pendingCapture?.pixelTargetId) dropFix();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCapture?.pixelTargetId]);
+  const consistencyPanel = proCatalog ? (
+    <ConsistencyPanel
+      state={consState}
+      rows={consRows}
+      queued={queued}
+      open={consOpen}
+      onOpen={(key, els) => { setConsOpen(key); if (key) spotElements(els, true); else releaseSpot(); }}
+      review={review}
+      expectMs={reviewExpect}
+      lookAlikes={lookAlikes}
+      onSpot={spotElements}
+      onFix={fixRow}
+      onIgnore={(row) => {
+        ignoredLooksRef.current.add(row.key);
+        ignoredLabelsRef.current.set(row.key, `${row.title} — ${row.detail}`.slice(0, 200));
+        ruleRowsRef.current = ruleRowsRef.current.filter(r => r.key !== row.key);
+        setConsRows(prev => prev.filter(r => r.key !== row.key));
+        send({ type: 'look_ignore', id: row.key, label: row.title });
+      }}
+      onRefresh={() => readScreen(true)}
+      onMakeLook={(v) => { makeLookComponent(v); keepConsistency(); }}
+      onIgnoreLook={ignoreLookAlike}
+    />
+  ) : <ConsistencyLocked />;
 
   // Create DS / Export: with Pro the agent writes "when to use" first, so the toolbar says it's working
   const exportDs = () => {
@@ -4387,6 +4769,18 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const key = variantKey(ins.item, props);
       const look = catalog?.snapshots[ins.item.id]?.find(sn => sameVariant(ins.item, sn.variant, key));
       if (look) restyleDraft(ins.draftId, look.html);
+      else if (proCatalog && !stagedRef.current.has(`${ins.item.id}|${key}`)) {
+        // Not seen yet: draw that variant on the stage, then the draft wears it
+        const literal: Record<string, string | number | boolean> = {};
+        for (const [k, v] of Object.entries(props)) if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') literal[k] = v;
+        void runStage([{ item: ins.item, props: literal, ...(ins.text ? { text: ins.text } : {}) }]).then(seen => {
+          const drawn = seen[0];
+          const cur = pendingCaptureRef.current?.insert;
+          if (!drawn || cur?.draftId !== ins.draftId || variantKey(cur.item, cur.props) !== key) return;
+          restyleDraft(ins.draftId, drawn.html);
+          setPendingCapture(prev => prev?.insert ? { ...prev, insert: { ...prev.insert, html: drawn.html } } : prev);
+        });
+      }
       const next: InsertDraft = { ...ins, props, ...(look ? { html: look.html } : {}) };
       setPendingCapture(prev => prev ? { ...prev, insert: next, auto: { ...prev.auto, ...insertCommand(next) } } : prev);
       return;
@@ -4396,10 +4790,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const original = hit.props[prop] !== undefined ? String(hit.props[prop]) : undefined;
       const others = (prev.propEdit?.changes ?? []).filter(c => c.prop !== prop);
       const changes = value === (original ?? '') ? others : [...others, { prop, ...(original !== undefined ? { from: original } : {}), to: value }];
-      // See it now: the copy of that variant in its place, when one has been seen
+      // See it now: the real component rendered with the new props — or, where the
+      // page can't do that, the copy of that variant in its place when one has been seen
       const id = prev.pixelTargetId;
       const el = id ? document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${id}"]`) : null;
-      if (el && id) {
+      if (el && id && setLiveProps(id, el, hit.item.name, changes, { attr: 'data-ilse-pixel-target', value: id })) {
+        previewVariant(el, id, null);
+        if (!changes.length) endLiveProps(id);
+        setVariantMissing(false);
+      } else if (el && id) {
         const merged: Record<string, string | number | boolean> = { ...hit.props };
         for (const c of changes) { if (c.to === '') delete merged[c.prop]; else merged[c.prop] = c.to === 'true' ? true : c.to === 'false' ? false : c.to; }
         const look = changes.length ? catalog?.snapshots[hit.item.id]?.find(sn => sameVariant(hit.item, sn.variant, variantKey(hit.item, merged))) : undefined;
@@ -4521,6 +4920,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // The pill below shadows these names with the frame's when `sv` is set.
   const sv = screens && !EMBEDDED ? embedState : null;
   const closeScreens = () => { setScreens(null); setEmbedState(null); setAnnotating(true); };
+  // Close (and Esc) in Screens folds the toolbar back into the orb and keeps the screen;
+  // leaving Screens is the arrow at the top, or the devices button
+  const minimizeScreens = () => {
+    setIsOpen(false); setShowSettings(false); setScreensMenuOpen(false);
+    if (embedStateRef.current?.selecting) screensActRef.current?.('select');
+  };
   const host = {
     pendingCount, processingCount, undo, annotating, drawMode, paused, markersVisible, clearConfirm,
     sendAll, stopExecution, undoLast, toggleSelect, togglePencil, toggleCatalog, togglePause, handleClear, setMarkersVisible, closeToolbar,
@@ -4708,6 +5113,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       {/* ── Element label tooltip ── */}
       {annotating && hoverLabel && hoverLabelRect && !dragRect && (
         <div
+          data-ilse-toolbar
           style={{
             position: 'fixed',
             top: hoverLabelRect.top + hoverLabelRect.height + 6,
@@ -4895,13 +5301,16 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             ? (proCatalog && componentHit ? duplicateSelected : duplicateElement) : undefined}
           key={panelEpoch}
           tab={panelTab}
-          onTab={(tab) => { setPanelTab(tab); if (tab === 'catalog') loadCatalog(); }}
+          onTab={(tab) => { setPanelTab(tab); if (tab !== 'props') loadCatalog(); }}
           catalog={<CatalogPanel {...libraryProps} selected={componentHit?.item.id} />}
+          consistency={consistencyPanel}
+          consistencyLocked={!proCatalog}
           componentSection={componentHit ? (
             <ComponentSection
               hit={componentHit}
               changes={pendingCapture.propEdit?.changes ?? []}
               onChange={setComponentProp}
+              source={propSource?.key === propSourceKey.current ? propSource.source : undefined}
               note={pendingCapture.insert
                 ? (!catalog?.snapshots[pendingCapture.insert.item.id]?.some(sn => sameVariant(pendingCapture.insert!.item, sn.variant, variantKey(pendingCapture.insert!.item, pendingCapture.insert!.props))) ? t('catalog.noVariantCopy') : undefined)
                 : variantMissing ? t('catalog.noLivePreview') : undefined}
@@ -4941,7 +5350,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         ? <div data-ilse-toolbar style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 100003, padding: '6px 10px', borderRadius: 8, background: '#171717', color: '#fff', fontSize: 11, fontFamily: font.sans, pointerEvents: 'none' }}>{t('catalog.notHere')}</div>
         : spot.rects.map((r, i) => (
           <div key={i} data-ilse-toolbar style={{
-            position: 'fixed', left: r.left - 3, top: r.top - 3, width: r.width + 6, height: r.height + 6, zIndex: 100002, pointerEvents: 'none',
+            // Under the panels and the bar (99996+): an outline marks the page, it never covers Ilse
+            position: 'fixed', left: r.left - 3, top: r.top - 3, width: r.width + 6, height: r.height + 6, zIndex: uiLayer(99994), pointerEvents: 'none',
             outline: `2px solid ${ilse.brand}`, borderRadius: 6, background: 'rgba(255,108,3,0.08)', transition: 'opacity 0.2s',
           }} />
         )))}
@@ -4970,14 +5380,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       {/* ── Catalog with nothing selected — the panel's spot, only the catalog ── */}
       {isOpen && catalogOpen && !(pendingCapture && !pendingCapture.sketch && pendingCapture.capture.styles && Object.keys(pendingCapture.capture.styles).length > 0) && (
         <CatalogWindow onClose={() => setCatalogOpen(false)}>
-          <CatalogPanel {...libraryProps} />
+          <PanelTabs tab={windowTab} onTab={(tab) => setWindowTab(tab === 'consistency' ? 'consistency' : 'catalog')} tabs={['catalog', 'consistency']} margin="0 0 10px" locked={proCatalog ? [] : ['consistency']} />
+          {windowTab === 'consistency' && consistencyPanel ? consistencyPanel : <CatalogPanel {...libraryProps} />}
         </CatalogWindow>
       )}
 
       {dsViewer && (
         <DsViewer data={dsViewer.data} justWritten={dsViewer.justWritten} onClose={() => setDsViewer(null)} onExport={() => exportDs()} onLinkAgents={() => send({ type: 'ds_agents' })}
           check={dsCheck} onCheck={() => { setDsCheck({ status: 'running' }); send({ type: 'ds_check' }); }}
-          onAddRule={(rule) => send({ type: 'ds_rule', rule })} />
+          onAddRule={(rules) => send({ type: 'ds_rule', rules })} />
       )}
 
       {/* ── Annotation popover — out of the way while the element is being dragged,
@@ -5131,8 +5542,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
               onMouseDown={(e) => startMarkerDrag(originalIndex, e)}
               style={{
                 position: 'absolute',
+                // A finding's marker sits after its element, not over the text it is about
                 top: isArea ? at.top - 6 : at.top + r.height / 2 - 11,
-                left: at.left - 6,
+                left: ann.testFinding && !isArea && at.left + r.width + 30 < window.scrollX + document.documentElement.clientWidth ? at.left + r.width + 6 : at.left - 6,
                 width: 22, height: 22,
                 borderRadius: 7,
                 backgroundColor: markerColor,
@@ -5612,8 +6024,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             <IlsePixelButton
               mode={toolbarMode}
               onClick={openToolbar}
-              badge={processingCount > 0 ? processingCount : pendingCount > 0 ? pendingCount : undefined}
-              processing={processingCount > 0}
+              // Minimized over Screens, the orb counts the frame's notes
+              badge={(sv?.processing ?? processingCount) > 0 ? (sv?.processing ?? processingCount) : (sv?.pending ?? pendingCount) > 0 ? (sv?.pending ?? pendingCount) : undefined}
+              processing={(sv?.processing ?? processingCount) > 0}
             />
 
             {/* Streaming log — visible near pill while agent is running */}
@@ -5670,8 +6083,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           const togglePause = sv ? () => act('pause') : host.togglePause;
           const handleClear = sv ? () => act('clear') : host.handleClear;
           const setMarkersVisible = sv ? ((() => act('markers')) as typeof host.setMarkersVisible) : host.setMarkersVisible;
-          // Close leaves Screens first, like Esc
-          const closeToolbar = sv || screens ? closeScreens : host.closeToolbar;
+          const closeToolbar = sv || screens ? minimizeScreens : host.closeToolbar;
           return (
           <div style={{
             position: 'fixed',
@@ -5717,124 +6129,114 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                     </span>
                   </span>
                 </div>
-                {/* Who runs the changes: the agent, its plan, its account, this session's model runs */}
-                {agentInfo?.name && (
-                  <div title={t('settings.accountHint')} style={{ marginBottom: 10, fontSize: 11, lineHeight: 1.45, color: color.mutedForeground, minWidth: 0 }}>
-                    <div style={{ color: color.foreground, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {agentInfo.name}{agentInfo.plan ? <span style={{ color: color.mutedForeground, fontWeight: 400 }}> · {agentInfo.plan}</span> : null}
+                {/* Accounts: Ilse Pro and the agent's, one block, each row says whose it is */}
+                {(proAccount || agentInfo?.name || agentAccount) && (() => {
+                  const linkBtn: React.CSSProperties = { marginLeft: 'auto', background: 'none', border: 'none', padding: 0, color: color.mutedForeground, fontSize: 11, cursor: 'pointer', textDecoration: 'underline', whiteSpace: 'nowrap', flexShrink: 0 };
+                  const rowHead: React.CSSProperties = { display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 };
+                  const rowName: React.CSSProperties = { color: color.foreground, fontWeight: 500, whiteSpace: 'nowrap' };
+                  // Whole address, never "…": it breaks before the @ so the domain (what tells two accounts apart) shows
+                  const mail = (m: string) => {
+                    const at = m.lastIndexOf('@');
+                    return <div style={{ color: color.foreground, overflowWrap: 'anywhere' }}>{at > 0 ? <>{m.slice(0, at)}<wbr />{m.slice(at)}</> : m}</div>;
+                  };
+                  return (
+                    <div style={{ marginBottom: 10, padding: '8px 9px', borderRadius: 8, backgroundColor: color.muted, fontSize: 11, lineHeight: 1.45, minWidth: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: color.mutedForeground, marginBottom: 6 }}>{t('settings.accounts')}</div>
+                      {/* Ilse Pro: sign in here or with `ilse login` — the same thing underneath */}
+                      {proAccount && (
+                        <div>
+                          <div style={rowHead}>
+                            <span style={rowName}>Ilse Pro</span>
+                            {proAccount.email ? (
+                              <button onClick={() => send({ type: 'pro_account_logout' })} style={linkBtn}>{t('proAccount.signOut')}</button>
+                            ) : proAccount.pending ? (
+                              <button onClick={() => send({ type: 'pro_account_cancel' })} style={linkBtn}>{t('proAccount.cancel')}</button>
+                            ) : (
+                              <button onClick={() => send({ type: 'pro_account_login' })} style={linkBtn}>{t('proAccount.signIn')}</button>
+                            )}
+                          </div>
+                          {proAccount.email ? (
+                            <>
+                              {mail(proAccount.email)}
+                              {proAccount.restartNeeded && <div style={{ marginTop: 4, color: ilse.test }}>{t('proAccount.restart')}</div>}
+                            </>
+                          ) : proAccount.pending ? (
+                            <>
+                              <div style={{ color: color.mutedForeground }}>{t('proAccount.confirm')}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                                <span style={{ fontFamily: font.mono, fontSize: 14, fontWeight: 600, letterSpacing: '0.06em', color: color.foreground, whiteSpace: 'nowrap' }}>{proAccount.pending.userCode}</span>
+                                <a href={proAccount.pending.uri} target="_blank" rel="noreferrer" style={{ color: color.foreground, fontSize: 11, whiteSpace: 'nowrap' }}>{t('proAccount.openPage')}</a>
+                              </div>
+                            </>
+                          ) : (
+                            <div style={{ color: color.mutedForeground }}>
+                              {proAccount.last && proAccount.last !== 'ok' && proAccount.last !== 'cancelled' ? t(`proAccount.${proAccount.last}`) : t('proAccount.notConnected')}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* Who runs the changes: the agent, its account, its plan, this session's model runs */}
+                      {(agentInfo?.name || agentAccount) && (
+                        <div style={proAccount ? { marginTop: 8, paddingTop: 8, borderTop: `1px solid ${color.border}` } : undefined}>
+                          {agentInfo?.name ? (
+                            <>
+                              <div style={rowHead}>
+                                <span style={{ ...rowName, overflow: 'hidden', textOverflow: 'ellipsis' }}>{agentInfo.name}</span>
+                                <button onClick={() => setSwitchHint(v => !v)} title={t('settings.accountHint')} style={linkBtn}>{t('settings.switchAccount')}</button>
+                              </div>
+                              {agentInfo.email && mail(agentInfo.email)}
+                              {agentInfo.plan && <div style={{ color: color.mutedForeground }}>{agentInfo.plan}</div>}
+                              <div title={t('settings.modelCallsHint')} style={{ marginTop: 2, fontSize: 10, color: color.mutedForeground, opacity: 0.8 }}>
+                                {agentInfo.model ?? t('settings.defaultModel')} · {t('settings.modelCalls', { count: agentInfo.calls ?? 0 })}
+                              </div>
+                            </>
+                          ) : (
+                            <div style={rowHead}>
+                              <span style={{ color: color.mutedForeground, overflowWrap: 'anywhere', minWidth: 0 }}>{agentAccount}</span>
+                              <button onClick={() => setSwitchHint(v => !v)} title={t('settings.accountHint')} style={linkBtn}>{t('settings.switchAccount')}</button>
+                            </div>
+                          )}
+                          {switchHint && <div style={{ marginTop: 4, color: color.mutedForeground }}>{t('settings.switchAccountHint')}</div>}
+                        </div>
+                      )}
                     </div>
-                    {agentInfo.email && <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agentInfo.email}</div>}
-                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {agentInfo.model ?? t('settings.defaultModel')} · {t('settings.modelCalls', { count: agentInfo.calls ?? 0 })}
-                    </div>
-                  </div>
-                )}
-                {!agentInfo?.name && agentAccount && (
-                  <div title={t('settings.accountHint')} style={{ fontSize: 11, color: color.mutedForeground, marginBottom: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {agentAccount}
-                  </div>
-                )}
-                {annotations.length === 0 ? (
-                  <div style={{ color: color.mutedForeground, textAlign: 'center', padding: '8px 0' }}>{t('settings.noAnnotations')}</div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {[
-                      { label: t('settings.pending'), count: annotations.filter(a => a.status === 'pending').length, color: '#b45309' },
-                      { label: t('settings.sent'), count: annotations.filter(a => a.status === 'sent').length, color: '#2563eb' },
-                      { label: t('settings.resolved'), count: annotations.filter(a => a.status === 'resolved').length, color: '#15803d' },
-                    ].filter(s => s.count > 0).map(s => (
-                      <div key={s.label} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ color: color.mutedForeground }}>{s.label}</span>
-                        <span style={{ color: s.color, fontWeight: 600 }}>{s.count}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* DS Tokens */}
-                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ color: color.mutedForeground, fontSize: 11, fontWeight: 600 }}>{t('settings.designSystem')}</span>
-                    {dsTokensLoaded && (
-                      <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 6, backgroundColor: 'rgba(21,128,61,0.1)', color: '#15803d' }}>
-                        {getDSTokens().length} tokens
+                  );
+                })()}
+                {/* The person's notes only: test findings on the page are markers, not notes waiting to be sent */}
+                {(() => {
+                  const mine = annotations.filter(a => !a.testFinding);
+                  const counts = [
+                    { key: 'pending', count: mine.filter(a => a.status === 'pending').length, one: t('settings.pending'), many: t('settings.pendingMany'), color: '#b45309' },
+                    { key: 'sent', count: mine.filter(a => a.status === 'sent').length, one: t('settings.sent'), many: t('settings.sentMany'), color: '#2563eb' },
+                    { key: 'resolved', count: mine.filter(a => a.status === 'resolved').length, one: t('settings.resolved'), many: t('settings.resolvedMany'), color: '#15803d' },
+                  ].filter(c => c.count > 0);
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, padding: '2px 0' }}>
+                      <span style={{ color: color.mutedForeground }}>{t('settings.notes')}</span>
+                      <span style={{ marginLeft: 'auto', display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '2px 10px', color: color.mutedForeground }}>
+                        {counts.length === 0 ? t('settings.noAnnotations') : counts.map(c => (
+                          <span key={c.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                            <span aria-hidden style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: c.color }} />
+                            <span style={{ color: color.foreground, fontWeight: 600 }}>{c.count}</span> {c.count === 1 ? c.one : c.many}
+                          </span>
+                        ))}
                       </span>
-                    )}
-                  </div>
-                  {!dsTokensLoaded ? (
-                    <>
-                      <textarea
-                        value={dsTokensInput}
-                        onChange={(e) => setDsTokensInput(e.target.value)}
-                        placeholder='Paste tokens.json (W3C format)&#10;&#10;{"color":{"primary":{"$value":"#6366f1"}}}'
-                        style={{
-                          width: '100%', height: 60, padding: 6,
-                          backgroundColor: color.muted, border: `1px solid ${color.border}`,
-                          borderRadius: 6, color: color.foreground, fontSize: 10,
-                          fontFamily: 'ui-monospace, monospace', resize: 'vertical',
-                          outline: 'none', boxSizing: 'border-box',
-                        }}
-                      />
-                      <button
-                        onClick={() => handleLoadTokens(dsTokensInput)}
-                        disabled={!dsTokensInput.trim()}
-                        style={{
-                          width: '100%', marginTop: 4, padding: '4px 0',
-                          backgroundColor: dsTokensInput.trim() ? 'rgba(255,108,3,0.15)' : color.muted,
-                          border: 'none', borderRadius: 6,
-                          color: dsTokensInput.trim() ? '#FF6C03' : color.mutedForeground,
-                          fontSize: 10, fontWeight: 600, cursor: dsTokensInput.trim() ? 'pointer' : 'default',
-                        }}
-                      >
-                        {t('settings.loadTokens')}
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        setDSTokens([]);
-                        setDsTokensLoaded(false);
-                        setDsTokensInput('');
-                        localStorage.removeItem(getStorageKey('ilse-ds-tokens'));
-                      }}
-                      style={{
-                        background: 'none', border: 'none', color: color.mutedForeground,
-                        fontSize: 10, cursor: 'pointer', padding: 0,
-                      }}
-                    >
-                      {t('settings.removeTokens')}
-                    </button>
-                  )}
-                </div>
+                    </div>
+                  );
+                })()}
 
-                {/* Grid snap */}
-                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ color: color.mutedForeground, fontSize: 11 }}>{t('settings.snapToGrid')}</span>
-                    <button
-                      onClick={toggleSnap}
-                      style={{
-                        width: 28, height: 16, borderRadius: 8, border: 'none', cursor: 'pointer',
-                        backgroundColor: snapEnabled ? ilse.orange : '#d4d4d4',
-                        position: 'relative', transition: 'background-color 0.15s',
-                      }}
-                    >
-                      <span style={{
-                        position: 'absolute', top: 2, left: snapEnabled ? 14 : 2,
-                        width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff',
-                        transition: 'left 0.15s',
-                      }} />
-                    </button>
-                  </div>
+                {/* Grid snap: name, step (only when on) and switch on one line */}
+                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ color: color.mutedForeground, fontSize: 11, marginRight: 'auto', whiteSpace: 'nowrap' }}>{t('settings.snapToGrid')}</span>
                   {snapEnabled && (
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                    <>
                       <button
                         onClick={() => updateSnapSize(snapSize - 1)}
                         style={{ background: 'none', border: `1px solid ${color.border}`, borderRadius: 4, color: color.mutedForeground, cursor: 'pointer', width: 20, height: 20, fontSize: 11, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                       >
                         −
                       </button>
-                      <span style={{ color: color.foreground, fontSize: 11, fontWeight: 600, minWidth: 24, textAlign: 'center', fontFamily: 'ui-monospace, monospace' }}>
+                      <span style={{ color: color.foreground, fontSize: 11, fontWeight: 600, minWidth: 18, textAlign: 'center', fontFamily: 'ui-monospace, monospace' }}>
                         {snapSize}
                       </span>
                       <button
@@ -5843,9 +6245,23 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                       >
                         +
                       </button>
-                      <span style={{ color: '#a1a1a1', fontSize: 10 }}>px</span>
-                    </div>
+                      <span style={{ color: '#a1a1a1', fontSize: 10, marginRight: 4 }}>px</span>
+                    </>
                   )}
+                  <button
+                    onClick={toggleSnap}
+                    style={{
+                      width: 28, height: 16, borderRadius: 8, border: 'none', cursor: 'pointer', flexShrink: 0,
+                      backgroundColor: snapEnabled ? ilse.orange : '#d4d4d4',
+                      position: 'relative', transition: 'background-color 0.15s',
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute', top: 2, left: snapEnabled ? 14 : 2,
+                      width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff',
+                      transition: 'left 0.15s',
+                    }} />
+                  </button>
                 </div>
 
                 {/* Connect agent — MCP endpoint + token, ready to paste */}
@@ -5856,7 +6272,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                       style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0 }}
                     >
                       <span>{t('settings.connectAgent')}</span>
-                      <span>{connectOpen ? '−' : '+'}</span>
+                      <span aria-hidden style={{ display: 'inline-block', transition: 'transform 0.15s', transform: connectOpen ? 'rotate(90deg)' : 'none' }}>›</span>
                     </button>
                     {connectOpen && (() => {
                       const snippet = connectTarget === 'claude-code'
@@ -5901,6 +6317,28 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   </div>
                 )}
 
+                {/* Project memory: what Ilse remembers here, and what the agent reads */}
+                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
+                  <button
+                    onClick={openMemory}
+                    style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0 }}
+                  >
+                    <span style={{ whiteSpace: 'nowrap' }}>{t('memory.open')}</span>
+                    <span aria-hidden>›</span>
+                  </button>
+                </div>
+
+                {/* Keyboard shortcuts */}
+                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
+                  <button
+                    onClick={() => setShortcutsOpen(true)}
+                    style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0 }}
+                  >
+                    <span style={{ whiteSpace: 'nowrap' }}>{t('shortcuts.title')}</span>
+                    <span aria-hidden>›</span>
+                  </button>
+                </div>
+
                 {/* Logs — journal export, for tuning Ilse's experience */}
                 {connected && (
                   <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
@@ -5909,7 +6347,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                       style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0 }}
                     >
                       <span>Logs</span>
-                      <span>{logsOpen ? '−' : '+'}</span>
+                      <span aria-hidden style={{ display: 'inline-block', transition: 'transform 0.15s', transform: logsOpen ? 'rotate(90deg)' : 'none' }}>›</span>
                     </button>
                     {logsOpen && (() => {
                       const summary = (logs?.json as { summary?: { annotations?: number; medianResolveMs?: { all?: number }; tokens?: { costUsd?: number } } } | null)?.summary;
@@ -5949,28 +6387,6 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                     })()}
                   </div>
                 )}
-
-                {/* Project memory: what Ilse remembers here, and what the agent reads */}
-                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
-                  <button
-                    onClick={openMemory}
-                    style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0 }}
-                  >
-                    <span style={{ whiteSpace: 'nowrap' }}>{t('memory.open')}</span>
-                    <span aria-hidden>›</span>
-                  </button>
-                </div>
-
-                {/* Keyboard shortcuts */}
-                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
-                  <button
-                    onClick={() => setShortcutsOpen(true)}
-                    style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: color.mutedForeground, fontSize: 11, cursor: 'pointer', padding: 0 }}
-                  >
-                    <span style={{ whiteSpace: 'nowrap' }}>{t('shortcuts.title')}</span>
-                    <span aria-hidden>›</span>
-                  </button>
-                </div>
 
                 {/* Language */}
                 <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8 }}>
@@ -6128,7 +6544,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                         {testSteps.slice(-3).map((step, i, shown) => {
                           const fromBottom = shown.length - 1 - i;
                           return (
-                            <div key={`${testSteps.length - fromBottom}-${step}`} style={{ fontSize: 12, ...reasoningLine(fromBottom) }}>
+                            <div key={`${testSteps.length - fromBottom}-${step}`} style={{ fontSize: 12, ...reasoningLine(fromBottom), ...stepHalo() }}>
                               {fromBottom === 0 && <ReasoningDot mode="test" />}
                               {step}
                             </div>
@@ -6303,8 +6719,6 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                           fontSize: 12,
                           fontFamily: font.sans,
                           fontWeight: m.role === 'user' ? 600 : 500,
-                          color: m.role === 'user' ? color.foreground : color.mutedForeground,
-                          mixBlendMode: m.role === 'user' ? ('normal' as const) : ('luminosity' as const),
                           lineHeight: 1.4,
                           whiteSpace: 'pre-wrap',
                           wordBreak: 'break-word',
@@ -6313,13 +6727,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                             backgroundColor: ilse.orangePale,
                             padding: '5px 12px',
                             borderRadius: 12,
-                          } : {
-                            backdropFilter: 'blur(8px)',
-                            WebkitBackdropFilter: 'blur(8px)',
-                            backgroundColor: 'rgba(128,128,128,0.08)',
-                            padding: '5px 10px',
-                            borderRadius: 10,
-                          }),
+                            color: color.foreground,
+                          } : chatBubble),
                         }}
                       >
                         {m.role === 'agent' && (
@@ -6438,13 +6847,21 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                     <rect x="3" y="3" width="10" height="10" rx="2" />
                   </svg>
                 </PillBtn>
+              ) : toolbarMode === 'test' && testing ? (
+                // While the test runs (reading the code, pages, journeys) the same Stop as design mode
+                <PillBtn accent={accent}
+                  title={t('toolbar.testStop')}
+                  onClick={() => testAction('stop')}
+                  danger
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <rect x="3" y="3" width="10" height="10" rx="2" />
+                  </svg>
+                </PillBtn>
               ) : toolbarMode === 'test' ? (
                 // Test mode's own action: run the test. Fixing lives in the report and on each finding's card
                 <PillBtn accent={accent}
                   title={t('test.runTest')}
-                  active={testing}
-                  pulsing={testing}
-                  disabled={testing}
                   onClick={() => {
                     if (scanOpen && testRun?.phase === 'setup') { setScanOpen(false); setTestRun(null); return; }
                     openTestSetup();
@@ -6693,7 +7110,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
 
         {screens && !EMBEDDED && (
           <ScreensView initialDevice={screens.device} initialRulers={screens.rulers}
-            onState={setEmbedState} actRef={screensActRef} onClose={closeScreens} />
+            onState={setEmbedState} actRef={screensActRef} onClose={closeScreens} onMinimize={minimizeScreens} />
         )}
 
         {/* Ilse-styled tooltips for every titled control in Ilse's UI */}
@@ -6705,6 +7122,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
             data={memoryData}
             onClose={() => setMemoryOpen(false)}
             onUndoDecision={(id) => send({ type: 'memory_undo_decision', id })}
+            onUnignoreLook={(id) => send({ type: 'memory_unignore_look', id })}
             onForgetTest={() => send({ type: 'memory_forget_test' })}
             onOpenPage={(page) => { setMemoryOpen(false); if (page !== location.pathname) location.assign(page); }}
           />
@@ -6785,8 +7203,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           const edge = above
             ? (growsRight ? { left: Math.max(12, toolbarPos.x) } : { right: Math.max(12, window.innerWidth - (toolbarPos.x + PILL_W)) })
             : { left: window.innerWidth / 2 };
-          const first = pageError.errors[0];
-          const shown = first.length > 220 ? first.slice(0, 219) + '…' : first;
+          const { message, where } = summarizeError(pageError.errors[0]);
           const more = pageError.errors.length > 1 ? ' ' + t('toolbar.pageError.more', { count: pageError.errors.length - 1 }) : '';
           const askFix = () => {
             const list = pageError.errors.slice(0, 3).map(e => `- ${e.slice(0, 600)}`).join('\n');
@@ -6808,12 +7225,18 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 maxWidth: 420,
               }}
             >
-              <SpeechBubble mode={toolbarMode} reaction="say" mascotSize={24} textStyle={STALE_TEXT} actions={<>
+              <SpeechBubble mode={toolbarMode} reaction="say" mascotSize={24} textStyle={floatingText()} actions={<>
                 <button style={speechButton(toolbarMode, true)} onClick={askFix}>{t('toolbar.pageError.fix')}</button>
                 <button style={speechButton(toolbarMode, false)} onClick={() => { send({ type: 'undo', changeSetId: pageError.changeSetId }); setPageError(null); }}>{t('toolbar.pageError.undo')}</button>
                 <button style={speechButton(toolbarMode, false)} onClick={() => setPageError(null)}>{t('toolbar.pageError.later')}</button>
               </>}>
-                {t('toolbar.pageError.text', { files: pageError.files.join(', ') || '—', error: shown }) + more}
+                {t('toolbar.pageError.text', { files: pageError.files.join(', ') || '—' })}
+                {/* The error itself, set apart: what broke and where, never the code frame */}
+                <div style={{ marginTop: 6, fontFamily: font.mono, fontSize: 12, lineHeight: 1.45 }}>
+                  <div style={{ fontWeight: 700, overflowWrap: 'anywhere' }}>{message}</div>
+                  {where && <div style={{ opacity: 0.75, marginTop: 2, overflowWrap: 'anywhere' }}>{where}</div>}
+                  {more && <div style={{ opacity: 0.75, marginTop: 2, fontFamily: font.sans }}>{more.trim()}</div>}
+                </div>
               </SpeechBubble>
             </div>
           );
@@ -6835,7 +7258,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                 maxWidth: 380,
               }}
             >
-              <SpeechBubble mode={toolbarMode} reaction="say" mascotSize={24} textStyle={STALE_TEXT} actions={<>
+              <SpeechBubble mode={toolbarMode} reaction="say" mascotSize={24} textStyle={floatingText()} actions={<>
                 <button style={speechButton(toolbarMode, true)} onClick={() => window.location.reload()}>{t('toolbar.stale.reload')}</button>
                 <button style={speechButton(toolbarMode, false)} onClick={() => setStalePage(null)}>{t('toolbar.stale.later')}</button>
               </>}>

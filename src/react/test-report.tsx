@@ -18,7 +18,7 @@ import { color, font, ilse, radius, shadow } from './tokens.js';
 import { t } from '../i18n/index.js';
 import { ago } from './memory-panel.js';
 import { GROUP_ORDER, type TestGroup } from './test-setup.js';
-import type { TestFinding, TestRunMeta } from './test-findings.js';
+import { findingTitle, findingDetail, type TestFinding, type TestRunMeta } from './test-findings.js';
 import { JourneysTab } from './journeys-tab.js';
 import type { JourneySummary } from './journeys-panel.js';
 import type { JourneyReport } from './journey-report.js';
@@ -42,12 +42,24 @@ export interface ReportSummary {
   since?: { new: number; returned: number; fixed: number };
 }
 
+/** The element's words with a space between each piece: a nav's links read "Living room Bedroom", not "Living roomBedroom" */
+function textOf(el: Element): string {
+  const parts: string[] = [];
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walk.nextNode(); n && parts.length < 20; n = walk.nextNode()) {
+    const t = n.textContent?.trim();
+    if (t) parts.push(t);
+  }
+  return parts.join(' ').replace(/\s+/g, ' ');
+}
+
 /** Which element a finding is, in a few words: its text on this page, else the selector's last part */
-export function whereOf(f: Pick<TestFinding, 'selector'>): string {
+export function whereOf(f: Pick<TestFinding, 'selector'>, here = true): string {
   if (!f.selector) return '';
   let el: Element | null = null;
-  try { el = document.querySelector(f.selector); } catch { /* not a selector this page understands */ }
-  const text = el?.textContent?.replace(/\s+/g, ' ').trim();
+  // On another page the same selector can match something else entirely ("New season" for a price)
+  if (here) try { el = document.querySelector(f.selector); } catch { /* not a selector this page understands */ }
+  const text = el ? textOf(el) : '';
   if (text) return `“${text.length > 32 ? `${text.slice(0, 31)}…` : text}”`;
   const last = f.selector.split(/\s*>\s*|\s+/).pop() ?? f.selector;
   return last.replace(/\\(.)/g, '$1').replace(/:nth-[\w-]+\(\d+\)/g, '').slice(0, 40);
@@ -94,8 +106,10 @@ export function findingTargets(f: TestFinding, doc: Document = document): Elemen
 
 const onThisPage = (f: TestFinding) => {
   if (!f.page) return false;
-  const [path, query] = f.page.split('?');
-  return path === location.pathname && (!query || `?${query}` === location.search);
+  return (f.pages?.length ? f.pages : [f.page]).some(p => {
+    const [path, query] = p.split('?');
+    return path === location.pathname && (!query || `?${query}` === location.search);
+  });
 };
 
 function Outlines({ targets }: { targets: Element[] }) {
@@ -163,6 +177,8 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
   const [menu, setMenu] = useState<'closed' | 'open' | 'confirm'>('closed');
   // Compact: every group starts closed; the one holding the focused finding opens
   const [opened, setOpened] = useState<Set<TestGroup>>(new Set());
+  // Findings with one title (contrast in six places) are one row; it opens to show each place
+  const [openTitles, setOpenTitles] = useState<Set<string>>(new Set());
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const drag = useRef<{ x: number; y: number; top: number; left: number } | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -197,6 +213,7 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
   }, []);
 
   useEffect(() => { if (focused) setOpened(prev => prev.has(groupOf(focused)) ? prev : new Set(prev).add(groupOf(focused))); }, [focused?.id]);
+  useEffect(() => { if (focused) setOpenTitles(prev => prev.has(findingTitle(focused)) ? prev : new Set(prev).add(findingTitle(focused))); }, [focused?.id]);
 
   const pick = (f: TestFinding) => {
     if (focusId === f.id) { onFocus(null); return; }
@@ -222,16 +239,19 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
 
   // Several findings with one title (axe's "All page content should be contained by landmarks", one per element): say which element each is
   const titleCount = new Map<string, number>();
-  for (const f of visible) titleCount.set(f.title, (titleCount.get(f.title) ?? 0) + 1);
+  for (const f of visible) titleCount.set(findingTitle(f), (titleCount.get(findingTitle(f)) ?? 0) + 1);
 
-  const row = (f: TestFinding) => {
+  /** nested: a place under its title's row, so the place leads instead of the title */
+  const row = (f: TestFinding, nested = false) => {
     const open = f.id === focusId;
     const busy = fixing(f.id);
+    const where = (titleCount.get(findingTitle(f)) ?? 0) > 1 ? whereOf(f, onThisPage(f)) : '';
     const tags = [
-      (titleCount.get(f.title) ?? 0) > 1 ? whereOf(f) : '',
-      f.page && !onThisPage(f) ? t('report.otherPage', { page: f.page }) : '',
+      nested ? '' : where,
+      f.category !== 'consistency' && (f.pages?.length ?? 0) > 1 ? t('report.onPages', { count: f.pages!.length })
+        : f.page && !onThisPage(f) ? t('report.otherPage', { page: f.page }) : '',
       f.status === 'new' && summary.since ? t('report.new') : '',
-      f.occurrences > 1 && f.category !== 'consistency' ? `×${f.occurrences}` : '',
+      f.occurrences > 1 && f.category !== 'consistency' && !((f.pages?.length ?? 0) > 1) ? `×${f.occurrences}` : '',
     ].filter(Boolean);
     return (
       <div key={f.id} style={{ borderRadius: radius.md, background: open ? color.muted : 'transparent', margin: '0 -6px' }}>
@@ -247,7 +267,7 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
           <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 5, background: dot(f.severity) }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, color: color.foreground, lineHeight: 1.35, ...(open ? {} : { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden' }) }}>
-              {f.title}
+              {nested ? where || findingTitle(f) : findingTitle(f)}
               {f.status === 'returned' && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: '#ef4444' }}>{t('report.returned')}</span>}
             </div>
             {tags.length > 0 && <div style={{ fontSize: 10, color: color.mutedForeground, marginTop: 2 }}>{tags.join(' · ')}</div>}
@@ -255,7 +275,7 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
         </div>
         {open && (
           <div style={{ padding: '0 6px 10px 20px', fontSize: 11, color: color.mutedForeground, lineHeight: 1.45 }}>
-            {f.detail && <div style={{ marginBottom: 6, color: color.foreground }}>{f.detail}</div>}
+            {f.detail && <div style={{ marginBottom: 6, color: color.foreground }}>{findingDetail(f)}</div>}
             {f.files && f.files.length > 0 && (
               <div style={{ marginBottom: 6 }}>
                 <div style={{ fontWeight: 600, marginBottom: 2 }}>{t('report.code')}</div>
@@ -272,6 +292,44 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
         )}
       </div>
     );
+  };
+
+  const cluster = (title: string, fs: TestFinding[]) => {
+    const isOpen = openTitles.has(title);
+    const top = fs.reduce((a, b) => rank[b.severity] > rank[a.severity] ? b : a);
+    const pages = new Set(fs.flatMap(f => f.pages ?? (f.page ? [f.page] : [])));
+    const toggle = () => setOpenTitles(prev => { const next = new Set(prev); if (next.has(title)) next.delete(title); else next.add(title); return next; });
+    return (
+      <div key={`t:${title}`}>
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={isOpen}
+          onClick={toggle}
+          onKeyDown={(e) => { if (e.key === 'Enter') toggle(); }}
+          style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px', margin: '0 -6px', cursor: 'pointer', borderRadius: radius.md }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = color.muted; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent'; }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, marginTop: 5, background: dot(top.severity) }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, color: color.foreground, lineHeight: 1.35 }}>{title}</div>
+            <div style={{ fontSize: 10, color: color.mutedForeground, marginTop: 2 }}>
+              {[t('report.places', { count: fs.length }), pages.size > 1 ? t('report.onPages', { count: pages.size }) : ''].filter(Boolean).join(' · ')}
+            </div>
+          </div>
+          {isOpen ? <IconChevronDown size={12} color={color.mutedForeground} style={{ marginTop: 3 }} /> : <IconChevronRight size={12} color={color.mutedForeground} style={{ marginTop: 3 }} />}
+        </div>
+        {isOpen && <div style={{ marginLeft: 14, paddingLeft: 8, borderLeft: `1px solid ${color.border}` }}>{fs.map(f => row(f, true))}</div>}
+      </div>
+    );
+  };
+
+  /** A group's findings, those sharing a title as one row */
+  const rows = (items: TestFinding[]) => {
+    const byTitle = new Map<string, TestFinding[]>();
+    for (const f of items) byTitle.set(findingTitle(f), [...(byTitle.get(findingTitle(f)) ?? []), f]);
+    return [...byTitle].map(([title, fs]) => fs.length > 1 ? cluster(title, fs) : row(fs[0]));
   };
 
   const journeyRow = (j: NonNullable<TestRunMeta['journeyList']>[number]) => {
@@ -316,7 +374,7 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
       >
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: color.foreground }}>{t('report.title')}</div>
-          {run && <div style={{ fontSize: 10, color: color.mutedForeground, marginTop: 2 }}>{t('report.testedOn', { when: ago(run.at), sizes })}</div>}
+          {run && <div style={{ fontSize: 10, color: color.mutedForeground, marginTop: 2 }}>{t('report.testedOn', { when: ago(new Date(Date.parse(run.at) + (run.ms ?? 0)).toISOString()), sizes })}</div>}
         </div>
         <button
           title={t(expanded ? 'report.collapse' : 'report.expand')} aria-label={t(expanded ? 'report.collapse' : 'report.expand')}
@@ -400,7 +458,15 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
             {chip(t('report.improvements', { count: summary.improvements }), 'muted')}
             {(run?.groups.includes('consistency') || summary.repeated > 0) && chip(t('report.repeated', { count: summary.repeated }), 'test')}
           </div>
-          {summary.since && <div style={{ fontSize: 10, color: color.mutedForeground, marginTop: 6 }}>{t('report.since', summary.since)}</div>}
+          {/* Since the last test: what got fixed is the news, so it's a chip; what's new or came back, a line */}
+          {summary.since && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+              <span style={{ fontSize: 11, color: color.mutedForeground }}>{t('report.sinceLast')}</span>
+              {summary.since.fixed > 0 && chip(`✓ ${t('report.fixedCount', { count: summary.since.fixed })}`, 'ok')}
+              {summary.since.returned > 0 && chip(t('report.returnedCount', { count: summary.since.returned }), 'error')}
+              <span style={{ fontSize: 11, color: color.mutedForeground }}>{t('report.newCount', { count: summary.since.new })}</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -448,7 +514,7 @@ export function TestReport({ findings, run, focusId, ignoredNow, testing, fixing
                 <>
                   {carried && <div style={{ fontSize: 10, color: color.mutedForeground, margin: '-2px 0 4px 16px' }}>{t('report.carried')}</div>}
                   {journeys.map(journeyRow)}
-                  {items.filter(f => g !== 'journeys' || !journeys.length).map(row)}
+                  {rows(items.filter(f => g !== 'journeys' || !journeys.length))}
                   {count === 0 && <div style={{ fontSize: 11, color: color.mutedForeground, paddingLeft: 16, paddingBottom: 4 }}>{t('report.groupEmpty')}</div>}
                 </>
               )}

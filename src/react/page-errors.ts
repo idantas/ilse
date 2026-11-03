@@ -50,11 +50,22 @@ export function newErrors(seen: PageError[], since: number): string[] {
   return out;
 }
 
+let hushed = 0;
+/**
+ * Ilse's own rendering (the preview stage drawing a component alone) may log
+ * errors that aren't the app breaking. Returns the call that ends it.
+ */
+export function hushPageErrors(): () => void {
+  hushed++;
+  let done = false;
+  return () => { if (!done) { done = true; hushed--; } };
+}
+
 /** Starts listening: console.error, uncaught errors and rejected promises */
 export function watchPageErrors(): { seen: () => PageError[]; stop: () => void } {
   const seen: PageError[] = [];
   const add = (message: string) => {
-    if (isNoise(message)) return;
+    if (hushed > 0 || isNoise(message)) return;
     seen.push({ at: Date.now(), message: message.slice(0, 2000) });
     if (seen.length > 200) seen.splice(0, seen.length - 200);
   };
@@ -75,4 +86,24 @@ export function watchPageErrors(): { seen: () => PageError[]; stop: () => void }
       window.removeEventListener('unhandledrejection', onRejection);
     },
   };
+}
+
+/**
+ * A console error cut down to what a person reads: the message and where.
+ * Bundler errors carry a code frame (`13 | const t = …`, `> 15 |`) that is
+ * noise in a bubble; the agent still gets the whole text when asked to fix.
+ */
+export function summarizeError(raw: string): { message: string; where?: string } {
+  const text = raw.replace(/\s+/g, ' ').trim();
+  const loc = text.match(/(?:\.{0,2}\/)?[\w@.\/-]+\.(?:tsx?|jsx?|mjs|cjs|css|scss|vue|svelte)(?::\d+){1,2}/);
+  const where = loc ? loc[0].replace(/^\.\//, '') : undefined;
+  let message = loc ? text.replace(loc[0], ' ') : text;
+  const errorAt = message.search(/\b(?:\w*Error|Error):\s/);
+  if (errorAt >= 0) message = message.slice(errorAt);
+  // The code frame starts at the first "12 |" or "> 12 |"
+  const frame = message.search(/\s>?\s*\d+\s\|/);
+  if (frame > 0) message = message.slice(0, frame);
+  message = message.replace(/^Error:\s*/, '').trim();
+  if (message.length > 140) message = message.slice(0, 139).trimEnd() + '…';
+  return where ? { message: message || text.slice(0, 140), where } : { message: message || text.slice(0, 140) };
 }
