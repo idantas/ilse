@@ -4,6 +4,8 @@ import { t } from '../i18n/index.js';
 import { historyFor, formatHistory } from '../git/ledger.js';
 import { componentCard, type ComponentCard } from '../context/locate.js';
 import { findDesignMd } from '../setup/design-md.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface AugmentedAnnotation {
   note: string;
@@ -148,6 +150,21 @@ export function formatComponentFor(annotation: Annotation, cwd = process.cwd()):
   if (!owner) return undefined;
   const card = componentCard(owner, { cwd });
   return card ? formatComponentCard(card) : undefined;
+}
+
+/** Where the project keeps its components, for "make it a component" */
+export function componentsDir(cwd: string): string {
+  return ['src/components', 'components', 'app/components', 'src/app/components'].find(d => existsSync(join(cwd, d))) ?? 'src/components';
+}
+
+/**
+ * "Make this a component / give it variants": seen live, the agent added a `variant` prop to a
+ * function inside the page and stopped. That is no component to the Library or DESIGN.md, which
+ * read only exported components used from another file. Say what counts, once, when it's asked.
+ */
+export function formatComponentAsk(note: string | undefined, dir: string): string | undefined {
+  if (!note || !/\b(componentes?|components?|variantes?|variants?)\b/i.test(note)) return undefined;
+  return `**Component request:** a component counts for the design system only in its own file in \`${dir}/\`, exported, and imported where it's used — the Library and DESIGN.md list only those. If the piece is a function inside a page (or not a function yet), move it there first. Variants are one prop on that component, with the current look as the default. Import it in every file that renders it.`;
 }
 
 /**
@@ -323,6 +340,8 @@ export function augmentAnnotation(annotation: Annotation): AugmentedAnnotation {
   if (componentBlock) lines.push(componentBlock);
   const scopeBlock = formatScope(annotation);
   if (scopeBlock) lines.push(scopeBlock);
+  const askBlock = formatComponentAsk(annotation.note, componentsDir(process.cwd()));
+  if (askBlock) lines.push(askBlock);
   // With a confident location the grep hint is noise the agent would act on
   if (annotation.grepPattern && !sourceBlock) lines.push(`**Grep:** \`${annotation.grepPattern}\``);
   if (annotation.componentStack?.length) lines.push(`**Stack:** ${annotation.componentStack.join(' > ')}`);

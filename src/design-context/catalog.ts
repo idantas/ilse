@@ -72,6 +72,9 @@ const SKIP_NAMES = /Provider$|^Route[sr]?$|Router$|^Suspense$|^Fragment$|^Strict
 // Screens, not pieces: the app root and framework route files
 const SCREEN_FILE = /(^|\/)(page|layout|loading|error|template|not-found|default|_app|_document|main|index)\.(tsx|jsx)$/;
 const SCREEN_NAME = /^(App|Root|RootLayout|Layout|Page|Home|NotFound)$/;
+// A screen folder (`src/pages/Admin.jsx`) holds routes too: seen live, the Library listed Admin and Cart
+// as components, and the DS wrote "when to use" for them
+const SCREEN_DIR = /(^|\/)(pages|views|screens|routes)\//;
 const SKIP_PROPS = new Set(['key', 'ref', 'className', 'style', 'sx', 'id', 'class', 'css', 'tw']);
 const MAX_VALUES = 12;
 /** Props that carry words for people, not a choice among variants */
@@ -304,6 +307,17 @@ function exportedComponents(ast: Node): Exported[] {
         }
       }
     }
+    // A prop typed by hand over a cva() variant of the same name (`size?: ButtonSize` with legacy
+    // aliases sm/md/lg): the variant's keys are the looks there are, and its default is the default.
+    // Live, the panel offered "—, default, compact, sm, md, lg" — three of them the same two looks
+    for (const [key, info] of props) {
+      const owners = [...cva.values()].filter(m => m.has(key));
+      if (owners.length !== 1 || info.kind !== 'enum') continue;
+      const v = owners[0].get(key)!;
+      if (!v.values.length || !v.values.every(x => info.values.includes(x))) continue;
+      info.values = v.values;
+      if (info.default === undefined && v.def !== undefined) info.default = v.def;
+    }
     out.push({ name, props, renders, isDefault, line: decl.loc?.start.line ?? 1 });
   }
   return out;
@@ -411,7 +425,7 @@ export function buildCatalog(cwd: string): CatalogEntry[] {
   const usedIn = new Map<string, string[]>();
   for (const e of entries.values()) {
     if (e.uses === 0 && !isCatalog(e.source)) continue;
-    if (!e.library && (SCREEN_NAME.test(e.name) || (SCREEN_FILE.test(e.source) && !isCatalog(e.source)))) continue;
+    if (!e.library && (SCREEN_NAME.test(e.name) || SKIP_NAMES.test(e.name) || ((SCREEN_FILE.test(e.source) || SCREEN_DIR.test(e.source)) && !isCatalog(e.source)))) continue;
     // Values: the type's own first (its order is the author's), then what the code passes
     const seen = new Map<string, Map<string, number>>();
     for (const u of e.usages) for (const [k, v] of u.attrs) {

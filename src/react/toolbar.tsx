@@ -33,12 +33,12 @@ import { watchRepaints, REPAINT_WAIT_MS, sameText, softRefresh } from './repaint
 import { copyPlacement, lineOf, type Neighbour } from './copy-place.js';
 import { watchPageErrors, newErrors, summarizeError } from './page-errors.js';
 import { useImageInput, InlineAttachments } from './image-input.js';
-import { CatalogPanel, CatalogWindow, bestSnapshot, type DsInfo } from './catalog-panel.js';
+import { CatalogPanel, CatalogWindow, bestSnapshot, type DsInfo, type ComponentNotes } from './catalog-panel.js';
 import { lookNote, readLookAlikes, type LookAlikeView } from './look-alike.js';
-import { readConsistency, reviewEstimate, screenKey, swapStyles, type ReviewPiece } from './consistency.js';
-import { ConsistencyLocked, ConsistencyPanel, agentRow, ruleRow, type AgentFinding, type ConsistencyRow, type ConsistencyState, type ReviewState, type RowAction } from './consistency-panel.js';
-import { DsViewer, type DsViewData, type DsCheckState } from './ds-viewer.js';
-import { componentAt, findInstances, type ComponentHit, instanceAt, liftAnchor, namesOnPage, sameVariant, snapshotPage, variantKey, type InstanceRef, type CatalogItem, type CatalogSnapshot } from './catalog-snapshot.js';
+import { decideEntry, lookEntry, readConsistency, reviewEstimate, screenKey, swapStyles, type Decision, type ReviewPiece } from './consistency.js';
+import { ConsistencyLocked, ConsistencyPanel, agentRow, ruleRow, type AgentFinding, type ConsistencyRow, type ConsistencyState, type ReviewState, type RowAction, type AppliedRow, type FixAllItem } from './consistency-panel.js';
+import { DsViewer, type DsEditing, type DsViewData, type DsCheckState } from './ds-viewer.js';
+import { componentAt, componentNameAt, findInstances, type ComponentHit, instanceAt, liftAnchor, namesOnPage, sameVariant, snapshotPage, variantKey, type InstanceRef, type CatalogItem, type CatalogSnapshot } from './catalog-snapshot.js';
 import { ComponentSection, type PropChange, type PropSourceView } from './component-section.js';
 import { endLiveProps, hasLiveProps, setLiveProps } from './live-props.js';
 import { canStage, exampleRequest, stage, type StageRequest } from './preview-stage.js';
@@ -68,7 +68,7 @@ import { PillBtn } from './pill-btn.js';
 import { EMBEDDED, uiDocument, uiLayer, type Device, type EmbedState, type ScreensAction } from './screens.js';
 import { ScreensMenu, ScreensView, useScreensEmbed, leaveScreens } from './screens-view.js';
 import { radius, color, shadow, ilse, font, modeAccent, proText } from './tokens.js';
-import { t, detectLocale, setLocale, getLocale, toolActivity, type Locale } from '../i18n/index.js';
+import { t, detectLocale, setLocale, getLocale, toolActivity, type Locale, type MessageKey } from '../i18n/index.js';
 import { withShortcut, isTyping, doublePress, mod, SHORTCUT_GROUPS } from './shortcuts.js';
 
 // ── Clipboard fallback: format annotations as markdown ──────────────────────
@@ -252,10 +252,15 @@ function insertCommand(d: InsertDraft, styled = false): Pick<AutoContext, 'inser
   if (d.copy) return copyCommand(d, styled);
   const from = d.item.library ? `import de '${d.item.module ?? d.item.source}'` : `definido em ${d.item.source}`;
   const self = d.at ? `deste <${d.at.component}>` : 'deste elemento';
-  const where = { before: `antes ${self}`, after: `depois ${self}`, inside: `dentro ${self}, no fim` }[d.placement]
-    + (d.at ? ` (onde este <${d.at.component}> é usado, não dentro da definição dele)` : '');
+  // Dropped inside an instance written with no children (live: a Badge into a KpiCard): the usage
+  // has no slot, so it's a change to the component — this instance only, as a prop or variant
+  const closed = d.placement === 'inside' && d.at?.closed;
+  const where = closed
+    ? `dentro deste <${d.at!.component}>. Ele não recebe conteúdo de fora (é usado sem children), então isto muda o componente: adicione a ${d.at!.component} uma prop opcional (ou variante) que mostra o <${d.item.name}>, desligada por padrão, e ligue só nesta instância; as outras ficam iguais`
+    : { before: `antes ${self}`, after: `depois ${self}`, inside: `dentro ${self}, no fim` }[d.placement]
+      + (d.at ? ` (onde este <${d.at.component}> é usado, não dentro da definição dele)` : '');
   return {
-    insertLabel: `+ ${d.item.name} ${t(`toolbar.insert.${d.placement}` as Parameters<typeof t>[0])}`,
+    insertLabel: `+ ${d.item.name} ${t(closed ? 'toolbar.insert.insideClosed' : `toolbar.insert.${d.placement}` as Parameters<typeof t>[0])}`,
     insert: [
       `Inserir o componente <${d.item.name}> que o projeto já tem (${from}) ${where}, assim:`,
       jsxPreview(d.item.name, d.props, d.text),
@@ -1518,6 +1523,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [dsInfo, setDsInfo] = useState<DsInfo | null>(null);
   // The DS window: opened by Create DS / Export (just written) or by the DS's path in the Library
   const [dsViewer, setDsViewer] = useState<{ data: DsViewData; justWritten: boolean } | null>(null);
+  // The agent's draft of a component's reasoning, waiting for the person to keep it
+  const [dsSuggestion, setDsSuggestion] = useState<DsEditing['suggestion']>(null);
+  // Why each component exists, from the DS: the Library's cards show and edit it
+  const [dsNotes, setDsNotes] = useState<ComponentNotes>({});
   const dsJustWritten = useRef(false);
   const [dsCheck, setDsCheck] = useState<DsCheckState | null>(null);
   // Read from callbacks that don't re-create on every catalog change (selecting an element)
@@ -1874,7 +1883,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // The project's typecheck or tests still fail after the agent's repair turns
   const [checkFailed, setCheckFailed] = useState<{ changeSetId: string; problems: string[]; count: number } | null>(null);
   // Undo: what the CLI can restore (newest batch first)
-  const [undo, setUndo] = useState<{ count: number; label?: string; redoCount?: number; redoLabel?: string }>({ count: 0 });
+  const [undo, setUndo] = useState<{ count: number; label?: string; id?: string; redoCount?: number; redoLabel?: string }>({ count: 0 });
 
   // ── Draft history: ⌘Z inside the open card walks back the gestures of this draft ──
   // Each entry is one decision: a panel edit, a drag, a resize. Files are untouched.
@@ -2077,11 +2086,16 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           else setStalePage(files);
         };
         whenRepainted(() => setStalePage(null), stale, regions, sinceOf(ids));
-        // A change that broke the page says so in the console: show it, with undo or a fix
+        // A change that broke the page says so in the console: show it, with undo or a fix.
+        // Only what the final code logged: from the batch's last write, not its half-written steps
         const since = sinceOf(ids);
+        const writtenAt = typeof msg.writtenAt === 'number' ? msg.writtenAt : since;
         const changeSetId = msg.changeSetId as string;
+        noteBatch(ids, changeSetId);
+        // A change can add or reshape a component: the Library and the DS banner read the code again (no AI)
+        if (catalogFullRef.current) loadCatalog(); else send({ type: 'catalog', lite: true });
         setTimeout(() => {
-          const errors = newErrors(pageErrors.current?.seen() ?? [], since);
+          const errors = newErrors(pageErrors.current?.seen() ?? [], since, writtenAt);
           if (errors.length) setPageError({ changeSetId, files, errors });
         }, ERROR_WAIT_MS);
       }
@@ -2277,6 +2291,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (msg.type === 'undo-state' && typeof msg.count === 'number') {
         setUndo({
           count: msg.count, label: typeof msg.label === 'string' ? msg.label : undefined,
+          id: typeof msg.id === 'string' ? msg.id : undefined,
           redoCount: typeof msg.redoCount === 'number' ? msg.redoCount : 0,
           redoLabel: typeof msg.redoLabel === 'string' ? msg.redoLabel : undefined,
         });
@@ -2293,6 +2308,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (msg.type === 'agent-usage') {
         setAgentInfo(prev => prev ? { ...prev, calls: typeof msg.calls === 'number' ? msg.calls : prev.calls, model: typeof msg.model === 'string' ? msg.model : prev.model } : prev);
       }
+      // Pro rewrites the DS by itself after a change: the banner says so, then the list reads it again
+      if (msg.type === 'ds_updating') setDsInfo(prev => prev ? { ...prev, updating: true } : prev);
+      if (msg.type === 'ds_updated') {
+        setDsInfo(prev => prev ? { ...prev, updating: false } : prev);
+        send({ type: 'catalog', lite: true });
+      }
       if (msg.type === 'catalog') {
         const items = (Array.isArray(msg.entries) ? msg.entries : []) as CatalogItem[];
         const snapshots = (msg.snapshots && typeof msg.snapshots === 'object' ? msg.snapshots : {}) as Record<string, CatalogSnapshot[]>;
@@ -2300,6 +2321,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         const lite = msg.lite === true;
         if (!lite) catalogFullRef.current = true;
         if (msg.ds && typeof msg.ds === 'object') setDsInfo(msg.ds as DsInfo);
+        if (msg.notes && typeof msg.notes === 'object') setDsNotes(msg.notes as ComponentNotes);
         if (Array.isArray(msg.ignoredLooks)) ignoredLooksRef.current = new Set((msg.ignoredLooks as Array<{ id?: unknown }>).flatMap(x => typeof x?.id === 'string' ? [x.id] : [])); ignoredLabelsRef.current = new Map((msg.ignoredLooks as Array<{ id?: unknown; label?: unknown }>).flatMap(x => typeof x?.id === 'string' && typeof x?.label === 'string' ? [[x.id, x.label] as [string, string]] : []));
         setCatalog(prev => {
           if (lite) return { items, snapshots: prev?.snapshots ?? {} };
@@ -2322,7 +2344,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setClipboardToast(saying(msg.failed ? t('catalog.fileFailed') : t(msg.created ? 'catalog.fileCreated' : 'catalog.fileExists', { path })));
         setTimeout(() => setClipboardToast(null), 6000);
       }
-      if (msg.type === 'ds_export') {
+      if (msg.type === 'ds_export' && msg.quiet) {
+        // Written after a Consistency fix: said in a line, the viewer isn't opened over the page
+        if (!msg.failed) setDsInfo(prev => prev ? { ...prev, exists: true, changes: null } : prev);
+        setClipboardToast(saying(t(msg.failed ? 'ds.failed' : 'ds.autoUpdated')));
+        setTimeout(() => setClipboardToast(null), 6000);
+      } else if (msg.type === 'ds_export') {
         setClipboardToast(null);
         if (msg.failed) {
           setClipboardToast(saying(t('ds.failed')));
@@ -2334,14 +2361,22 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           send({ type: 'ds_view' });
         }
       }
-      if (msg.type === 'consistency_review') onReviewRef.current(typeof msg.key === 'string' ? msg.key : '', msg.findings);
+      if (msg.type === 'consistency_review') onReviewRef.current(typeof msg.key === 'string' ? msg.key : '', msg.findings, msg.decisions);
       if (msg.type === 'ds_check') {
         const r = msg.result as { tasks?: unknown; rules?: unknown } | null;
         setDsCheck(r && Array.isArray(r.tasks) && r.tasks.length
           ? { status: 'done', tasks: r.tasks as Array<{ task: string; code: string; problems: string[] }>, rules: Array.isArray(r.rules) ? r.rules as string[] : [] }
           : { status: 'failed' });
       }
-      if (msg.type === 'ds_view') {
+      if (msg.type === 'ds_suggest' && typeof msg.name === 'string') {
+        const note = msg.note as { whenToUse?: unknown; avoid?: unknown } | null;
+        setDsSuggestion({ name: msg.name, note: note && typeof note.whenToUse === 'string' ? { whenToUse: note.whenToUse, ...(typeof note.avoid === 'string' ? { avoid: note.avoid } : {}) } : null });
+      }
+      if (msg.type === 'ds_view' && msg.quiet === true) {
+        // Saved from the Library's card: the list reads the notes again; the DS window only refreshes if open
+        if (msg.view && typeof msg.view === 'object') setDsViewer(prev => prev ? { ...prev, data: msg.view as DsViewData } : prev);
+        send({ type: 'catalog', lite: true });
+      } else if (msg.type === 'ds_view') {
         if (msg.view && typeof msg.view === 'object') {
           // A refresh of the open window (Add to AGENTS.md) keeps its "just written"
           const fresh = dsJustWritten.current;
@@ -2370,6 +2405,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (msg.type === 'undone') {
         setOffPage(null);
         const ids = new Set((msg.annotationIds as string[]) ?? []);
+        dropApplied(ids);
         for (const d of annotationsRef.current) if (d.id && ids.has(d.id)) clearStylePreview(d);
         setAnnotations(prev => prev.map(ann =>
           ann.id && ids.has(ann.id) ? { ...ann, status: 'pending' as const, resolvedSummary: undefined } : ann
@@ -2787,7 +2823,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       const tag = hovered.tagName.toLowerCase();
       const id = hovered.id ? `#${hovered.id}` : '';
       const cls = !id && hovered.classList.length > 0 ? `.${hovered.classList[0]}` : '';
-      setHoverLabel(`${tag}${id}${cls}`);
+      // A component's root says the component (what the Library calls it), the rest the element
+      const component = componentNameAt(hovered);
+      setHoverLabel(component ? `◇ ${component}` : `${tag}${id}${cls}`);
       setHoverLabelRect(r);
     } else {
       setHighlight(null);
@@ -4094,12 +4132,20 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     let list: LookAlikeView[];
     try { list = readLookAlikes(catalogRef.current?.items ?? [], ignoredLooksRef.current); } catch { list = []; }
     setLookAlikes([...list, ...heldLooks().filter(v => !list.some(x => x.id === v.id))]);
+    return list;
   };
   const ignoreLookAlike = (v: LookAlikeView) => {
     ignoredLooksRef.current.add(v.id);
     ignoredLabelsRef.current.set(v.id, `${t(`catalog.look.kind.${v.kind}`)}${v.text ? ` “${v.text}”` : ''}`);
     setLookAlikes(prev => prev?.filter(x => x.id !== v.id) ?? prev);
     send({ type: 'look_ignore', id: v.id, label: `${t(`catalog.look.kind.${v.kind}`)}${v.text ? ` “${v.text}”` : ''}` });
+  };
+  const ignoreRow = (row: ConsistencyRow) => {
+    ignoredLooksRef.current.add(row.key);
+    ignoredLabelsRef.current.set(row.key, `${row.title} — ${row.detail}`.slice(0, 200));
+    ruleRowsRef.current = ruleRowsRef.current.filter(r => r.key !== row.key);
+    setConsRows(prev => prev.filter(r => r.key !== row.key));
+    send({ type: 'look_ignore', id: row.key, label: row.title });
   };
   // Pro: the Consistency tab — a panel tab with an element selected, the catalog window's tab without
   const panelShown = !!pendingCapture && !panelClosed && !pendingCapture.sketch && !!pendingCapture.capture.styles && Object.keys(pendingCapture.capture.styles).length > 0;
@@ -4117,6 +4163,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   // route asks the agent again
   type KeptFinding = { title: string; detail: string; fix: string; file?: string; line?: number; pieces: string[] };
   const reviewsRef = useRef(new Map<string, KeptFinding[]>());
+  /** The agent's calls on the findings that need a decision, per route, kept with its findings */
+  const decisionsRef = useRef(new Map<string, Decision[]>());
+  const consFindingsRef = useRef<ReturnType<typeof readConsistency>['findings']>([]);
+  const [decisions, setDecisions] = useState<Map<string, Decision>>(() => new Map());
   const queuedRef = useRef<Set<string>>(new Set());
   const askedRef = useRef(new Map<string, { route: string; pieces: ReviewPiece[]; at: number }>());
   // How long reviews take here, for the meter: kept in this browser, a convenience only
@@ -4133,10 +4183,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       if (els.length) found.push({ title: f.title, detail: f.detail, fix: f.fix, file: f.file, line: f.line, els });
     }
     setReview({ status: 'done', findings: found });
+    const decs = new Map((decisionsRef.current.get(location.pathname) ?? []).map(d => [d.key, d]));
+    setDecisions(decs);
+    // The rows that needed a decision take the agent's: their leading fix, their reason, their group
+    const byId = new Map(consFindingsRef.current.map(f => [f.id, f]));
+    ruleRowsRef.current = ruleRowsRef.current.map(r => { const f = byId.get(r.key); return f ? ruleRow(f, decs.get(r.key)) : r; });
     setConsRows([...ruleRowsRef.current, ...found.filter(f => !ignoredLooksRef.current.has(`agent:${f.title}`)).map(agentRow)]);
   };
   const readScreen = (fresh = false) => {
-    readLooks();
+    const looks = readLooks();
     let read: ReturnType<typeof readConsistency>;
     try { read = readConsistency(catalogRef.current?.items ?? []); } catch { setConsState({ findings: [], checked: { pieces: 0, standards: 0, colors: 0 } }); return; }
     const route = location.pathname;
@@ -4144,7 +4199,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     consKeyRef.current = key;
     consElsRef.current = read.els;
     consPiecesRef.current = read.pieces;
-    ruleRowsRef.current = read.findings.filter(f => !ignoredLooksRef.current.has(f.id)).map(ruleRow);
+    consFindingsRef.current = read.findings;
+    ruleRowsRef.current = read.findings.filter(f => !ignoredLooksRef.current.has(f.id)).map(f => ruleRow(f));
     // A rule row being fixed stays until its notes land, even once the page shows the fix
     ruleRowsRef.current.push(...heldRows().filter(r => r.by === 'rules' && !ruleRowsRef.current.some(x => x.key === r.key)));
     setConsState({ findings: read.findings, checked: read.checked });
@@ -4154,6 +4210,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     // Already asked for this route and still waiting: a re-read doesn't ask again, and its meter keeps going
     const waiting = fresh ? undefined : [...askedRef.current.values()].find(a => a.route === route);
     setReview({ status: 'running', since: waiting?.at ?? Date.now() });
+    // Until the agent answers, what needs a decision is the person's
+    setDecisions(new Map());
     if (waiting) return;
     askedRef.current.set(key, { route, pieces: read.pieces, at: Date.now() });
     // An ilse started before this toolbar doesn't answer; the agent has 4 minutes
@@ -4161,6 +4219,11 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     reviewTimer.current = setTimeout(() => { if (consKeyRef.current === key) setReview(r => r.status === 'running' ? { status: 'off' } : r); }, 260_000);
     send({
       type: 'consistency_review', key, route, pieces: read.pieces, fresh, ignored: [...ignoredLabelsRef.current.values()].slice(-40),
+      // Settled by the agent in the same turn: a token or a slip, a variant or drift, a component or fine as it is
+      decide: [
+        ...read.findings.filter(f => !ignoredLooksRef.current.has(f.id)).flatMap(f => decideEntry(f) ?? []),
+        ...looks.map(v => lookEntry(`look:${v.id}`, t(`catalog.look.kind.${v.kind}` as MessageKey), v.text, v.family.variants.reduce((n, x) => n + x.members.length, 0))),
+      ],
       known: [
         ...read.findings.map(f => `${f.type}: ${f.standard ?? f.props.join(', ')} "${f.text}"${f.owner ? ` in <${f.owner}>` : ''}`),
         // Fixed on a note already: a new look at the code doesn't bring the same finding back
@@ -4170,7 +4233,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   };
   const readScreenRef = useRef(readScreen);
   readScreenRef.current = readScreen;
-  const onReview = (key: string, findings: unknown) => {
+  const onReview = (key: string, findings: unknown, decided?: unknown) => {
     const asked = askedRef.current.get(key);
     if (!asked) return;
     askedRef.current.delete(key);
@@ -4186,6 +4249,10 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       return f.title && pieces.length ? [{ title: named(f.title), detail: named(f.detail), fix: named(f.fix), file: f.file, line: f.line, pieces }] : [];
     });
     reviewsRef.current.set(asked.route, kept);
+    decisionsRef.current.set(asked.route, Array.isArray(decided) ? decided.flatMap(d => {
+      const x = d as Partial<Decision>;
+      return typeof x.key === 'string' && typeof x.why === 'string' && (x.choice === 'fix' || x.choice === 'ds' || x.choice === 'ignore' || x.choice === 'unsure') ? [{ key: x.key, choice: x.choice, why: x.why, ...(typeof x.name === 'string' ? { name: x.name } : {}) }] : [];
+    }) : []);
     if (asked.route === location.pathname) showReview(kept);
   };
   const onReviewRef = useRef(onReview);
@@ -4199,10 +4266,14 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   useEffect(() => {
     if (!libraryShown || !proCatalog || !catalog?.items.length) return;
     const timer = setTimeout(() => {
+      // The page first: an instance on screen has its real content (a component made a moment ago
+      // has no copy yet); the stage only draws what the page doesn't show
+      captureCopiesRef.current?.();
+      const copied = new Set([...copiedRef.current].map(k => k.slice(0, k.indexOf('|'))));
       const missing = catalog.items
-        .filter(it => !catalog.snapshots[it.id]?.length)
+        .filter(it => !catalog.snapshots[it.id]?.length && !copied.has(it.id))
         .map(exampleRequest)
-        .filter(r => !stagedRef.current.has(`${r.item.id}|${variantKey(r.item, r.props)}`))
+        .filter((r): r is StageRequest => !!r && !stagedRef.current.has(`${r.item.id}|${variantKey(r.item, r.props)}`))
         .slice(0, 16);
       void runStage(missing);
     }, 600);
@@ -4504,14 +4575,17 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     if (!hold) spotTimer.current = setTimeout(() => { cancelAnimationFrame(spotFrame.current); setSpot(null); }, 2400);
   };
   /** "Make it a component": the first one selected, the request as a chip on its new note — the person adds words or sends */
-  const makeLookComponent = (v: LookAlikeView) => {
+  /** 'now' sends it at once; 'edit' opens the note to say more; 'batch' waits for Fix all's send */
+  const makeLookComponent = (v: LookAlikeView, mode: 'now' | 'edit' | 'batch' = 'now') => {
+    const batch = mode === 'batch';
     const all = v.family.variants.reduce((n, x) => n + x.members.length, 0) + v.family.nearMisses.length;
     setCatalogOpen(false);
     selectElement(v.family.variants[0].members[0].ref);
     dropFix();
-    consFix.current = { onSent: (ids) => { setQueued(q => new Set(q).add(v.id)); fixesRef.current.set(v.id, { ids, landed: false, look: v }); }, pieces: [], edits: false };
+    consFix.current = { onSent: (ids) => { setQueued(q => new Set(q).add(v.id)); fixesRef.current.set(v.id, { ids, landed: false, look: v, ds: true }); if (batch) ids.forEach(id => fixAllIds.current.add(id)); else if (mode === 'now') ids.forEach(id => sendNow.current.add(id)); }, pieces: [], edits: false };
     setPendingCapture(prev => {
       if (prev && consFix.current) consFix.current.targetId = prev.pixelTargetId;
+      if (mode !== 'edit') autoConfirm.current = prev?.pixelTargetId ?? null;
       return prev ? {
       ...prev,
       scope: undefined,
@@ -4545,12 +4619,77 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   queuedRef.current = queued;
   /** Fixes on their way: the row stays, with its ✓, until its notes land — then the screen is read
    *  again and it goes. Its notes dropped before they ran: it comes back as it was */
-  const fixesRef = useRef(new Map<string, { ids: string[]; landed: boolean; row?: ConsistencyRow; look?: LookAlikeView }>());
+  const fixesRef = useRef(new Map<string, { ids: string[]; landed: boolean; row?: ConsistencyRow; look?: LookAlikeView; ds?: boolean; cs?: string[] }>());
+  /** Fixes that landed: the row stays in the tab, marked applied, with its way back (the batches that wrote it) */
+  const [applied, setApplied] = useState<AppliedRow[]>([]);
+  const appliedRef = useRef(applied);
+  appliedRef.current = applied;
+  const consistencyShownRef = useRef(consistencyShown);
+  consistencyShownRef.current = consistencyShown;
+  /** "Undo all": keeps taking back the newest batch while it's one of the tab's */
+  const undoingAll = useRef(false);
+  /** Rows undone from the tab: their notes go too, not back to drafts */
+  const undoingRows = useRef(new Set<string>());
+  /** A rule's Fix: its note is confirmed as soon as it opens — nothing to add to a fix already decided */
+  const autoConfirm = useRef<string | null>(null);
+  /** …and its notes go to the agent right away, not waiting for Run with the other drafts */
+  const sendNow = useRef(new Set<string>());
+  const pixelIdsOf = (serverIds: Iterable<string>) => {
+    const ids = new Set(serverIds);
+    return new Set(annotationsRef.current.flatMap(a => a.id && ids.has(a.id) && a.pixelTargetId ? [a.pixelTargetId] : []));
+  };
+  // A batch wrote files: the fixes it carried keep its id, so the tab can undo them
+  const noteBatch = (serverIds: string[], changeSetId: string) => {
+    const pix = pixelIdsOf(serverIds);
+    const add = (cs: string[] | undefined) => cs?.includes(changeSetId) ? cs : [...(cs ?? []), changeSetId];
+    for (const f of fixesRef.current.values()) if (f.ids.some(id => pix.has(id))) f.cs = add(f.cs);
+    setApplied(prev => prev.map(r => r.ids.some(id => pix.has(id)) ? { ...r, cs: add(r.cs) } : r));
+  };
+  // A batch was undone (from the tab or the toolbar's ↺): its rows aren't applied any more
+  const dropApplied = (serverIds: Set<string>) => {
+    const pix = pixelIdsOf(serverIds);
+    const gone = appliedRef.current.filter(r => r.ids.some(id => pix.has(id)));
+    if (!gone.length) return;
+    setApplied(prev => prev.filter(r => !gone.includes(r)));
+    for (const r of gone) {
+      if (!undoingRows.current.delete(r.key)) continue;
+      setAnnotations(prev => prev.filter(a => !a.pixelTargetId || !r.ids.includes(a.pixelTargetId)));
+      // An agent's finding was remembered as fixed: undone, it may come back
+      if (r.key.startsWith('agent:')) {
+        ignoredLooksRef.current.delete(r.key);
+        send({ type: 'memory_unignore_look', id: r.key });
+      }
+    }
+    if (consistencyShownRef.current) for (const ms of [1200, 3500]) setTimeout(() => readScreenRef.current(), ms);
+  };
+  const undoApplied = (key: string) => {
+    const r = appliedRef.current.find(x => x.key === key);
+    const top = r?.cs[r.cs.length - 1];
+    if (!r || !top) return;
+    undoingRows.current.add(key);
+    send({ type: 'undo', changeSetId: top });
+  };
+  const undoAllApplied = () => {
+    if (!appliedRef.current.length) return;
+    undoingAll.current = true;
+    nextUndo();
+  };
+  // Takes back the newest batch while it's one of the tab's; stops at anything else
+  const nextUndo = () => {
+    const top = undoRef.current.id;
+    const r = top ? appliedRef.current.find(x => x.cs.includes(top)) : undefined;
+    if (!undoingAll.current || !r || !top) { undoingAll.current = false; return; }
+    undoingRows.current.add(r.key);
+    send({ type: 'undo', changeSetId: top });
+  };
+  const dsAutoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heldRows = () => [...fixesRef.current.values()].flatMap(f => f.row ? [f.row] : []);
   const heldLooks = () => [...fixesRef.current.values()].flatMap(f => f.look ? [f.look] : []);
 
+  useEffect(() => { if (undoingAll.current) nextUndo(); }, [undo.id]);
+
   /** "Fix" in the Consistency tab: the piece selected, the request as a chip on its note */
-  const fixRow = (row: ConsistencyRow, action: RowAction) => {
+  const fixRow = (row: ConsistencyRow, action: RowAction, mode: 'now' | 'edit' | 'batch' = 'now') => {
     // With token swaps: the pieces that use the value, each with the property it uses it in
     const pieces: FixPiece[] = action.swaps ? row.els.flatMap(el => {
       const st = getComputedStyle(el);
@@ -4567,7 +4706,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     keepConsistency();
     selectElement(el);
     dropFix();
-    consFix.current = { onSent: (ids) => { setQueued(prev => new Set(prev).add(row.key)); fixesRef.current.set(row.key, { ids, landed: false, row }); }, pieces: pieces.length ? pieces : shown, edits: pieces.length > 0 };
+    // Fix goes at once (Edit request opens the note); in "Fix all" every fix waits for the others, then all go as one batch
+    const now = mode !== 'edit';
+    consFix.current = { onSent: (ids) => { setQueued(prev => new Set(prev).add(row.key)); fixesRef.current.set(row.key, { ids, landed: false, row, ds: action.ds }); if (mode === 'batch') ids.forEach(id => fixAllIds.current.add(id)); else if (now) ids.forEach(id => sendNow.current.add(id)); }, pieces: pieces.length ? pieces : shown, edits: pieces.length > 0 };
     // Seen at once, every piece, like a panel edit: the page shows the fix before it's sent
     for (const p of pieces) for (const c of p.changes) p.el.style.setProperty(c.property.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`), c.to);
     for (const p of shown) p.el.classList.remove(...p.drop!);
@@ -4578,6 +4719,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     setPendingCapture(prev => {
       if (!prev) return prev;
       if (consFix.current) consFix.current.targetId = prev.pixelTargetId;
+      // Fix is decided already: it goes in at once. Edit request opens the note
+      autoConfirm.current = now ? prev.pixelTargetId ?? null : null;
       // No "only this <X>" scope: it told the agent to leave the other pieces this note is about
       return pieces.length
         // A panel edit on this piece (its twins go with it): a class swap when it can, else the agent reads it
@@ -4585,9 +4728,52 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         : { ...prev, scope: undefined, auto: { ...prev.auto, component: action.note, componentLabel: label } };
     });
   };
+  useEffect(() => {
+    if (!pendingCapture || !autoConfirm.current || autoConfirm.current !== pendingCapture.pixelTargetId) return;
+    autoConfirm.current = null;
+    confirmCapture();
+  }, [pendingCapture, confirmCapture]);
+  /** "Fix all": one fix at a time onto its note (each note opens on its piece), then every note goes together */
+  const fixAllQueue = useRef<FixAllItem[]>([]);
+  const fixAllIds = useRef(new Set<string>());
+  const fixAllWaiting = useRef(false);
+  const fixAllNext = () => {
+    const item = fixAllQueue.current.shift();
+    if (!item) {
+      // All on their notes: one send, so the agent takes them in one batch and one Undo takes them back
+      fixAllIds.current.forEach(id => sendNow.current.add(id));
+      fixAllIds.current.clear();
+      setAnnotations(prev => [...prev]);
+      return;
+    }
+    if (item.ignore) { if (item.row) ignoreRow(item.row); else if (item.look) ignoreLookAlike(item.look); fixAllNext(); return; }
+    fixAllWaiting.current = true;
+    if (item.look) makeLookComponent(item.look, 'batch');
+    else if (item.row && item.action) fixRow(item.row, item.action, 'batch');
+  };
+  const fixAll = (items: FixAllItem[]) => {
+    if (fixAllQueue.current.length || !items.length) return;
+    fixAllQueue.current = [...items];
+    fixAllNext();
+  };
+  // A fix's note was confirmed (the capture closed): the next one
+  useEffect(() => {
+    if (pendingCapture || !fixAllWaiting.current) return;
+    fixAllWaiting.current = false;
+    setTimeout(fixAllNext, 0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCapture]);
+  useEffect(() => {
+    if (!sendNow.current.size) return;
+    annotations.forEach((a, i) => {
+      if (a.status !== 'pending' || !a.pixelTargetId || !sendNow.current.delete(a.pixelTargetId)) return;
+      sendAnnotation(i);
+    });
+  }, [annotations, sendAnnotation]);
   // A fix's notes landed (or were dropped): the row lets go of its ✓ and the screen is read again
   useEffect(() => {
     let done = false;
+    let toDs = false;
     for (const [key, f] of fixesRef.current) {
       const anns = f.ids.map(id => annotations.find(a => a.pixelTargetId === id));
       if (anns.some(a => a?.status === 'resolved')) f.landed = true;
@@ -4595,6 +4781,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       fixesRef.current.delete(key);
       done = true;
       setQueued(q => { const n = new Set(q); n.delete(key); return n; });
+      if (f.landed && f.ds) toDs = true;
+      // Landed: it stays in the tab as applied, with undo — the screen read next no longer lists it
+      if (f.landed) {
+        const title = f.row?.title ?? (f.look ? t('consistency.lookApplied', { kind: t(`catalog.look.kind.${f.look.kind}` as MessageKey) }) : key);
+        const entry: AppliedRow = { key, title, detail: f.row?.detail ?? '', ids: f.ids, cs: f.cs ?? [] };
+        setApplied(prev => [...prev.filter(r => r.key !== key), entry]);
+      }
       // The agent's finding is fixed: its review is kept without it, no new question — and the project
       // remembers it, so a later review on new code doesn't bring the same judgement back (Memory undoes it)
       if (f.landed && key.startsWith('agent:')) {
@@ -4608,6 +4801,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     }
     // After the page repaints with the new code: an agent's batch can land its files a while apart
     if (done && consistencyShown) for (const ms of [1200, 3500, 7000]) setTimeout(() => readScreenRef.current(), ms);
+    // The DS is written again by the CLI after every change (Pro keeps it alive): nothing to ask here
+    void toDs;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [annotations]);
   // Another element picked while a fix's note was open: that note is gone, and so is its preview
@@ -4620,6 +4815,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       state={consState}
       rows={consRows}
       queued={queued}
+      applied={applied}
+      undoTop={undo.id}
       open={consOpen}
       onOpen={(key, els) => { setConsOpen(key); if (key) spotElements(els, true); else releaseSpot(); }}
       review={review}
@@ -4627,18 +4824,35 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       lookAlikes={lookAlikes}
       onSpot={spotElements}
       onFix={fixRow}
-      onIgnore={(row) => {
-        ignoredLooksRef.current.add(row.key);
-        ignoredLabelsRef.current.set(row.key, `${row.title} — ${row.detail}`.slice(0, 200));
-        ruleRowsRef.current = ruleRowsRef.current.filter(r => r.key !== row.key);
-        setConsRows(prev => prev.filter(r => r.key !== row.key));
-        send({ type: 'look_ignore', id: row.key, label: row.title });
-      }}
+      onEdit={(row, action) => fixRow(row, action, 'edit')}
+      decisions={decisions}
+      onFixAll={fixAll}
+      onUndo={undoApplied}
+      onUndoAll={undoAllApplied}
+      onIgnore={ignoreRow}
       onRefresh={() => readScreen(true)}
-      onMakeLook={(v) => { makeLookComponent(v); keepConsistency(); }}
+      onMakeLook={(v, edit) => { makeLookComponent(v, edit ? 'edit' : 'now'); keepConsistency(); }}
       onIgnoreLook={ignoreLookAlike}
     />
   ) : <ConsistencyLocked />;
+
+  // Editing the DS by hand, from its window or from a card in the Library: the reasoning
+  // is saved into the DS; a name lives in the code, so the agent renames it everywhere
+  const dsEditing = (quiet: boolean): DsEditing => ({
+    onEdit: (kind, name, fields) => {
+      setDsSuggestion(null);
+      if (kind === 'component') setDsNotes(prev => ({ ...prev, [name]: { ...prev[name], ...(fields.whenToUse !== undefined ? { whenToUse: fields.whenToUse } : {}), ...(fields.avoid !== undefined ? { avoid: fields.avoid } : {}), edited: true } }));
+      send({ type: 'ds_edit', kind, name, ...fields, ...(quiet ? { quiet: true } : {}) });
+    },
+    onRename: (kind, name, to) => send({
+      type: 'annotate', element: '', styles: {}, intent: 'fix', environment: captureEnvironment(),
+      note: kind === 'component'
+        ? `Renomeie o componente <${name}> para <${to}> em todo o projeto: a declaração, o export, o nome do arquivo se ele tiver o nome do componente, todos os imports e todos os usos. Não mude mais nada.`
+        : `Renomeie o token de design \`${name}\` para \`${to}\` em todo o projeto: onde ele é declarado (CSS, tema, config do Tailwind) e todos os usos (classes, var(), código). Não mude o valor nem mais nada.`,
+    }),
+    ...(dsInfo?.formats ? { onSuggest: (name: string) => { setDsSuggestion({ name, note: 'loading' }); send({ type: 'ds_suggest', name }); } } : {}),
+    suggestion: dsSuggestion,
+  });
 
   // Create DS / Export: with Pro the agent writes "when to use" first, so the toolbar says it's working
   const exportDs = () => {
@@ -4659,6 +4873,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     onCreateDs: () => exportDs(),
     onExportDs: () => exportDs(),
     onViewDs: () => send({ type: 'ds_view' }),
+    notes: dsNotes,
+    editing: dsInfo?.exists ? dsEditing(true) : undefined,
   };
 
   /** The draft dragged to another spot: same component and props, a new place in the page and the code */
@@ -5388,7 +5604,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       {dsViewer && (
         <DsViewer data={dsViewer.data} justWritten={dsViewer.justWritten} onClose={() => setDsViewer(null)} onExport={() => exportDs()} onLinkAgents={() => send({ type: 'ds_agents' })}
           check={dsCheck} onCheck={() => { setDsCheck({ status: 'running' }); send({ type: 'ds_check' }); }}
-          onAddRule={(rules) => send({ type: 'ds_rule', rules })} />
+          onAddRule={(rules) => send({ type: 'ds_rule', rules })}
+          editing={{ ...dsEditing(false), ...(dsViewer.data.formats ? {} : { onSuggest: undefined }) }} />
       )}
 
       {/* ── Annotation popover — out of the way while the element is being dragged,

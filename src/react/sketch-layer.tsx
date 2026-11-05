@@ -113,9 +113,10 @@ function penCursor(c: string): string {
 }
 
 /**
- * Pen control anchored to the toolbar's pencil button: collapsed, a dot in the
- * current colour sitting on the button's top edge; clicked, the full bar
- * (colours, undo, clear, done) opens above it. Picking a colour folds it back.
+ * Pen control anchored to the toolbar's pencil button: a dot in the current
+ * colour on the button's top edge, and the full bar (colours, undo, clear,
+ * done) above it. The bar opens with draw mode — undo and done are needed
+ * while drawing — and the dot folds it away or back.
  */
 export function PencilControl(props: {
   penColor: string;
@@ -126,7 +127,7 @@ export function PencilControl(props: {
   onDone: () => void;
   onHover?: (over: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   return (
     <>
       <button
@@ -149,7 +150,7 @@ export function PencilControl(props: {
       />
       {open && (
         <div style={{ position: 'absolute', bottom: 'calc(100% + 16px)', left: '50%', transform: 'translateX(-50%)', zIndex: 2 }}>
-          <PencilBar {...props} onColor={(c) => { props.onColor(c); setOpen(false); }} />
+          <PencilBar {...props} />
         </div>
       )}
     </>
@@ -196,7 +197,7 @@ export function PencilBar({ penColor, strokeCount, onColor, onUndo, onClear, onD
       ))}
       <span style={{ width: 1, height: 18, backgroundColor: color.border, margin: '0 2px' }} />
       <button onClick={onUndo} disabled={strokeCount === 0} title={withShortcut(t('sketch.undo'), 'Mod+Z')} style={barButton(strokeCount === 0)}>
-        Desfazer
+        {t('sketch.undoShort')}
       </button>
       <button onClick={onClear} disabled={strokeCount === 0} title={t('sketch.clear')} style={barButton(strokeCount === 0)}>
         {t('sketch.clearShort')}

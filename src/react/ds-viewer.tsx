@@ -18,8 +18,8 @@ import { t } from '../i18n/index.js';
 export interface DsViewData {
   dir: string;
   files: Array<{ name: string; content: string }>;
-  tokens: Array<{ name: string; value: string; type: string }>;
-  components: Array<{ name: string; uses: number; layer?: string; feature?: string; props: Array<{ name: string; values?: string[] }>; whenToUse?: string; avoid?: string }>;
+  tokens: Array<{ name: string; value: string; type: string; description?: string }>;
+  components: Array<{ name: string; uses: number; layer?: string; feature?: string; props: Array<{ name: string; values?: string[] }>; whenToUse?: string; avoid?: string; edited?: boolean }>;
   formats: boolean;
   agents: { linked: string | null; target: string };
   rules?: string[];
@@ -172,7 +172,118 @@ function ForWhom({ who, how, action, quiet }: { who: string; how: string; action
 const group = (name: string) => name.split('.')[0];
 
 /** DESIGN.md drawn as a DS: the tokens as swatches and scales, the components with their variants */
-function Visual({ data }: { data: DsViewData }) {
+/** What the person can change in the DS from here: the reasoning (written at once, no AI) and the name (the agent renames it in the code) */
+export interface DsEditing {
+  onEdit: (kind: 'component' | 'token', name: string, fields: { whenToUse?: string; avoid?: string; description?: string }) => void;
+  onRename: (kind: 'component' | 'token', name: string, to: string) => void;
+  /** Pro: the agent drafts a component's reasoning; undefined without Pro */
+  onSuggest?: (name: string) => void;
+  /** The draft that came back (or 'loading' / null when the agent had nothing) */
+  suggestion?: { name: string; note: { whenToUse: string; avoid?: string } | null | 'loading' } | null;
+}
+
+export const field: React.CSSProperties = {
+  width: '100%', boxSizing: 'border-box', fontFamily: font.sans, fontSize: 11, lineHeight: 1.45, color: color.foreground,
+  padding: '5px 7px', border: `1px solid ${color.border}`, borderRadius: radius.sm, background: color.background, resize: 'vertical',
+};
+export const linkBtn: React.CSSProperties = { border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: font.sans, fontSize: 10.5, fontWeight: 600, color: ilse.brand };
+export const saveBtn: React.CSSProperties = { border: 'none', borderRadius: radius.sm, padding: '4px 10px', cursor: 'pointer', fontFamily: font.sans, fontSize: 10.5, fontWeight: 600, color: '#fff', background: ilse.brand };
+
+/** A name with a pencil: Enter asks the agent to rename it everywhere in the code */
+function RenameName({ name, kind, editing, children }: { name: string; kind: 'component' | 'token'; editing?: DsEditing; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [to, setTo] = useState(name);
+  if (!editing) return <>{children}</>;
+  if (open) {
+    const done = () => { setOpen(false); const v = to.trim(); if (v && v !== name) editing.onRename(kind, name, v); };
+    return (
+      <input autoFocus value={to} onChange={e => setTo(e.target.value)} onBlur={() => setOpen(false)}
+        onKeyDown={e => { if (e.key === 'Enter') done(); if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } }}
+        aria-label={t('dsv.renameLabel', { name })} title={t('dsv.renameHint')}
+        style={{ ...field, width: 150, padding: '2px 5px', fontFamily: kind === 'token' ? font.mono : font.sans }} />
+    );
+  }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      {children}
+      <button onClick={() => { setTo(name); setOpen(true); }} title={t('dsv.rename')} aria-label={t('dsv.renameLabel', { name })}
+        style={{ ...linkBtn, color: color.mutedForeground, fontWeight: 400, fontSize: 10 }}>✎</button>
+    </span>
+  );
+}
+
+/** A component's reasoning: read, edit, or have the agent draft it (the person keeps it or not) */
+function ComponentNote({ c, editing, indent }: { c: DsViewData['components'][number]; editing?: DsEditing; indent: number }) {
+  const [open, setOpen] = useState(false);
+  const [when, setWhen] = useState(c.whenToUse ?? '');
+  const [avoid, setAvoid] = useState(c.avoid ?? '');
+  const sug = editing?.suggestion?.name === c.name ? editing.suggestion.note : undefined;
+  // A draft arrived: open it to be read and kept, never written on its own
+  useEffect(() => {
+    if (sug && sug !== 'loading') { setWhen(sug.whenToUse); if (sug.avoid) setAvoid(sug.avoid); setOpen(true); }
+  }, [sug]);
+  const box: React.CSSProperties = { fontSize: 10.5, lineHeight: 1.45, color: color.foreground, margin: `2px 0 0 ${indent}px` };
+  if (open && editing) {
+    return (
+      <div style={{ ...box, display: 'flex', flexDirection: 'column', gap: 5, padding: '4px 0 6px' }}>
+        <label style={{ color: color.mutedForeground }}>{t('dsv.whenToUse')}
+          <textarea rows={2} value={when} onChange={e => setWhen(e.target.value)} placeholder={t('dsv.whenPlaceholder')} style={field} />
+        </label>
+        <label style={{ color: color.mutedForeground }}>{t('dsv.avoid')}
+          <textarea rows={1} value={avoid} onChange={e => setAvoid(e.target.value)} placeholder={t('dsv.avoidPlaceholder')} style={field} />
+        </label>
+        <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button style={saveBtn} onClick={() => { editing.onEdit('component', c.name, { whenToUse: when, avoid }); setOpen(false); }}>{t('dsv.save')}</button>
+          <button style={{ ...linkBtn, color: color.mutedForeground }} onClick={() => { setWhen(c.whenToUse ?? ''); setAvoid(c.avoid ?? ''); setOpen(false); }}>{t('dsv.cancel')}</button>
+          {sug && sug !== 'loading' && <span style={{ color: color.mutedForeground }}>{t('dsv.drafted')}</span>}
+        </span>
+      </div>
+    );
+  }
+  if (c.whenToUse) {
+    return (
+      <div style={box}>
+        <span style={{ color: color.mutedForeground }}>{t('dsv.whenToUse')}: </span>{c.whenToUse}
+        {c.avoid && <><br /><span style={{ color: color.mutedForeground }}>{t('dsv.avoid')}: </span>{c.avoid}</>}
+        {editing && <> <button style={linkBtn} onClick={() => setOpen(true)}>{t('dsv.edit')}</button></>}
+        {c.edited && <span style={{ color: color.mutedForeground }}> · {t('dsv.byYou')}</span>}
+      </div>
+    );
+  }
+  if (!editing) return null;
+  // No reasoning yet: the DS asks for one — every component says why it exists
+  return (
+    <div style={{ ...box, display: 'flex', gap: 10, alignItems: 'center', color: color.mutedForeground }}>
+      <span>{t('dsv.noNote')}</span>
+      <button style={linkBtn} onClick={() => setOpen(true)}>{t('dsv.write')}</button>
+      {editing.onSuggest && (sug === 'loading'
+        ? <span>{t('dsv.drafting')}</span>
+        : <button style={linkBtn} onClick={() => editing.onSuggest!(c.name)}>{t(sug === null ? 'dsv.suggestAgain' : 'dsv.suggest')}</button>)}
+    </div>
+  );
+}
+
+/** The token picked in the swatches: its reasoning and its name */
+function TokenNote({ tk, editing, onClose }: { tk: DsViewData['tokens'][number]; editing: DsEditing; onClose: () => void }) {
+  const [text, setText] = useState(tk.description ?? '');
+  useEffect(() => setText(tk.description ?? ''), [tk.name, tk.description]);
+  return (
+    <div style={{ margin: '0 0 14px', padding: 8, border: `1px solid ${color.border}`, borderRadius: radius.md, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+        {tk.type === 'color' && <span style={{ width: 14, height: 14, borderRadius: radius.sm, background: tk.value, border: `1px solid ${color.border}` }} />}
+        <RenameName name={tk.name} kind="token" editing={editing}><b style={{ fontFamily: font.mono }}>{tk.name}</b></RenameName>
+        <span style={{ fontFamily: font.mono, fontSize: 10, color: color.mutedForeground }}>{tk.value}</span>
+        <button onClick={onClose} aria-label={t('dsv.cancel')} style={{ ...linkBtn, marginLeft: 'auto', color: color.mutedForeground }}>✕</button>
+      </span>
+      <textarea rows={2} value={text} onChange={e => setText(e.target.value)} placeholder={t('dsv.tokenPlaceholder')} style={field} />
+      <span><button style={saveBtn} onClick={() => { editing.onEdit('token', tk.name, { description: text }); onClose(); }}>{t('dsv.save')}</button></span>
+    </div>
+  );
+}
+
+function Visual({ data, editing }: { data: DsViewData; editing?: DsEditing }) {
+  const [picked, setPicked] = useState<string | null>(null);
+  const pickedToken = data.tokens.find(tk => tk.name === picked);
   const by = (...prefixes: string[]) => data.tokens.filter(tk => prefixes.includes(group(tk.name)));
   const short = (name: string) => name.split('.').slice(1).join('.') || name;
   const colors = by('color');
@@ -183,7 +294,11 @@ function Visual({ data }: { data: DsViewData }) {
   const other = data.tokens.filter(tk => !['color', 'spacing', 'radius', 'rounded', 'typography', 'font'].includes(group(tk.name)));
   const base = data.components.filter(c => c.layer === 'base');
   const product = data.components.filter(c => c.layer !== 'base');
-  const chip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: color.foreground };
+  const chip: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 10.5, color: color.foreground, ...(editing ? { cursor: 'pointer' } : {}) };
+  // A token's chip: a click opens its reasoning and name; the reasoning shows on hover
+  const pick = (tk: { name: string; description?: string }) => editing
+    ? { onClick: () => setPicked(tk.name), title: tk.description || t('dsv.tokenHint'), role: 'button' as const, tabIndex: 0 }
+    : { title: tk.description };
   const value: React.CSSProperties = { fontFamily: font.mono, fontSize: 10, color: color.mutedForeground };
   const section = (title: string, body: React.ReactNode) => (
     <div style={{ marginBottom: 14 }}>
@@ -194,7 +309,7 @@ function Visual({ data }: { data: DsViewData }) {
   const comp = (c: DsViewData['components'][number]) => (
     <div key={c.name} style={{ padding: '4px 0', borderBottom: `1px solid ${color.border}` }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: color.foreground, minWidth: 110 }}>{c.name}</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: color.foreground, minWidth: 110 }}><RenameName name={c.name} kind="component" editing={editing}>{c.name}</RenameName></span>
         <span style={{ ...value, width: 30 }}>{t('dsv.uses', { n: c.uses })}</span>
         <span style={{ flex: 1, fontSize: 10.5, color: color.mutedForeground, lineHeight: 1.5 }}>
           {c.props.filter(p => p.values?.length).slice(0, 4).map(p => (
@@ -202,22 +317,19 @@ function Visual({ data }: { data: DsViewData }) {
           ))}
         </span>
       </div>
-      {/* Pro: what the agent reads before picking it */}
-      {c.whenToUse && (
-        <div style={{ fontSize: 10.5, lineHeight: 1.45, color: color.foreground, margin: '2px 0 0 118px' }}>
-          <span style={{ color: color.mutedForeground }}>{t('dsv.whenToUse')}: </span>{c.whenToUse}
-          {c.avoid && <><br /><span style={{ color: color.mutedForeground }}>{t('dsv.avoid')}: </span>{c.avoid}</>}
-        </div>
-      )}
+      {/* Why it exists — what the agent reads before picking it; the person's words win */}
+      <ComponentNote c={c} editing={editing} indent={118} />
     </div>
   );
 
   return (
     <div>
+      {editing && pickedToken && <TokenNote tk={pickedToken} editing={editing} onClose={() => setPicked(null)} />}
+      {editing && !pickedToken && <div style={{ fontSize: 10.5, color: color.mutedForeground, margin: '0 0 10px' }}>{t('dsv.editHint')}</div>}
       {colors.length > 0 && section(t('dsv.colors'), (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 6 }}>
           {colors.map(tk => (
-            <span key={tk.name} style={chip}>
+            <span key={tk.name} style={chip} {...pick(tk)}>
               <span style={{ width: 18, height: 18, borderRadius: radius.sm, background: tk.value, border: `1px solid ${color.border}`, flexShrink: 0 }} />
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{short(tk.name)} <span style={value}>{tk.value}</span></span>
             </span>
@@ -227,7 +339,7 @@ function Visual({ data }: { data: DsViewData }) {
       {spacing.length > 0 && section(t('dsv.spacing'), (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', alignItems: 'flex-end' }}>
           {spacing.map(tk => (
-            <span key={tk.name} style={{ ...chip, flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}>
+            <span key={tk.name} style={{ ...chip, flexDirection: 'column', alignItems: 'flex-start', gap: 3 }} {...pick(tk)}>
               <span style={{ height: 6, width: `min(${tk.value}, 64px)`, minWidth: 2, background: ilse.brand, borderRadius: 2, opacity: 0.7 }} />
               <span>{short(tk.name)} <span style={value}>{tk.value}</span></span>
             </span>
@@ -237,7 +349,7 @@ function Visual({ data }: { data: DsViewData }) {
       {radii.length > 0 && section(t('dsv.radius'), (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px' }}>
           {radii.map(tk => (
-            <span key={tk.name} style={chip}>
+            <span key={tk.name} style={chip} {...pick(tk)}>
               <span style={{ width: 18, height: 18, border: `1.5px solid ${color.foreground}`, borderRadius: tk.value, flexShrink: 0 }} />
               {short(tk.name)} <span style={value}>{tk.value}</span>
             </span>
@@ -247,7 +359,7 @@ function Visual({ data }: { data: DsViewData }) {
       {type.length > 0 && section(t('dsv.type'), (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {type.map(tk => (
-            <span key={tk.name} style={{ ...chip, gap: 10 }}>
+            <span key={tk.name} style={{ ...chip, gap: 10 }} {...pick(tk)}>
               <span style={{ fontSize: `min(${tk.value}, 28px)`, lineHeight: 1.2 }}>Aa</span>
               {short(tk.name)} <span style={value}>{tk.value}</span>
             </span>
@@ -257,7 +369,7 @@ function Visual({ data }: { data: DsViewData }) {
       {fonts.length > 0 && section(t('dsv.fonts'), (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {fonts.map(tk => (
-            <span key={tk.name} style={{ ...chip, gap: 10 }}>
+            <span key={tk.name} style={{ ...chip, gap: 10 }} {...pick(tk)}>
               {/* next/font renames the family on the page; its variable still points at it */}
               <span style={{ fontSize: 16, lineHeight: 1.2, fontFamily: `"${tk.value}", var(--font-${short(tk.name)}), inherit` }}>Aa</span>
               {short(tk.name)} <span style={value}>{tk.value}</span>
@@ -277,7 +389,7 @@ function Visual({ data }: { data: DsViewData }) {
       ))}</Fragment>)}
       {other.length > 0 && section(t('dsv.otherTokens'), (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
-          {other.map(tk => <span key={tk.name} style={chip}>{tk.name} <span style={value}>{tk.value}</span></span>)}
+          {other.map(tk => <span key={tk.name} style={chip} {...pick(tk)}>{tk.name} <span style={value}>{tk.value}</span></span>)}
         </div>
       ))}
       {base.length > 0 && section(t('catalog.base'), base.map(comp))}
@@ -305,8 +417,9 @@ function shadcnExample(data: DsViewData): { ns: string; item: string } {
   } catch { return { ns: '@your-ds', item: 'button' }; }
 }
 
-export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, check, onCheck, onAddRule }: {
+export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, check, onCheck, onAddRule, editing }: {
   data: DsViewData; justWritten: boolean; onClose: () => void; onExport: () => void; onLinkAgents: () => void;
+  editing?: DsEditing;
   /** Pro: the fresh-agent test */
   check: DsCheckState | null; onCheck: () => void; onAddRule: (rules: string[]) => void;
 }) {
@@ -400,7 +513,7 @@ export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, c
           ) : tab === 'DESIGN.md' && !raw ? (
             <>
               {data.formats && <CheckSection state={check} rules={data.rules ?? []} onRun={onCheck} onAddRule={onAddRule} />}
-              <Visual data={data} />
+              <Visual data={data} editing={editing} />
             </>
           ) : (
             <pre style={pre}>{file.content}</pre>

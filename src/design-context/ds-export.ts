@@ -19,6 +19,7 @@ import type { DsInput, DsNote, AskAgent } from '../pro/types.js';
 import { createHash } from 'node:crypto';
 import { instructionsFile } from '../git/commit-context.js';
 import { moreTokens, tokenModes, type DsToken, type DsMode } from './ds-tokens.js';
+import { ensureScanIgnore } from '../config/scan-ignore.js';
 
 export const DS_DIR = join('.ilse', 'ds');
 
@@ -70,7 +71,48 @@ const ONE_COLOR = /^(#[0-9a-f]{3,8}|[a-z]+|(rgba?|hsla?|hwb|lab|lch|oklab|oklch|
  */
 export function dsTokens(tokens: Array<DetectedToken | DsToken>, cwd?: string): DsToken[] {
   const own = tokens.filter(t => t.type !== 'color' || ONE_COLOR.test(t.value.trim()));
-  return cwd ? moreTokens(cwd, own) : own;
+  if (!cwd) return own;
+  // The person's words on a token travel with it into every format
+  const said = readDsEdits(cwd).tokens;
+  return moreTokens(cwd, own).map(t => said[t.name]?.description ? { ...t, description: said[t.name].description } : t);
+}
+
+// ── What the person wrote: `.ilse/ds/edits.json` ───────────────────────────
+// Every component and token can carry its reasoning, like a registry item's description. The
+// agent writes one when there's none (Pro); what the person writes wins and is never rewritten.
+
+export interface DsEdits {
+  components: Record<string, Partial<DsNote>>;
+  tokens: Record<string, { description?: string }>;
+}
+
+export function readDsEdits(cwd: string): DsEdits {
+  try {
+    const raw = JSON.parse(readFileSync(join(cwd, DS_DIR, 'edits.json'), 'utf8')) as Partial<DsEdits>;
+    return { components: raw.components ?? {}, tokens: raw.tokens ?? {} };
+  } catch { return { components: {}, tokens: {} }; }
+}
+
+/** One edit: a component's "when to use / not for", or a token's description. Empty text clears it */
+export function writeDsEdit(cwd: string, kind: 'component' | 'token', name: string, fields: { whenToUse?: string; avoid?: string; description?: string }): DsEdits {
+  const edits = readDsEdits(cwd);
+  const clean = (v?: string) => v === undefined ? undefined : v.trim().slice(0, 600);
+  if (kind === 'component') {
+    const next = { ...edits.components[name] };
+    for (const k of ['whenToUse', 'avoid'] as const) {
+      const v = clean(fields[k]);
+      if (v === undefined) continue;
+      if (v) next[k] = v; else delete next[k];
+    }
+    if (Object.keys(next).length) edits.components[name] = next; else delete edits.components[name];
+  } else {
+    const v = clean(fields.description);
+    if (v) edits.tokens[name] = { description: v }; else if (v !== undefined) delete edits.tokens[name];
+  }
+  ensureScanIgnore(cwd);
+  mkdirSync(join(cwd, DS_DIR), { recursive: true });
+  writeFileSync(join(cwd, DS_DIR, 'edits.json'), JSON.stringify(edits, null, 2) + '\n', 'utf8');
+  return edits;
 }
 
 // Plain only when YAML can't misread it: `#` starts a comment, `:` a map, a leading digit a number
@@ -142,6 +184,8 @@ export function buildDesignMd(name: string, catalog: CatalogEntry[], tokens: DsT
     '',
     // Themes: what each one changes, so an agent writing for dark mode uses the right token
     ...(modes.length ? ['## Themes', '', ...modes.map(m => `- **${m.name}**: ${Object.entries(m.values).map(([k, v]) => `\`${k}\` ${v}`).join(', ')}`), ''] : []),
+    // Why a token exists, in the team's words: an agent picks `brand` over `clay` for the right reason
+    ...(tokens.some(t => t.description) ? ['## Tokens, and why', '', ...tokens.filter(t => t.description).map(t => `- \`${t.name}\` (${t.value}): ${t.description}`), ''] : []),
     ...(base.length ? ['## Base', '', ...base.map(describe).flatMap(s => [s, ''])] : []),
     ...(product.length ? ['## Product', '', ...product.map(describe).flatMap(s => [s, ''])] : []),
     // Only what was written: Free has DESIGN.md alone
@@ -213,6 +257,7 @@ export function dsInput(cwd: string, dir: string, name: string, catalog: Catalog
 /** DESIGN.md always; Pro's formats (tokens.json, registry.json) when `formats` is given */
 export function writeDs(cwd: string, catalog: CatalogEntry[], tokens: DetectedToken[], formats?: (input: DsInput) => string[], notes: Record<string, DsNote> = {}): DsExport {
   const name = projectName(cwd);
+  ensureScanIgnore(cwd);
   const dir = join(cwd, DS_DIR);
   mkdirSync(dir, { recursive: true });
   const all = dsTokens(tokens, cwd);
@@ -261,12 +306,25 @@ export function notesToKeep(cwd: string, catalog: CatalogEntry[]): { kept: Recor
   const prev = readDsState(cwd)?.components ?? {};
   const kept: Record<string, DsNote> = {};
   const stale: CatalogEntry[] = [];
+  const said = readDsEdits(cwd).components;
   for (const c of dsComponents(catalog)) {
     const p = prev[c.name];
-    if (p?.whenToUse && p.hash === contractHash(c)) kept[c.name] = { whenToUse: p.whenToUse, ...(p.avoid ? { avoid: p.avoid } : {}) };
+    const mine = said[c.name];
+    // The person's reasoning stands whatever the code does; the agent only fills what they left empty
+    if (mine?.whenToUse) kept[c.name] = { whenToUse: mine.whenToUse, ...(mine.avoid ?? p?.avoid ? { avoid: mine.avoid ?? p!.avoid! } : {}) };
+    else if (p?.whenToUse && p.hash === contractHash(c)) kept[c.name] = { whenToUse: p.whenToUse, ...(mine?.avoid ?? p.avoid ? { avoid: mine?.avoid ?? p.avoid! } : {}) };
     else stale.push(c);
   }
   return { kept, stale };
+}
+
+/** Each component's reasoning as the DS has it now (the person's words win), for the Library's card */
+export function dsNotesByName(cwd: string, catalog: CatalogEntry[]): Record<string, DsNote & { edited?: boolean }> {
+  const { kept } = notesToKeep(cwd, catalog);
+  const said = readDsEdits(cwd).components;
+  const out: Record<string, DsNote & { edited?: boolean }> = {};
+  for (const [name, note] of Object.entries(kept)) out[name] = said[name] ? { ...note, edited: true } : note;
+  return out;
 }
 
 /**
@@ -305,7 +363,7 @@ export interface DsView {
   /** The files in .ilse/ds that Ilse writes, as they are on disk */
   files: Array<{ name: string; content: string }>;
   tokens: Array<{ name: string; value: string; type: string }>;
-  components: Array<{ name: string; uses: number; layer?: string; feature?: string; props: Array<{ name: string; values?: string[] }>; whenToUse?: string; avoid?: string }>;
+  components: Array<{ name: string; uses: number; layer?: string; feature?: string; props: Array<{ name: string; values?: string[] }>; whenToUse?: string; avoid?: string; edited?: boolean }>;
   /** This install writes Pro's formats */
   formats: boolean;
   /** The agent-instructions file that already points at the DS, or null; and the one a click would write to */
@@ -324,6 +382,7 @@ const VIEW_MAX = 200_000;
 
 export function dsView(cwd: string, catalog: CatalogEntry[], tokens: DetectedToken[], formats: boolean): DsView {
   const notes = notesToKeep(cwd, catalog).kept;
+  const edited = new Set(Object.keys(readDsEdits(cwd).components));
   const all = dsTokens(tokens, cwd);
   const files = DS_FILES.flatMap(name => {
     const path = join(cwd, DS_DIR, name);
@@ -344,7 +403,7 @@ export function dsView(cwd: string, catalog: CatalogEntry[], tokens: DetectedTok
     rules: readDsState(cwd)?.rules ?? [], modes, themes: tokenModes(cwd, all),
     tokens: all,
     components: dsComponents(catalog).map(c => ({
-      name: c.name, uses: c.uses, ...(notes[c.name] ?? {}),
+      name: c.name, uses: c.uses, ...(notes[c.name] ?? {}), ...(edited.has(c.name) ? { edited: true } : {}),
       ...(c.layer ? { layer: c.layer } : {}),
       ...(c.featureLabel ?? c.feature ? { feature: c.featureLabel ?? c.feature } : {}),
       props: c.props.map(p => ({ name: p.name, ...(p.kind === 'enum' && p.values.length ? { values: p.values } : {}) })),

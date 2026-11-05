@@ -18,6 +18,8 @@ export interface DsToken {
   type: DetectedToken['type'] | 'font';
   /** A Tailwind default the project uses, not one it declares: another project already has it */
   scale?: boolean;
+  /** Why it exists / when to use it, written by the person (`.ilse/ds/edits.json`) */
+  description?: string;
 }
 
 /** A theme: the tokens whose value differs from the default one */

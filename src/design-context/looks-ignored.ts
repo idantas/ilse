@@ -10,6 +10,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ledgerFile } from '../git/ledger.js';
+import { ensureScanIgnore } from '../config/scan-ignore.js';
 
 export interface IgnoredLook { id: string; label: string; at: string }
 
@@ -31,6 +32,7 @@ export function readIgnoredLooks(cwd: string): IgnoredLook[] {
 }
 
 function write(cwd: string, list: IgnoredLook[]): void {
+  ensureScanIgnore(cwd);
   const f = file(cwd);
   if (!existsSync(join(f, '..'))) mkdirSync(join(f, '..'), { recursive: true });
   writeFileSync(f, JSON.stringify(list, null, 2) + '\n');

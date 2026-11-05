@@ -107,7 +107,7 @@ export interface WsServerOptions {
   tokens?: Array<{ name: string; value: string; type: string }>;
   libraries?: string[];
   /** The design panel's catalog: the product's components, read from the code, and the copies seen on pages */
-  getCatalog?: () => { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState; ignoredLooks?: unknown[] };
+  getCatalog?: () => { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState; ignoredLooks?: unknown[]; notes?: Record<string, unknown> };
   /** The Library's look-alikes: "Ignore" one, and Memory's way back (returns the list now) */
   ignoreLook?: (id: string, label: string) => unknown[];
   unignoreLook?: (id: string) => unknown[];
@@ -121,6 +121,10 @@ export interface WsServerOptions {
   dsExport?: () => Promise<{ files: string[]; components: number; tokens: number; notes?: number } | null> | { files: string[]; components: number; tokens: number } | null;
   /** The DS window: the files in .ilse/ds and the reading behind them (ds-export.ts DsView) */
   dsView?: () => unknown;
+  /** The person's reasoning on a component or token, written into the DS without AI */
+  dsEdit?: (kind: 'component' | 'token', name: string, fields: { whenToUse?: string; avoid?: string; description?: string }) => Promise<unknown>;
+  /** Pro: the agent drafts a component's "when to use / not for", for the person to keep or edit */
+  dsSuggest?: (name: string) => Promise<{ whenToUse: string; avoid?: string } | null>;
   /** The DS block added to AGENTS.md (or CLAUDE.md) — on the person's click */
   dsAgents?: () => string | null;
   /** Pro: the fresh-agent test of the DS (a minute or two) */
@@ -128,7 +132,7 @@ export interface WsServerOptions {
   /** A rule from the test the person approved: kept, and the DS written again */
   dsRule?: (rules: string[]) => Promise<unknown>;
   /** Pro: the Consistency tab's review of one screen by the user's agent (cached per screen); null = no agent or no Pro */
-  consistencyReview?: (req: { key: string; route: string; pieces: unknown[]; known: string[]; ignored: string[] }, fresh: boolean) => Promise<unknown[] | null>;
+  consistencyReview?: (req: { key: string; route: string; pieces: unknown[]; known: string[]; ignored: string[]; decide: Array<{ key: string; about: string; options: Array<'fix' | 'ds' | 'ignore'> }> }, fresh: boolean) => Promise<unknown[] | { findings: unknown[]; decisions?: unknown[] } | null>;
 }
 
 /**
@@ -525,10 +529,10 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
     }
 
     case 'catalog': {
-      let data: { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState; ignoredLooks?: unknown[] } = { entries: [], snapshots: {} };
+      let data: { entries: unknown[]; snapshots: Record<string, unknown[]>; ds?: DsState; ignoredLooks?: unknown[]; notes?: Record<string, unknown> } = { entries: [], snapshots: {} };
       try { data = options.getCatalog?.() ?? data; } catch { /* a scan error leaves the list empty */ }
       // `lite`: just the list (copying starts on connect; the copies go when the catalog is shown)
-      ws.send(JSON.stringify(msg.lite ? { type: 'catalog', entries: data.entries, snapshots: {}, ds: data.ds, ignoredLooks: data.ignoredLooks, lite: true } : { type: 'catalog', ...data }));
+      ws.send(JSON.stringify(msg.lite ? { type: 'catalog', entries: data.entries, snapshots: {}, ds: data.ds, ignoredLooks: data.ignoredLooks, notes: data.notes, lite: true } : { type: 'catalog', ...data }));
       break;
     }
 
@@ -552,7 +556,7 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       void Promise.resolve()
         .then(() => options.dsExport?.() ?? null)
         .catch(() => null) // unwritable: the toolbar says it failed
-        .then(res => ws.send(JSON.stringify({ type: 'ds_export', ...(res ?? { failed: true }) })));
+        .then(res => ws.send(JSON.stringify({ type: 'ds_export', ...(msg.quiet === true ? { quiet: true } : {}), ...(res ?? { failed: true }) })));
       break;
     }
 
@@ -566,11 +570,12 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
 
     case 'consistency_review': {
       const key = typeof msg.key === 'string' ? msg.key : '';
-      const req = { key, route: typeof msg.route === 'string' ? msg.route : '/', pieces: Array.isArray(msg.pieces) ? msg.pieces : [], known: Array.isArray(msg.known) ? msg.known.filter((x: unknown): x is string => typeof x === 'string') : [], ignored: Array.isArray(msg.ignored) ? msg.ignored.filter((x: unknown): x is string => typeof x === 'string').slice(0, 60) : [] };
+      const req = { key, route: typeof msg.route === 'string' ? msg.route : '/', pieces: Array.isArray(msg.pieces) ? msg.pieces : [], known: Array.isArray(msg.known) ? msg.known.filter((x: unknown): x is string => typeof x === 'string') : [], ignored: Array.isArray(msg.ignored) ? msg.ignored.filter((x: unknown): x is string => typeof x === 'string').slice(0, 60) : [], decide: decideOf(msg.decide) };
       void Promise.resolve()
         .then(() => options.consistencyReview?.(req, msg.fresh === true) ?? null)
         .catch(() => null)
-        .then(findings => ws.send(JSON.stringify({ type: 'consistency_review', key, findings })));
+        // An older Pro answers a bare list: findings, no decisions
+        .then(r => ws.send(JSON.stringify({ type: 'consistency_review', key, ...(Array.isArray(r) || !r ? { findings: r } : { findings: r.findings, decisions: r.decisions ?? [] }) })));
       break;
     }
 
@@ -594,6 +599,33 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
       let view: unknown = null;
       try { view = options.dsView?.() ?? null; } catch { /* unreadable */ }
       ws.send(JSON.stringify({ type: 'ds_view', view }));
+      break;
+    }
+
+    case 'ds_edit': {
+      const kind = msg.kind === 'token' ? 'token' : msg.kind === 'component' ? 'component' : null;
+      const name = typeof msg.name === 'string' ? msg.name.slice(0, 120) : '';
+      if (!kind || !name) break;
+      const text = (v: unknown) => typeof v === 'string' ? v.slice(0, 600) : undefined;
+      void Promise.resolve()
+        .then(() => options.dsEdit?.(kind, name, { whenToUse: text(msg.whenToUse), avoid: text(msg.avoid), description: text(msg.description) }))
+        .catch(() => null)
+        .then(() => {
+          let view: unknown = null;
+          try { view = options.dsView?.() ?? null; } catch { /* unreadable */ }
+          // `quiet`: edited from the Library — the DS window only refreshes if it's open
+          ws.send(JSON.stringify({ type: 'ds_view', view, ...(msg.quiet === true ? { quiet: true } : {}) }));
+        });
+      break;
+    }
+
+    case 'ds_suggest': {
+      const name = typeof msg.name === 'string' ? msg.name.slice(0, 120) : '';
+      if (!name) break;
+      void Promise.resolve()
+        .then(() => options.dsSuggest?.(name) ?? null)
+        .catch(() => null)
+        .then(note => ws.send(JSON.stringify({ type: 'ds_suggest', name, note: note ?? null })));
       break;
     }
 
@@ -711,4 +743,14 @@ export function stopServer(): Promise<void> {
 
 export function getPort(): number {
   return activePort ?? BASE_PORT;
+}
+
+/** The rule findings the toolbar wants the agent to settle: keys, what they're about, the choices offered */
+function decideOf(raw: unknown): Array<{ key: string; about: string; options: Array<'fix' | 'ds' | 'ignore'> }> {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap(d => {
+    const x = d as { key?: unknown; about?: unknown; options?: unknown };
+    const options = Array.isArray(x.options) ? x.options.filter((o): o is 'fix' | 'ds' | 'ignore' => o === 'fix' || o === 'ds' || o === 'ignore') : [];
+    return typeof x.key === 'string' && typeof x.about === 'string' && options.length ? [{ key: x.key, about: x.about, options }] : [];
+  }).slice(0, 20);
 }

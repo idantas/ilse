@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dsTokens, dsInput, buildDesignMd, writeDs, hasDs, dedent, dsView, componentImports, createDs, readDsState, dsChanges, addDsRule, addDsInstructions, dsInstructionsIn, DS_MARKER } from '../ds-export.js';
+import { dsTokens, dsInput, buildDesignMd, writeDs, hasDs, dedent, dsView, componentImports, createDs, readDsState, dsChanges, addDsRule, addDsInstructions, dsInstructionsIn, DS_MARKER, writeDsEdit, readDsEdits, dsNotesByName } from '../ds-export.js';
 import type { DsInput } from '../../pro/types.js';
 import { parseFrontMatter, designMdTokens } from '../../setup/design-md.js';
 import type { CatalogEntry } from '../catalog.js';
@@ -196,6 +196,33 @@ describe('createDs — Pro\'s "when to use", asked only for what changed', () =>
     const changed = catalog.map(c => c.name === 'Button' ? { ...c, props: [{ ...c.props[0], values: ['primary', 'ghost', 'link'] }] } : c);
     await createDs(cwd, changed, tokens, { notes, formats, ask });
     expect(asked).toEqual([['Button', 'OrderCard'], ['Button']]);
+  });
+  it("the person's reasoning wins: never rewritten by the agent, carried to tokens and DESIGN.md", async () => {
+    const cwd = project();
+    const asked: string[][] = [];
+    const notes = async (input: DsInput) => {
+      asked.push(input.components.map(c => c.name));
+      return Object.fromEntries(input.components.map(c => [c.name, { whenToUse: `${c.name} by the agent` }]));
+    };
+    writeDsEdit(cwd, 'component', 'Button', { whenToUse: 'The one action that moves the flow forward', avoid: '' });
+    writeDsEdit(cwd, 'token', 'color.brand', { description: 'Only for the main action' });
+    let seen: DsInput | null = null;
+    await createDs(cwd, catalog, tokens, { notes, formats: (input) => { seen = input; return []; }, ask });
+    // Only OrderCard needed the agent; Button kept the person's words even with its contract changing
+    expect(asked).toEqual([['OrderCard']]);
+    const md = readFileSync(join(cwd, '.ilse/ds/DESIGN.md'), 'utf8');
+    expect(md).toContain('When to use: The one action that moves the flow forward');
+    expect(md).toContain('`color.brand` (#ff6c03): Only for the main action');
+    expect(seen!.tokens.find(t => t.name === 'color.brand')?.description).toBe('Only for the main action');
+    expect(dsView(cwd, catalog, tokens, true).components.find(c => c.name === 'Button')).toMatchObject({ edited: true });
+    // The Library's cards: the person's note marked, the agent's not
+    expect(dsNotesByName(cwd, catalog)).toEqual({
+      Button: { whenToUse: 'The one action that moves the flow forward', edited: true },
+      OrderCard: { whenToUse: 'OrderCard by the agent' },
+    });
+    // Emptied, it's gone
+    writeDsEdit(cwd, 'token', 'color.brand', { description: '' });
+    expect(readDsEdits(cwd).tokens).toEqual({});
   });
   it('the agent failing still writes the DS; Free keeps notes written earlier', async () => {
     const cwd = project();

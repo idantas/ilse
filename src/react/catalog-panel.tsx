@@ -21,6 +21,7 @@ import { searchCatalog } from '../design-context/catalog-search.js';
 import { KIND_ORDER, type CatalogKind } from '../design-context/catalog-kinds.js';
 import { keptPosition, rememberPanelPosition } from './property-panel.js';
 import { EMBEDDED, SCREENS_BAR_H, uiDocument, uiLayer, uiWindow } from './screens.js';
+import { field, linkBtn, saveBtn, type DsEditing } from './ds-viewer.js';
 
 const THUMB_W = 56;
 const THUMB_H = 36;
@@ -55,13 +56,22 @@ export function bestSnapshot(list: CatalogSnapshot[] | undefined): CatalogSnapsh
 }
 
 /** The hover card: a big copy, where it's used, its props and variant names */
-function HoverCard({ item, snap, at, copies, onEnter, onLeave }: { item: CatalogItem; snap?: CatalogSnapshot; at: DOMRect; copies: boolean; onEnter: () => void; onLeave: () => void }) {
+export type ComponentNotes = Record<string, { whenToUse?: string; avoid?: string; edited?: boolean }>;
+
+function HoverCard({ item, snap, at, copies, note, onEdit, onEnter, onLeave }: {
+  item: CatalogItem; snap?: CatalogSnapshot; at: DOMRect; copies: boolean;
+  /** Why it exists, as the DS says (the person's words win) */
+  note?: ComponentNotes[string];
+  /** Opens the card's form: name and reasoning (project components only) */
+  onEdit?: () => void;
+  onEnter: () => void; onLeave: () => void;
+}) {
   const choosable = item.props.filter(p => (p.kind === 'enum' || p.kind === 'boolean') && p.values.length > 0).slice(0, 6);
   const others = item.props.filter(p => !choosable.includes(p) && p.kind !== 'other').slice(0, 6);
   const width = 260;
   // Beside the panel, on the side with room
   const left = at.left - width - 12 > 8 ? at.left - width - 12 : at.right + 12;
-  const height = (copies ? 120 : 0) + 70 + (choosable.length + (others.length ? 1 : 0)) * 17;
+  const height = (copies ? 120 : 0) + 70 + (choosable.length + (others.length ? 1 : 0)) * 17 + (note?.whenToUse ? 70 : 0) + (note?.avoid ? 50 : 0) + (onEdit ? 22 : 0);
   return createPortal(
     <div data-ilse-toolbar onMouseEnter={onEnter} onMouseLeave={onLeave} style={{
       position: 'fixed', left, top: Math.max(8, Math.min(at.top - 40, uiWindow().innerHeight - height - 8)), width, zIndex: uiLayer(100002),
@@ -70,22 +80,100 @@ function HoverCard({ item, snap, at, copies, onEnter, onLeave }: { item: Catalog
     }}>
       {/* Copies are Pro's: without them the box would only ever say "no copy yet" */}
       {copies && <Thumb snap={snap} w={width - 20} h={120} empty={item.example ? t('catalog.noCopyWhere', { file: item.example.file.split('/').pop()! }) : t('catalog.noCopyHint')} />}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: copies ? 8 : 0 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: copies ? 10 : 0 }}>
         <span style={{ fontSize: 12, fontWeight: 600 }}>{item.name}</span>
-        <span style={{ color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>◇ {item.folder}</span>
+        <span style={{ flex: 1, minWidth: 0, color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>◇ {item.folder}</span>
+        {onEdit && <button onClick={onEdit} style={{ ...linkBtn, flexShrink: 0 }}>{t('dsv.edit')}</button>}
       </div>
-      {item.ds && <div style={{ color: color.mutedForeground, marginTop: 2 }}>{t('catalog.fromDs', { ds: item.ds })}</div>}
-      <div style={{ color: color.mutedForeground, marginTop: 2, marginBottom: choosable.length || others.length ? 6 : 0 }}>
-        {item.uses === 1 ? t('catalog.usedOnce') : item.uses === 0 ? t('catalog.unused') : t('catalog.used', { n: item.uses })}
-      </div>
-      {choosable.map(p => (
-        <div key={p.name} style={{ color: color.mutedForeground, lineHeight: 1.5 }}>
-          <span style={{ color: color.foreground }}>{p.name}</span>: {p.kind === 'boolean' ? 'true / false' : p.values.join(', ')}
+      {/* Blocks apart: why it exists, when not, where it's used, its props */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6, lineHeight: 1.45 }}>
+        {note?.whenToUse && <div>{note.whenToUse}</div>}
+        {note?.avoid && (
+          <div style={{ color: color.mutedForeground }}>
+            <div style={{ ...sectionLabel, marginBottom: 2 }}>{t('dsv.avoid')}</div>
+            {note.avoid}
+          </div>
+        )}
+        {onEdit && !note?.whenToUse && <div style={{ color: color.mutedForeground }}>{t('dsv.noNote')}</div>}
+        <div style={{ color: color.mutedForeground, paddingTop: 8, borderTop: `1px solid ${color.border}` }}>
+          {item.ds && <div>{t('catalog.fromDs', { ds: item.ds })}</div>}
+          {item.uses === 1 ? t('catalog.usedOnce') : item.uses === 0 ? t('catalog.unused') : t('catalog.used', { n: item.uses })}
         </div>
-      ))}
-      {others.length > 0 && (
-        <div style={{ color: color.mutedForeground, lineHeight: 1.5 }}>{others.map(p => p.name + (p.required ? '*' : '')).join(', ')}</div>
-      )}
+        {(choosable.length > 0 || others.length > 0) && (
+          <div style={{ lineHeight: 1.5 }}>
+            {choosable.map(p => (
+              <div key={p.name} style={{ color: color.mutedForeground }}>
+                <span style={{ color: color.foreground }}>{p.name}</span>: {p.kind === 'boolean' ? 'true / false' : p.values.join(', ')}
+              </div>
+            ))}
+            {others.length > 0 && <div style={{ color: color.mutedForeground }}>{others.map(p => p.name + (p.required ? '*' : '')).join(', ')}</div>}
+          </div>
+        )}
+      </div>
+    </div>,
+    uiDocument().body,
+  );
+}
+
+/**
+ * The card's form: the name (the agent renames it in the code) and why it exists
+ * (when to use / not for), saved into the DS. Pro's AI drafts it; the person keeps it or not.
+ */
+function EditCard({ item, at, note, editing, onClose }: { item: CatalogItem; at: DOMRect; note?: ComponentNotes[string]; editing: DsEditing; onClose: () => void }) {
+  const [name, setName] = useState(item.name);
+  const [when, setWhen] = useState(note?.whenToUse ?? '');
+  const [avoid, setAvoid] = useState(note?.avoid ?? '');
+  const sug = editing.suggestion?.name === item.name ? editing.suggestion.note : undefined;
+  // A draft arrived: it fills the form, to be read and saved — never written on its own
+  React.useEffect(() => {
+    if (sug && sug !== 'loading') { setWhen(sug.whenToUse); if (sug.avoid) setAvoid(sug.avoid); }
+  }, [sug]);
+  const width = 280;
+  const left = at.left - width - 12 > 8 ? at.left - width - 12 : at.right + 12;
+  const save = () => {
+    const to = name.trim();
+    if (when !== (note?.whenToUse ?? '') || avoid !== (note?.avoid ?? '')) editing.onEdit('component', item.name, { whenToUse: when, avoid });
+    if (to && to !== item.name) editing.onRename('component', item.name, to);
+    onClose();
+  };
+  const caption: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 3, color: color.mutedForeground };
+  return createPortal(
+    <div
+      data-ilse-toolbar
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } }}
+      style={{
+        position: 'fixed', left, top: Math.max(8, Math.min(at.top - 40, uiWindow().innerHeight - 330)), width, zIndex: uiLayer(100002),
+        background: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.lg, boxShadow: shadow.lg,
+        padding: 10, fontFamily: font.sans, fontSize: 11, color: color.foreground, boxSizing: 'border-box',
+        display: 'flex', flexDirection: 'column', gap: 8,
+      }}
+    >
+      <label style={caption}>{t('catalog.editName')}
+        <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); }} style={{ ...field, resize: undefined }} />
+        {name.trim() && name.trim() !== item.name && <span style={{ fontSize: 10 }}>{t('catalog.renameHint')}</span>}
+      </label>
+      <label style={caption}>{t('dsv.whenToUse')}
+        <textarea rows={4} value={when} onChange={(e) => setWhen(e.target.value)} placeholder={t('dsv.whenPlaceholder')} style={field} />
+      </label>
+      <label style={caption}>{t('dsv.avoid')}
+        <textarea rows={3} value={avoid} onChange={(e) => setAvoid(e.target.value)} placeholder={t('dsv.avoidPlaceholder')} style={field} />
+      </label>
+      {/* The AI's draft on the left; Cancel and Save on the right, Save last */}
+      <span style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 2 }}>
+        <span style={{ flex: 1, minWidth: 0, color: color.mutedForeground, fontSize: 10.5 }}>
+          {editing.onSuggest
+            ? sug === 'loading'
+              ? t('dsv.drafting')
+              : sug
+                ? t('dsv.drafted')
+                : <button style={linkBtn} onClick={() => editing.onSuggest!(item.name)}>{t(sug === null ? 'dsv.suggestAgain' : when ? 'catalog.suggestRewrite' : 'dsv.suggest')}</button>
+            : note?.edited ? t('dsv.byYou') : null}
+        </span>
+        <button style={{ ...linkBtn, color: color.mutedForeground }} onClick={onClose}>{t('dsv.cancel')}</button>
+        <button style={saveBtn} onClick={save}>{t('dsv.save')}</button>
+      </span>
     </div>,
     uiDocument().body,
   );
@@ -217,6 +305,8 @@ export interface DsInfo {
   exists: boolean; tokens: number; formats: boolean;
   /** Pro's live DS: what changed in the code since it was written */
   changes?: { added: string[]; removed: string[]; changed: string[]; tokens: string[] } | null;
+  /** The CLI is writing it again right now (it follows the code by itself) */
+  updating?: boolean;
 }
 
 /** "+1 new (Badge) · 2 changed · 3 tokens" — what Update would write */
@@ -303,11 +393,11 @@ function DsBar({ ds, components, onCreate, onExport, onView }: { ds: DsInfo; com
         </div>
       )}
     </div>
-    {/* Pro keeps the DS alive: the code moved on since it was written; Update is the person's approval */}
+    {/* Pro keeps the DS alive: it follows the code by itself; the button only shows if a write failed */}
     {changes && (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', marginBottom: 8, borderRadius: radius.sm, background: ilse.orangePale, fontSize: 10.5, lineHeight: 1.4, color: color.foreground }}>
-        <span style={{ flex: 1, minWidth: 0 }}><b>{t('library.dsChanged')}</b> {changesLine(changes)}</span>
-        <button onClick={onExport} style={{ ...primaryButton, padding: '4px 8px', fontSize: 10.5 }}>{t('library.update')}</button>
+        <span style={{ flex: 1, minWidth: 0 }}><b>{t(ds.updating ? 'library.dsUpdating' : 'library.dsChanged')}</b> {changesLine(changes)}</span>
+        {!ds.updating && <button onClick={onExport} style={{ ...primaryButton, padding: '4px 8px', fontSize: 10.5 }}>{t('library.update')}</button>}
       </div>
     )}
     </>
@@ -358,7 +448,11 @@ function GroupBy({ value, onChange }: { value: 'type' | 'folder'; onChange: (v: 
   return <div role="group" aria-label={t('catalog.groupBy')} style={{ display: 'flex', gap: 2 }}>{option('type')}{option('folder')}</div>;
 }
 
-export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDragStart, selected, onSpot, onEditFile, copies = true, ds, onCreateDs, onExportDs, onViewDs }: {
+export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDragStart, selected, onSpot, onEditFile, copies = true, ds, onCreateDs, onExportDs, onViewDs, notes, editing }: {
+  /** Why each component exists (from the DS), shown on its card */
+  notes?: ComponentNotes;
+  /** The card's Edit: name and reasoning. Absent while picking */
+  editing?: DsEditing;
   /** Pro keeps copies of components (thumbnails); without them the hover card has no picture */
   copies?: boolean;
   /** The project's design system, for the bar on top (absent while picking) */
@@ -398,6 +492,8 @@ export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDrag
     else closing.current = setTimeout(() => setHover(null), 180);
   };
   React.useEffect(() => keep, []);
+  // The card being edited stays put: hovering other rows doesn't replace it
+  const [edit, setEdit] = useState<{ item: CatalogItem; at: DOMRect } | null>(null);
 
   const [by, setBy] = useState<'type' | 'folder'>(() => { try { return localStorage.getItem('ilse-catalog-group') === 'folder' ? 'folder' : 'type'; } catch { return 'type'; } });
   const pickBy = (v: 'type' | 'folder') => { setBy(v); setOpen(keptOpen(v)); try { localStorage.setItem('ilse-catalog-group', v); } catch { /* not kept */ } };
@@ -506,7 +602,12 @@ export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDrag
         </>
       )}
 
-      {hover && <HoverCard item={hover.item} snap={bestSnapshot(snapshots[hover.item.id])} at={hover.at} copies={copies} onEnter={keep} onLeave={() => onHover(null)} />}
+      {hover && !edit && (
+        <HoverCard item={hover.item} snap={bestSnapshot(snapshots[hover.item.id])} at={hover.at} copies={copies} note={notes?.[hover.item.name]}
+          onEdit={editing && !onPick && !hover.item.library ? () => { keep(); setEdit(hover); setHover(null); } : undefined}
+          onEnter={keep} onLeave={() => onHover(null)} />
+      )}
+      {edit && editing && <EditCard item={edit.item} at={edit.at} note={notes?.[edit.item.name]} editing={editing} onClose={() => setEdit(null)} />}
     </div>
   );
 }

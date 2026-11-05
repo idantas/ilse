@@ -9,7 +9,12 @@ describe('preview stage', () => {
 
   it('leaves expressions, handlers and styling out', () => {
     expect(parseExample('<Badge tone={kind} onClick={go} className="x" label={"Hi"} />', 'Badge'))
-      .toEqual({ props: { label: 'Hi' } });
+      .toEqual({ props: { label: 'Hi' }, unread: 1 });
+  });
+
+  it('counts the props passed from code, so a shell is not drawn (live: <KpiCard {...k} />)', () => {
+    expect(parseExample('<KpiCard key={k.id} {...k} />', 'KpiCard')).toEqual({ props: {}, spread: true });
+    expect(parseExample('<Button onClick={go} variant="solid">Save</Button>', 'Button')).toEqual({ props: { variant: 'solid' }, text: 'Save' });
   });
 
   it('children that are JSX or expressions are not text', () => {
