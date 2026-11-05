@@ -175,7 +175,25 @@ export interface ConsistencyReviewInput {
   known: string[];
   /** What the person ignored (on this screen or another): never report it, nor the same problem on other pieces */
   ignored?: string[];
+  /** Rule findings that need a decision (a token or a slip? a variant or an override?): the agent picks one */
+  decide?: Array<{ key: string; about: string; options: ConsistencyChoice[] }>;
 }
+
+/** fix: back to the DS · ds: into the DS (token, variant, component) · ignore: leave it · unsure: the person decides */
+export type ConsistencyChoice = 'fix' | 'ds' | 'ignore';
+
+/** The agent's answer to one `decide` entry */
+export interface ConsistencyDecision {
+  key: string;
+  choice: ConsistencyChoice | 'unsure';
+  /** One short sentence, what in the code made the call */
+  why: string;
+  /** For ds: the new token's / variant's / component's name, in the DS's naming */
+  name?: string;
+}
+
+/** Findings and, when `decide` was asked, the decisions. A bare array is the older answer (no decisions) */
+export interface ConsistencyReviewResult { findings: ConsistencyReviewFinding[]; decisions: ConsistencyDecision[] }
 
 /** One judged inconsistency: which pieces, where it's written, what it should be */
 export interface ConsistencyReviewFinding {
@@ -210,7 +228,7 @@ export interface DsInput {
   name: string;
   components: DsComponent[];
   /** `type` is color | spacing | typography | font; `scale`: a Tailwind default the project uses, not one it declares */
-  tokens: Array<{ name: string; value: string; type: string; scale?: boolean }>;
+  tokens: Array<{ name: string; value: string; type: string; scale?: boolean; description?: string }>;
   /** package.json's homepage, when it has one */
   homepage?: string;
   /** Themes (dark, [data-theme=x]): per theme, the tokens whose value differs */
@@ -234,5 +252,5 @@ export interface ProPlugin {
   /** Create DS: an agent that knows only DESIGN.md does a few tasks; what it got wrong becomes suggested rules */
   dsCheck?: (input: DsInput & { designMd: string }, ask: AskAgent) => Promise<DsCheck>;
   /** The Consistency tab: the user's agent reviews one screen against the DS (opening the tab runs it) */
-  consistencyReview?: (input: ConsistencyReviewInput, ask: AskAgent) => Promise<ConsistencyReviewFinding[]>;
+  consistencyReview?: (input: ConsistencyReviewInput, ask: AskAgent) => Promise<ConsistencyReviewFinding[] | ConsistencyReviewResult>;
 }

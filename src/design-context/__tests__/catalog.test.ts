@@ -70,7 +70,6 @@ describe('catalog', () => {
       'src/components/stat-card.tsx#StatCard',
       'src/components/ui/button.tsx#Button',
       'src/components/ui/unused-card.tsx#Card',
-      'src/screens/screen.tsx#Screen',
     ]);
     // Icons and the app root are not pieces
     expect(list.some(e => e.name === 'Save' || e.name === 'App')).toBe(false);
@@ -99,6 +98,28 @@ describe('catalog', () => {
     expect(typo.props.find(p => p.name === 'variant')).toMatchObject({ kind: 'enum', values: ['h4', 'body2'] });
     // Imported under another local name, still the library's Button
     expect(by('@mui/material#Button')?.uses).toBe(1);
+  });
+
+  it('leaves screens and app plumbing out (live: Admin, Cart and CartProvider listed as components)', () => {
+    const dir = project({
+      'src/components/Badge.jsx': 'export function Badge({ children }) { return <span>{children}</span> }',
+      'src/pages/Admin.jsx': `import { Badge } from '../components/Badge'; export function Admin() { return <Badge>Paid</Badge> }`,
+      'src/cart.jsx': 'export function CartProvider({ children }) { return <div>{children}</div> }',
+      'src/main.jsx': `import { Admin } from './pages/Admin'; import { CartProvider } from './cart'; export function App() { return <CartProvider><Admin /></CartProvider> }`,
+    });
+    expect(buildCatalog(dir).map(e => e.name)).toEqual(['Badge']);
+  });
+
+  it('a hand-typed prop over a cva variant shows the variant looks and default (live: sm/md/lg aliases)', () => {
+    const dir = project({
+      'src/components/ui/button.tsx': `import { cva } from 'class-variance-authority';
+const buttonVariants = cva('b', { variants: { size: { default: 'h-9', compact: 'h-7' } }, defaultVariants: { size: 'default' } });
+type ButtonSize = 'default' | 'compact' | 'sm' | 'md' | 'lg';
+export function Button({ size }: { size?: ButtonSize }) { return <button className={buttonVariants({ size })} /> }`,
+      'src/main.tsx': `import { Button } from './components/ui/button'; export function App() { return <Button size="compact" /> }`,
+    });
+    const size = buildCatalog(dir).find(e => e.name === 'Button')!.props.find(p => p.name === 'size')!;
+    expect(size).toMatchObject({ values: ['default', 'compact'], default: 'default' });
   });
 
   it('paths and folders', () => {

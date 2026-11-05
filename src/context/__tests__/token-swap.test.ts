@@ -149,6 +149,17 @@ describe('planTokenSwap', () => {
       .toEqual({ ok: false, reason: 'projeto sem Tailwind' });
   });
 
+  it('leaves a colour that comes from the className expression to the agent (live: every status chip turned black)', () => {
+    const cwd = project({ 'src/Orders.tsx': `const STATUS = { Paid: 'bg-brand-soft', Pending: 'bg-[#f3e2c4]' }
+export const Chip = ({ s }) => <span className={\`rounded-full px-2 \${STATUS[s]}\`}>{s}</span>;
+` });
+    const res = planTokenSwap(annotation(cwd, 'span.rounded-full.px-2', [{ property: 'backgroundColor', from: 'rgb(243, 226, 196)', to: 'sand', token: 'sand' }]), cwd);
+    expect(res).toEqual({ ok: false, reason: expect.stringContaining('expressão') });
+    // Nothing there yet (no padding from anywhere): adding it is still safe
+    const pad = planTokenSwap(annotation(cwd, 'span.rounded-full.px-2', [{ property: 'paddingTop', from: '0px', to: '4px' }]), cwd);
+    expect(pad.ok).toBe(true);
+  });
+
   it('ignores variant classes like md:gap-8', () => {
     const cwd = project({ 'src/A.tsx': 'export const A = () => <ul className="grid gap-2 md:gap-8">x</ul>;\n' });
     const res = planTokenSwap(annotation(cwd, 'ul.grid.gap-2', [{ property: 'gap', from: '8px', to: '12px' }]), cwd);

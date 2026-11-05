@@ -105,6 +105,8 @@ export interface ComponentHit {
   text?: string;
   /** Dev stack URL of the file that wrote `<Item …>` */
   frameUrl?: string;
+  /** The component whose JSX wrote `<Item …>`: a DS SelectTrigger for the library's primitive inside it */
+  writtenBy?: string;
 }
 
 /**
@@ -138,6 +140,7 @@ export function componentAt(el: Element, items: CatalogItem[]): ComponentHit | n
       props,
       ...(typeof children === 'string' ? { text: children } : {}),
       ...(firstAppFrame(x._debugStack?.stack) ? { frameUrl: firstAppFrame(x._debugStack?.stack)!.url } : {}),
+      ...(x._debugOwner?.type ? { writtenBy: componentTypeName(x._debugOwner.type) } : {}),
     };
   }
   return hit;
@@ -160,9 +163,10 @@ export function writtenIn(el: Element): string | undefined {
 
 /** A wrapper that takes all its look from whoever uses it (a project's own `Link` passing className
  *  through, nothing of its own): its copies aren't one look, they're still written by hand at each use.
- *  A Button that adds its variant's classes to the caller's is one look */
-export function styledByCaller(el: Element): boolean {
-  const passed = fiberOf(el)?.return?.memoizedProps?.className;
+ *  A Button that adds its variant's classes to the caller's is one look. `passed`: the className the
+ *  component the screen used received — not a library primitive under it, which always gets the
+ *  finished classes (a DS SelectTrigger over Base UI's) */
+export function styledByCaller(el: Element, passed: unknown = fiberOf(el)?.return?.memoizedProps?.className): boolean {
   if (typeof passed !== 'string' || !passed.trim()) return false;
   const own = new Set((el.getAttribute('class') ?? '').split(/\s+/).filter(Boolean));
   const theirs = new Set(passed.split(/\s+/).filter(Boolean));
@@ -188,6 +192,8 @@ export interface InstanceRef {
   frameUrl?: string;
   props: Record<string, string | number | boolean>;
   text?: string;
+  /** The instance is written with no children: what's dropped "inside" has nowhere to go in it */
+  closed?: boolean;
 }
 
 const SCREEN = /^(App|Root|Page|.*Layout|.*Provider|.*Page)$/;
@@ -211,6 +217,7 @@ export function instanceAt(el: Element, items: CatalogItem[]): InstanceRef | nul
       component: name, frameUrl: frame.url, props,
       ...(item ? { source: item.source } : {}),
       ...(typeof children === 'string' ? { text: children } : {}),
+      ...(children === undefined || children === null ? { closed: true } : {}),
     };
   }
   return out;
@@ -232,6 +239,21 @@ function hostOf(f: F): HTMLElement | null {
     if (x.child) stack.push(x.child);
   }
   return null;
+}
+
+/**
+ * The component an element is the root of, for the hover label (`KpiCard`, not `div.rounded-xl`):
+ * the outermost one above it that renders it first, never the screen itself
+ */
+export function componentNameAt(el: Element): string | undefined {
+  let name: string | undefined;
+  for (let x = fiberOf(el)?.return ?? null, d = 0; x && typeof x.type !== 'string' && d < 40; x = x.return ?? null, d++) {
+    const n = componentTypeName(x.type);
+    if (!n || hostOf(x) !== el) continue;
+    if (SCREEN.test(n)) break;
+    name = n;
+  }
+  return name;
 }
 
 /** Every element a component renders at its top level, portals included (a dialog's backdrop and its panel) */

@@ -39,12 +39,15 @@ export function isNoise(message: string): boolean {
 /**
  * The errors that appeared since `since` and weren't there before it: a page that already
  * logged the same error before the change wasn't broken by it. One entry per message.
+ * `from` (the batch's last write): an error the half-written code logged doesn't count,
+ * unless the final code logs it again.
  */
-export function newErrors(seen: PageError[], since: number): string[] {
+export function newErrors(seen: PageError[], since: number, from = since): string[] {
   const before = new Set(seen.filter(e => e.at < since).map(e => e.message));
   const out: string[] = [];
   for (const e of seen) {
-    if (e.at < since || before.has(e.message) || out.includes(e.message)) continue;
+    // `from`: only what the final code logged; the change's half-written steps (since → from) don't count
+    if (e.at < Math.max(since, from) || before.has(e.message) || out.includes(e.message)) continue;
     out.push(e.message);
   }
   return out;

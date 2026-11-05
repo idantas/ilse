@@ -343,6 +343,23 @@ function classLiterals(el: JSXElement): Literal[] | null {
   return out.length > 0 ? out : null;
 }
 
+/** Part of className comes from code (`${STATUS[s]}`, `cn(x)`): classes the literals don't show may come from there */
+function dynamicClassName(el: JSXElement): boolean {
+  const attr = el.openingElement.attributes.find(a => a.type === 'JSXAttribute' && a.name.name === 'className');
+  if (!attr || attr.type !== 'JSXAttribute' || !attr.value || attr.value.type === 'StringLiteral') return false;
+  const dyn = (n: Node | null | undefined): boolean => {
+    if (!n || n.type === 'StringLiteral') return false;
+    if (n.type === 'JSXExpressionContainer') return dyn(n.expression as Node);
+    if (n.type === 'TemplateLiteral') return n.expressions.length > 0;
+    if (n.type === 'CallExpression') return n.arguments.some(a => dyn(a as Node));
+    return true;
+  };
+  return dyn(attr.value as Node);
+}
+
+/** A computed value that is really there (not the browser's "nothing") */
+const isSet = (v: string) => !!v && !/^(none|normal|auto|0px|0|transparent|rgba\(0, 0, 0, 0\))$/.test(v.trim());
+
 function usesTailwind(cwd: string): boolean {
   try {
     const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8')) as Record<string, Record<string, string> | undefined>;
@@ -355,7 +372,7 @@ function usesTailwind(cwd: string): boolean {
 
 /** The located element's className, as editable string pieces — or why not */
 export type ClassSite =
-  | { ok: true; hit: NonNullable<Annotation['source']>[number]; code: string; literals: Literal[] }
+  | { ok: true; hit: NonNullable<Annotation['source']>[number]; code: string; literals: Literal[]; dynamic?: boolean }
   | { ok: false; reason: string };
 
 export function locateClassName(annotation: Annotation, cwd: string): ClassSite {
@@ -381,7 +398,7 @@ export function locateClassName(annotation: Annotation, cwd: string): ClassSite 
   const literals = hasAttr ? classLiterals(el)
     : nameEnd != null ? [{ start: nameEnd, end: nameEnd, value: '', synthetic: true }] : null;
   if (!literals) return { ok: false, reason: 'className dinâmico' };
-  return { ok: true, hit, code, literals };
+  return { ok: true, hit, code, literals, dynamic: hasAttr && dynamicClassName(el) };
 }
 
 /** Rewrite the literals from edited class lists, back to front so offsets stay valid */
@@ -432,7 +449,7 @@ export function planTokenSwap(annotation: Annotation, cwd: string): SwapResult {
   if (changes.length === 0) return { ok: false, reason: 'sem mudanças do painel' };
   const site = locateClassName(annotation, cwd);
   if (!site.ok) return site;
-  const { hit, code, literals } = site;
+  const { hit, code, literals, dynamic } = site;
 
   // Work on a mutable copy of each literal's class list
   const lists = literals.map(l => l.value.split(/\s+/).filter(Boolean));
@@ -448,6 +465,9 @@ export function planTokenSwap(annotation: Annotation, cwd: string): SwapResult {
     const withMatch = owners.map((o, i) => o.length > 0 ? i : -1).filter(i => i >= 0);
     if (withMatch.length > 1) return { ok: false, reason: `classes de ${change.property} em mais de um trecho` };
 
+    // The value is there but no class here writes it: it comes from the expression (a map, a prop),
+    // shared by other elements — a class added here would paint them all (live: every status chip black)
+    if (!withMatch.length && dynamic && isSet(change.from)) return { ok: false, reason: `${change.property} vem de uma expressão no className` };
     const target = withMatch[0] ?? 0;
     const removed = owners[target] ?? [];
     lists[target] = lists[target].filter(c => !removed.includes(c));

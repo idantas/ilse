@@ -36,7 +36,7 @@ export function cleanPieces(raw: unknown[], max = 120): Piece[] {
 
 const numbered = (code: string) => code.split('\n').slice(0, MAX_LINES).map((l, i) => `${i + 1}: ${l}`).join('\n');
 
-export function reviewInput(cwd: string, catalog: CatalogEntry[], tokens: ConsistencyReviewInput['tokens'], req: { route: string; pieces: Piece[]; known: string[]; ignored?: string[] }, name: string, locale: 'pt' | 'en'): ConsistencyReviewInput {
+export function reviewInput(cwd: string, catalog: CatalogEntry[], tokens: ConsistencyReviewInput['tokens'], req: { route: string; pieces: Piece[]; known: string[]; ignored?: string[]; decide?: ConsistencyReviewInput['decide'] }, name: string, locale: 'pt' | 'en'): ConsistencyReviewInput {
   const byName = new Map(catalog.filter(e => !e.library).map(e => [e.name, e]));
   // The files that write the most pieces first
   const owners = new Map<string, number>();
@@ -57,6 +57,7 @@ export function reviewInput(cwd: string, catalog: CatalogEntry[], tokens: Consis
     })),
     tokens: tokens.slice(0, 160),
     pieces: req.pieces, sources, known: req.known.slice(0, 60), ignored: (req.ignored ?? []).map(x => x.slice(0, 200)).slice(0, 60),
+    ...(req.decide?.length ? { decide: req.decide.slice(0, 20).map(d => ({ ...d, about: d.about.slice(0, 400) })) } : {}),
   };
 }
 

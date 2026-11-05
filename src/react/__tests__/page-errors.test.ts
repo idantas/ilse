@@ -32,6 +32,12 @@ describe('newErrors — only what the change brought', () => {
   it('nothing new, nothing to say', () => {
     expect(newErrors(seen, 40)).toEqual([]);
   });
+  it('the half-written code before the last write does not count (live: <Badge> written, its import a moment later)', () => {
+    const mid = [{ at: 50, message: 'Badge is not defined' }, { at: 51, message: 'Badge is not defined' }];
+    expect(newErrors(mid, 40, 60)).toEqual([]);
+    // The final code logs it again: broken for real
+    expect(newErrors([...mid, { at: 65, message: 'Badge is not defined' }], 40, 60)).toEqual(['Badge is not defined']);
+  });
 });
 
 describe('summarizeError', () => {

@@ -46,7 +46,7 @@ function fiberOf(el: Element): F | null {
  * `<Button variant="outlined" size="small">Save</Button>` → its literal props
  * and text. Expressions are left out: the stage draws what the code spells out.
  */
-export function parseExample(code: string, name: string): { props: Props; text?: string } {
+export function parseExample(code: string, name: string): { props: Props; text?: string; unread?: number; spread?: boolean } {
   // Imported under another name (`Button as MuiButton`): the first component tag
   const tag = new RegExp(`<${name.replace(/[.$]/g, '\\$&')}\\b`).test(code) ? name : /<([A-Z][\w.]*)/.exec(code)?.[1];
   if (!tag) return { props: {} };
@@ -69,13 +69,17 @@ export function parseExample(code: string, name: string): { props: Props; text?:
   raw = raw.replace(/\u0001/g, '{').replace(/\u0002/g, '}');
   const open = { index: start.index, 0: code.slice(start.index, end + 1), 1: raw, 2: selfClosing ? '/' : '' };
   const props: Props = {};
+  // Props it passes from code (`{...k}`, `value={total}`): drawn without them the copy is a shell
+  // (live: a KpiCard written `<KpiCard {...k} />` came out as just "vs. September")
+  const spread = /(^|\s)\{\}/.test(open[1]);
+  let unread = 0;
   const attrs = /([A-Za-z][\w-]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*(-?\d+(?:\.\d+)?|true|false|"[^"]*"|'[^']*')\s*\}))?/g;
   for (let m = attrs.exec(open[1]); m; m = attrs.exec(open[1])) {
     const [, key, dq, sq, expr] = m;
     if (/^(key|ref|className|style|sx)$/.test(key) || /^on[A-Z]/.test(key)) continue;
     const after = open[1].slice(m.index + m[0].length).trimStart();
     // `prop={someVar}`: not a literal, skip (its `{…}` would read as a bare prop)
-    if (dq === undefined && sq === undefined && expr === undefined && after.startsWith('=')) continue;
+    if (dq === undefined && sq === undefined && expr === undefined && after.startsWith('=')) { unread++; continue; }
     if (dq !== undefined) props[key] = dq;
     else if (sq !== undefined) props[key] = sq;
     else if (expr === undefined) props[key] = true;
@@ -90,7 +94,7 @@ export function parseExample(code: string, name: string): { props: Props; text?:
     const inner = close >= 0 ? rest.slice(0, close).replace(/\s+/g, ' ').trim() : '';
     if (inner && !/[<{]/.test(inner)) text = inner;
   }
-  return { props, ...(text ? { text } : {}) };
+  return { props, ...(text ? { text } : {}), ...(unread ? { unread } : {}), ...(spread ? { spread } : {}) };
 }
 
 /** On Vite, the URL a dependency was loaded from (`/node_modules/.vite/deps/@mui_material.js?v=…`) */
@@ -210,8 +214,13 @@ export async function stage(requests: StageRequest[]): Promise<Array<{ id: strin
   return out;
 }
 
-/** What to draw for an item with no copy: the props its usage example spells out */
-export function exampleRequest(item: CatalogItem): StageRequest {
+/**
+ * What to draw for an item with no copy: the props its usage example spells out. Null when the
+ * example passes its content from code: the name in a box beats a copy with the content missing
+ */
+export function exampleRequest(item: CatalogItem): StageRequest | null {
   const ex = item.example ? parseExample(item.example.code, item.name) : { props: {} as Props };
+  // A tone from a variable still draws (the default tone); nothing to read at all is a shell
+  if ('spread' in ex && ex.spread || ('unread' in ex && ex.unread && !ex.text && !Object.keys(ex.props).length)) return null;
   return { item, props: ex.props, ...(ex.text ? { text: ex.text } : {}) };
 }

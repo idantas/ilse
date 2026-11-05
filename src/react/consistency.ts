@@ -206,14 +206,18 @@ export const contrastRatio = (a: RGBA, b: RGBA) => {
  * The token for an off-token colour: among the near ones (by ΔE), the nearest that still reads
  * against `against` (AA); none does → the nearest, flagged. Pure, for the tests.
  */
+/** How far a readable token may be from the colour it replaces before it's another look, not a fix */
+const FARTHEST = 40;
+
 export function pickSwap(role: Swap['role'], from: RGBA, tokens: Array<{ name: string; c: RGBA }>, against?: RGBA, large = false): Swap | null {
   const ranked = tokens.map(x => ({ ...x, d: deltaE(x.c, { ...from, a: 1 }) })).sort((a, b) => a.d - b.d);
   if (!ranked.length) return null;
   const need = large ? 3 : 4.5;
   const check = role !== 'border' && against ? (c: RGBA) => contrastRatio(c, against) : null;
   const near = ranked.filter(x => x.d < 25);
-  // Readable first: the nearest that passes, then a farther one that does (it changes the look more), else the nearest
-  const passing = check ? near.find(x => check(x.c) >= need) ?? ranked.find(x => check(x.c) >= need) : undefined;
+  // Readable first: the nearest that passes, then a farther one that does (it changes the look more), else the nearest.
+  // Not any farther one: live, a pale #f3e2c4 chip fill "fixed" to the near-black foreground just to pass
+  const passing = check ? near.find(x => check(x.c) >= need) ?? ranked.find(x => x.d < FARTHEST && check(x.c) >= need) : undefined;
   const pick = passing ?? ranked[0];
   const contrast = check ? Math.round(check(pick.c) * 10) / 10 : undefined;
   return { role, from: hex(from), token: pick.name, value: hex(pick.c), ...(contrast !== undefined ? { contrast, ok: contrast >= need } : {}), ...(pick.d >= 25 ? { far: true } : {}) };
@@ -454,6 +458,9 @@ const swapText = (w: Swap) => `${w.from} → ${w.token} (${w.value})${w.contrast
  * What the agent reads for Fix — exactly what the row said it would do, nothing more.
  * `mode` 'add' (off-token only): the colour becomes a DS token instead.
  */
+/** Seen live: <Button> written in, its import forgotten, the page down. Plain JS has no typecheck to say so */
+const IMPORT = ' Every component you put in must be imported in that file (or already defined there).';
+
 export function fixNote(f: NoteInput, mode: 'fix' | 'add' | 'variant' = 'fix'): string {
   const where = f.file ? ` (${f.file}${f.line ? `:${f.line}` : ''})` : f.owner ? ` (written in <${f.owner}>)` : '';
   const piece = `"${f.text}"${where}`;
@@ -461,7 +468,7 @@ export function fixNote(f: NoteInput, mode: 'fix' | 'add' | 'variant' = 'fix'): 
     case 'override': return mode === 'variant'
       ? `${piece} is the DS's ${f.standard} with its look changed by the className (${f.props.join(', ')}). Keep this look as a variant of ${f.standard!.split(' ')[0]}: use the variant that already has it, else add one to ${f.standard!.split(' ')[0]} named by its role, then use it here and drop those classes. Nothing may look different after.${every(f.pieces)}`
       : `${piece} is the DS's ${f.standard} with its look changed by the className (${f.props.join(', ')}). Remove the classes that change it, so it looks like ${f.standard} again; keep the ones for layout (margin, width, position).${every(f.pieces)}`;
-    case 'copy': return `${piece} is written by hand but looks exactly like the DS's ${f.standard}. Replace it with that component and drop the hand-written classes; it must look the same after.${every(f.pieces)}`;
+    case 'copy': return `${piece} is written by hand but looks exactly like the DS's ${f.standard}. Replace it with that component and drop the hand-written classes; it must look the same after.${every(f.pieces)}${IMPORT}`;
     case 'off-token': return mode === 'add'
       ? `${f.props.join(', ')} isn't a token of the DS. Add it once as a new colour token, named by its role, where the other colour tokens are declared, and use that token in every place it is written by hand. Nothing may look different after.${every(f.pieces) || ` It is used by ${piece}.`}`
       : `${f.props.join(', ')} isn't a token of the DS. Swap exactly this: ${(f.swaps ?? []).map(swapText).join('; ')}.${every(f.pieces) || ` It is used by ${piece}.`} `
@@ -475,7 +482,7 @@ export function fixNote(f: NoteInput, mode: 'fix' | 'add' | 'variant' = 'fix'): 
         : `${piece} uses ${what}. Swap exactly this: ${f.props[0]} → ${w?.token}${w && w.token !== w.value ? ` (${w.value})` : ''}, through the token or its utility class. Change only the ${f.type === 'off-font' ? 'font family' : 'size'}.${every(f.pieces)} If it can't be done without changing anything else, change nothing and say so.`;
     }
     default: {
-      return `${piece}: ${f.detail ?? ''}${f.fix ? ` Should be: ${f.fix}.` : ''}${every(f.pieces)}`;
+      return `${piece}: ${f.detail ?? ''}${f.fix ? ` Should be: ${f.fix}.` : ''}${every(f.pieces)}${f.fix && /<[A-Z]/.test(f.fix) ? IMPORT : ''}`;
     }
   }
 }
@@ -514,3 +521,37 @@ export function swapStyles(st: Pick<CSSStyleDeclaration, 'color' | 'backgroundCo
 
 /** A row whose fix the page can show before it's sent and Ilse can write without AI */
 export const previewable = (swaps?: Swap[]) => !!swaps?.length && swaps.every(w => w.role !== 'font');
+
+/** Pieces that make a pattern: from here, a look that's off is more likely meant than a slip */
+export const REPEATED = 3;
+
+/**
+ * Which fix leads an open row. Into the DS when the value looks meant: an override or a colour
+ * with no token near it (or none that reads), on REPEATED pieces or more. Else back to the DS.
+ */
+export function recommend(f: Pick<ConsistencyFinding, 'type' | 'swaps' | 'els'>): 'fix' | 'ds' {
+  if (f.els.length < REPEATED) return 'fix';
+  if (f.type === 'override') return 'ds';
+  return (f.swaps ?? []).some(w => w.far || w.ok === false) ? 'ds' : 'fix';
+}
+
+/** The agent's call on a finding that needs a decision (Pro's review answers it in the same turn) */
+export interface Decision { key: string; choice: 'fix' | 'ds' | 'ignore' | 'unsure'; why: string; name?: string }
+
+/**
+ * A rule finding the agent should settle, said in a line it can check against the code; none when
+ * the plain fix is the obvious one (recommend → fix). Pure, for the tests.
+ */
+export function decideEntry(f: ConsistencyFinding): { key: string; about: string; options: Array<'fix' | 'ds'> } | null {
+  if (recommend(f) !== 'ds') return null;
+  const where = `on ${f.els.length} pieces (${f.pieces.slice(0, 4).join(', ')})`;
+  const about = f.type === 'override'
+    ? `<${f.standard ?? 'component'}> given another ${f.props.join(', ')} by its className ${where}. fix = back to the standard look; ds = this look becomes a variant.`
+    : `${f.type === 'off-size' ? 'text size' : f.type === 'off-font' ? 'font' : 'colour'} ${(f.swaps ?? []).map(w => `${w.from} (nearest token ${w.token} ${w.value}${w.far ? ', far' : ''}${w.ok === false ? ', no token reads with enough contrast' : ''})`).join('; ') || f.props.join(', ')} ${where}. fix = swap in the token; ds = add it to the DS as a token, look unchanged.`;
+  return { key: f.id, about, options: ['fix', 'ds'] };
+}
+
+/** A look-alike family for the agent: one component, or fine as it is */
+export function lookEntry(key: string, kind: string, text: string | undefined, n: number): { key: string; about: string; options: Array<'ds' | 'ignore'> } {
+  return { key, about: `${kind}${text ? ` "${text}"` : ''} drawn alike by hand on ${n} pieces, no DS component. ds = make it one component and swap them all; ignore = fine as it is.`, options: ['ds', 'ignore'] };
+}

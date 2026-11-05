@@ -176,9 +176,10 @@ export function popUndo(): ChangeSet | undefined { const cs = undoStack.pop(); s
 export function peekUndo(): ChangeSet | undefined { return undoStack[undoStack.length - 1]; }
 export function pushRedo(cs: ChangeSet): void { redoStack.push(cs); saveUndo(); }
 export function popRedo(): ChangeSet | undefined { const cs = redoStack.pop(); saveUndo(); return cs; }
-export function undoState(): { count: number; label?: string; redoCount: number; redoLabel?: string } {
+export function undoState(): { count: number; label?: string; id?: string; redoCount: number; redoLabel?: string } {
   return {
-    count: undoStack.length, label: undoStack[undoStack.length - 1]?.label,
+    // id: the batch an undo takes back now — the toolbar's Consistency rows offer undo only on that one
+    count: undoStack.length, label: undoStack[undoStack.length - 1]?.label, id: undoStack[undoStack.length - 1]?.id,
     redoCount: redoStack.length, redoLabel: redoStack[redoStack.length - 1]?.label,
   };
 }

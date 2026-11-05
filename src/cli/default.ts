@@ -20,7 +20,7 @@ import { Journal } from '../telemetry/journal.js';
 import { detectFramework, type Framework, type FrameworkDetection } from '../setup/framework-detect.js';
 import { removeIlseComponent, type RemoveResult } from '../setup/remove-component.js';
 import { choseInjectedToolbar, saveInjectedToolbarChoice, readProjectRc } from '../config/project-rc.js';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import { injectIlseComponent } from '../setup/inject-component.js';
 import { detectTokens } from '../setup/token-detect.js';
@@ -56,8 +56,9 @@ import { checkSetup, checkChange } from '../agent/check-run.js';
 import { hasProblems, checkRepairPrompt, describeReport, type CheckReport } from '../agent/project-check.js';
 import type { FileChange } from '../agent/changeset.js';
 import { projectDir } from '../config/project-dir.js';
+import { ensureScanIgnore } from '../config/scan-ignore.js';
 import { cleanPieces, reviewInput, reviewKey } from '../design-context/consistency-review.js';
-import { createDs, hasDs, dsTokens, dsView, addDsInstructions, dsChanges, dsInput, notesToKeep, projectName, addDsRule, DS_DIR } from '../design-context/ds-export.js';
+import { createDs, hasDs, dsTokens, dsView, addDsInstructions, dsChanges, dsInput, notesToKeep, dsNotesByName, projectName, addDsRule, writeDsEdit, DS_DIR } from '../design-context/ds-export.js';
 import { planClassEdit } from '../context/token-swap.js';
 import { hasCommitContext, addCommitContext, commitContextChoice, saveCommitContextChoice, instructionsFile } from '../git/commit-context.js';
 
@@ -749,11 +750,18 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
 
   // Every batch that touched files can be undone from the toolbar (button or ⌘Z)
   let lastModel: string | undefined;
+  // Pro keeps the DS alive: set once Pro is loaded, called after every change that lands
+  let dsAfterChange: () => void = () => {};
   const recordUndo = (cs: ChangeSet, path: LedgerPath) => {
     pushUndo(cs);
     broadcast({ type: 'undo-state', ...undoState() });
     // The code changed: the toolbar watches whether the page repaints, and asks for a reload if it doesn't
-    broadcast({ type: 'code-changed', changeSetId: cs.id, annotationIds: cs.annotationIds, files: cs.files.map(f => f.path) });
+    // `writtenAt`: the batch's last write. The agent writes a file several times (seen live: <Badge> first,
+    // its import a moment later) and the dev server renders each one; errors before it aren't the change's
+    let writtenAt = 0;
+    for (const f of cs.files) { try { writtenAt = Math.max(writtenAt, statSync(join(cwdRoot, f.path)).mtimeMs); } catch { /* deleted */ } }
+    broadcast({ type: 'code-changed', changeSetId: cs.id, annotationIds: cs.annotationIds, files: cs.files.map(f => f.path), ...(writtenAt ? { writtenAt: Math.floor(writtenAt) } : {}) });
+    dsAfterChange();
     // For whoever commits next: what changed, and the designer's reason (.git/ilse/changes.jsonl)
     recordChange(cwdRoot, cs, {
       path,
@@ -1395,8 +1403,36 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
   let viewAsFree = ownerCanSwitch && readViewAsFree();
   // Read on every use, so the switch takes effect without restarting
   let proServer = viewAsFree ? undefined : loadedPro;
+  // Pro: the DS follows the code by itself — after a change and on start, whenever what the code
+  // has differs from what the DS says (a component that shouldn't be there, the person removes).
+  // Only new or changed components ask the agent for their notes; the rest is rewritten without AI
+  let dsTimer: NodeJS.Timeout | undefined;
+  let dsWriting = false;
+  const refreshDs = () => {
+    if (dsTimer) clearTimeout(dsTimer);
+    // Waits for a batch's last files; several changes close together write it once
+    dsTimer = setTimeout(async () => {
+      dsTimer = undefined;
+      if (!proServer || !pro?.dsFormats || !hasDs(cwdRoot)) return;
+      if (dsWriting) { refreshDs(); return; }
+      try {
+        const catalog = buildCatalog(cwdRoot);
+        const tokens = detectTokens(cwdRoot).tokens;
+        const ch = dsChanges(cwdRoot, catalog, tokens);
+        if (!ch || !(ch.added.length + ch.removed.length + ch.changed.length + ch.tokens.length)) return;
+        dsWriting = true;
+        broadcast({ type: 'ds_updating', changes: ch });
+        await createDs(cwdRoot, catalog, tokens, { formats: pro.dsFormats, notes: pro.dsNotes, ask: (prompt, opts) => askAgent(cwdRoot, prompt, opts) });
+        broadcast({ type: 'ds_updated', changes: ch });
+      } catch { broadcast({ type: 'ds_updated', failed: true }); } finally { dsWriting = false; }
+    }, 4000);
+  };
+  dsAfterChange = refreshDs;
+  // Before the dev server (same-port starts it next) reads the project: Ilse's folder is never a source
+  if (existsSync(join(cwdRoot, '.ilse'))) ensureScanIgnore(cwdRoot);
+  refreshDs();
   // The Consistency tab's reviews, per screen, while this ilse runs
-  const reviewCache = new Map<string, unknown[]>();
+  const reviewCache = new Map<string, unknown[] | { findings: unknown[]; decisions?: unknown[] }>();
 
   // Settings → Sign in to Ilse Pro: the same login as `ilse login`, the toolbar only sees its state
   const proAccount = createAccountControl({
@@ -1442,6 +1478,8 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         entries,
         snapshots: proServer?.catalog?.snapshots() ?? {},
         ignoredLooks: readIgnoredLooks(cwdRoot),
+        // Why each component exists, shown (and edited) on its card in the Library
+        notes: dsNotesByName(cwdRoot, entries),
         // The Library: "Create design system" until .ilse/ds exists, then "Export".
         // Pro keeps it alive: what changed since it was written, for the person to approve
         ds: {
@@ -1477,7 +1515,7 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       if (!proServer || !pro?.consistencyReview) return null;
       const pieces = cleanPieces(req.pieces);
       if (!pieces.length) return [];
-      const input = reviewInput(cwdRoot, buildCatalog(cwdRoot), dsTokens(detectTokens(cwdRoot).tokens, cwdRoot), { route: req.route, pieces, known: req.known, ignored: req.ignored }, projectName(cwdRoot), getLocale() === 'pt' ? 'pt' : 'en');
+      const input = reviewInput(cwdRoot, buildCatalog(cwdRoot), dsTokens(detectTokens(cwdRoot).tokens, cwdRoot), { route: req.route, pieces, known: req.known, ignored: req.ignored, decide: req.decide }, projectName(cwdRoot), getLocale() === 'pt' ? 'pt' : 'en');
       // Keyed by the code too: after a fix the same screen is asked again, about the new code
       const key = reviewKey(req.key, input);
       if (!fresh && reviewCache.has(key)) return reviewCache.get(key)!;
@@ -1491,6 +1529,19 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       await createDs(cwdRoot, buildCatalog(cwdRoot), detectTokens(cwdRoot).tokens, proServer ? { formats: pro?.dsFormats } : undefined);
     },
     dsView: () => dsView(cwdRoot, buildCatalog(cwdRoot), detectTokens(cwdRoot).tokens, !!(proServer && pro?.dsFormats)),
+    // The person's words win: written now, the DS rewritten with them (no AI: the other notes are kept)
+    dsEdit: async (kind, name, fields) => {
+      writeDsEdit(cwdRoot, kind, name, fields);
+      if (hasDs(cwdRoot)) await createDs(cwdRoot, buildCatalog(cwdRoot), detectTokens(cwdRoot).tokens, proServer ? { formats: pro?.dsFormats } : undefined);
+    },
+    dsSuggest: async (name) => {
+      if (!proServer || !pro?.dsNotes) return null;
+      const catalog = buildCatalog(cwdRoot);
+      const one = catalog.filter(c => c.name === name && !c.library);
+      if (!one.length) return null;
+      const notes = await pro.dsNotes(dsInput(cwdRoot, join(cwdRoot, DS_DIR), projectName(cwdRoot), one, dsTokens(detectTokens(cwdRoot).tokens, cwdRoot)), (prompt, opts) => askAgent(cwdRoot, prompt, opts));
+      return notes[name]?.whenToUse ? notes[name] : null;
+    },
     undoDecision: (id) => proServer?.undoDecision?.(id) ?? false,
     forgetTestMemory: () => proServer?.forgetMemory?.(),
     onViewAsFree: (free) => {

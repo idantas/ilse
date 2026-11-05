@@ -1,4 +1,5 @@
 import { useRef, useCallback, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { color, radius, font } from './tokens.js';
 import { t } from '../i18n/index.js';
 
@@ -153,7 +154,9 @@ export function InlineAttachments({
   /** With it, + is a menu: an image, or a component from the catalog */
   onComponent?: () => void;
 }) {
-  const [menu, setMenu] = useState(false);
+  // The menu's anchor: the + button's box. The menu is portaled out with fixed
+  // coordinates, because the card's text box clips anything that overflows it.
+  const [menu, setMenu] = useState<DOMRect | null>(null);
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
@@ -164,7 +167,12 @@ export function InlineAttachments({
       ))}
       <span style={{ position: 'relative', display: 'inline-flex' }}>
       <button
-        onClick={(e) => { e.stopPropagation(); if (onComponent) setMenu(m => !m); else onAdd(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!onComponent) return onAdd();
+          const box = e.currentTarget.getBoundingClientRect();
+          setMenu(m => (m ? null : box));
+        }}
         style={{
           width: 32, height: 32, borderRadius: radius.sm,
           border: `1px dashed ${color.border}`, background: 'none',
@@ -175,12 +183,14 @@ export function InlineAttachments({
       >
         +
       </button>
-      {menu && onComponent && (
+      {menu && onComponent && createPortal(
         <div
           role="menu"
-          onMouseLeave={() => setMenu(false)}
+          data-ilse-toolbar
+          onMouseLeave={() => setMenu(null)}
+          onMouseDown={(e) => e.stopPropagation()}
           style={{
-            position: 'absolute', bottom: 36, left: 0, zIndex: 2, minWidth: 140, padding: 4,
+            position: 'fixed', bottom: window.innerHeight - menu.top + 4, left: menu.left, zIndex: 2147483647, minWidth: 140, padding: 4, fontFamily: font.sans,
             background: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.md, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
           }}
         >
@@ -191,7 +201,7 @@ export function InlineAttachments({
             <button
               key={item.label}
               role="menuitem"
-              onClick={(e) => { e.stopPropagation(); setMenu(false); item.run(); }}
+              onClick={(e) => { e.stopPropagation(); setMenu(null); item.run(); }}
               style={{
                 display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', border: 'none', borderRadius: radius.sm,
                 background: 'none', cursor: 'pointer', fontSize: 12, color: color.foreground,
@@ -200,7 +210,8 @@ export function InlineAttachments({
               {item.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
       </span>
       <input ref={fileRef} type="file" accept="image/*" onChange={onFileChange} style={{ display: 'none' }} />

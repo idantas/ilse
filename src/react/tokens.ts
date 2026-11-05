@@ -58,6 +58,8 @@ export const ilse = {
   orange: '#FF6C03',
   orangeLight: '#FFC194',
   orangePale: '#FFECDE',
+  /** Warm yellow before the orange: the review meter's tick on its way */
+  yellow: '#FFE11A',
   /** Test mode — blue, away from the orange and from the finding severities (red, amber, gray) */
   test: '#2F6BFF',
   testLight: '#A1BCFF',

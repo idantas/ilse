@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { families, fixNote, lookDiff, nearestStep, pickSwap, previewable, reviewEstimate, screenKey, standardOf, swapStyles, ticksLit } from '../consistency.js';
+import { families, fixNote, lookDiff, nearestStep, pickSwap, decideEntry, previewable, recommend, reviewEstimate, screenKey, standardOf, swapStyles, ticksLit } from '../consistency.js';
 import type { Look } from '../look-alike.js';
 import type { CatalogItem } from '../catalog-snapshot.js';
 
@@ -35,9 +35,9 @@ describe('consistency rules', () => {
 
   it('the fix note says what the DS has', () => {
     expect(fixNote({ type: 'copy', text: 'Pago', owner: 'OrderRow', standard: 'Badge color=green', props: [] }))
-      .toBe('"Pago" (written in <OrderRow>) is written by hand but looks exactly like the DS\'s Badge color=green. Replace it with that component and drop the hand-written classes; it must look the same after.');
+      .toBe('"Pago" (written in <OrderRow>) is written by hand but looks exactly like the DS\'s Badge color=green. Replace it with that component and drop the hand-written classes; it must look the same after. Every component you put in must be imported in that file (or already defined there).');
     expect(fixNote({ type: 'agent', text: 'Pill à mão', detail: 'Onde o DS tem Badge.', fix: '<Badge>', file: 'a.tsx', line: 3, props: [] }))
-      .toBe('"Pill à mão" (a.tsx:3): Onde o DS tem Badge. Should be: <Badge>.');
+      .toBe('"Pill à mão" (a.tsx:3): Onde o DS tem Badge. Should be: <Badge>. Every component you put in must be imported in that file (or already defined there).');
   });
 
   it('an off-token colour swaps exactly the token the row showed, or becomes a DS token', () => {
@@ -63,6 +63,12 @@ describe('consistency rules', () => {
     expect(sw.ok).toBe(true);
     expect(pickSwap('text', { r: 160, g: 160, b: 160, a: 1 }, [tokens[0]], white)).toMatchObject({ token: '--muted', ok: false });
     expect(pickSwap('border', { r: 160, g: 160, b: 160, a: 1 }, tokens, white)?.contrast).toBeUndefined();
+  });
+
+  it('never swaps a pale fill for a dark token just to pass contrast (live: Pending chip turned black)', () => {
+    const warning = { r: 184, g: 134, b: 44, a: 1 };
+    const ds = [{ name: 'sand', c: { r: 236, g: 228, b: 214, a: 1 } }, { name: 'foreground', c: { r: 28, g: 28, b: 26, a: 1 } }];
+    expect(pickSwap('fill', { r: 243, g: 226, b: 196, a: 1 }, ds, warning)).toMatchObject({ token: 'sand', ok: false });
   });
 
   it('reads a font stack as its chosen families, without fallbacks or generics', () => {
@@ -122,5 +128,33 @@ describe('override notes', () => {
   });
   it('keeps the look as a variant when asked', () => {
     expect(fixNote(f, 'variant')).toContain('Nothing may look different after');
+  });
+});
+
+describe('the recommended fix', () => {
+  const els = (n: number) => Array.from({ length: n }, () => ({}) as HTMLElement);
+  const near = { role: 'fill' as const, from: '#6b6b6b', token: 'muted', value: '#737373' };
+  it('a colour near a token goes back to the token, however often it shows', () => {
+    expect(recommend({ type: 'off-token', swaps: [near], els: els(5) })).toBe('fix');
+  });
+  it('a colour far from every token, on 3 pieces or more, goes into the DS', () => {
+    expect(recommend({ type: 'off-token', swaps: [{ ...near, far: true }], els: els(3) })).toBe('ds');
+    expect(recommend({ type: 'off-token', swaps: [{ ...near, far: true }], els: els(2) })).toBe('fix');
+  });
+  it('no token that reads goes into the DS too; a repeated override becomes a variant', () => {
+    expect(recommend({ type: 'off-token', swaps: [{ ...near, ok: false }], els: els(4) })).toBe('ds');
+    expect(recommend({ type: 'override', els: els(3) })).toBe('ds');
+    expect(recommend({ type: 'override', els: els(1) })).toBe('fix');
+  });
+});
+
+describe('what the agent is asked to decide', () => {
+  const els = (n: number) => Array.from({ length: n }, () => ({}) as HTMLElement);
+  const f = { id: 'c1', type: 'off-token' as const, text: 'Export', props: ['#5b6b3a'], pieces: ['"Export" in <Admin>', '"Place order" in <Checkout>', '"Save" in <Admin>'] };
+  it('only a finding whose recommended fix is the DS', () => {
+    expect(decideEntry({ ...f, els: els(3), swaps: [{ role: 'fill', from: '#5b6b3a', token: 'muted', value: '#737373' }] })).toBeNull();
+    const d = decideEntry({ ...f, els: els(3), swaps: [{ role: 'fill', from: '#5b6b3a', token: 'brand', value: '#c2410c', far: true }] });
+    expect(d?.options).toEqual(['fix', 'ds']);
+    expect(d?.about).toContain('colour #5b6b3a (nearest token brand #c2410c, far) on 3 pieces');
   });
 });

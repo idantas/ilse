@@ -228,12 +228,24 @@ export interface LookAlikeView {
  */
 export const lookId = (kind: PieceKind, shape: string) => `${kind}:${shape.split(' ').filter(x => !x.endsWith('=') && !x.startsWith('height=')).join(' ')}`;
 
+/** The catalog component a piece is (the outermost one the screen used), unless all its classes came from
+ *  its caller — then it's still written by hand; else the app component whose root it is */
+function componentOf(el: HTMLElement, items: CatalogItem[]): string | undefined {
+  const hit = componentAt(el, items);
+  if (!hit) return ownRoot(el);
+  if (!styledByCaller(el, hit.props.className)) return hit.item.name;
+  // All its classes came from whoever wrote it: a DS component dressing a library primitive (the
+  // DS's SelectTrigger over Base UI's) is that DS component; a screen dressing a wrapper is by hand
+  const by = hit.writtenBy ? items.find(i => i.name === hit.writtenBy) : undefined;
+  return by && (by.layer === 'base' || by.library) ? by.name : undefined;
+}
+
 /** The page's look-alikes that aren't one component and weren't ignored, biggest first */
 export function readLookAlikes(items: CatalogItem[], ignored: Set<string> = new Set(), max = 8): LookAlikeView[] {
   const members = lookCandidates().map(m => ({
     ...m,
     file: writtenIn(m.ref),
-    component: styledByCaller(m.ref) ? undefined : componentAt(m.ref, items)?.item.name ?? ownRoot(m.ref),
+    component: componentOf(m.ref, items),
   }));
   const out: LookAlikeView[] = [];
   for (const family of looseFamilies(groupLookAlikes(members))) {
