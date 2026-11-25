@@ -4,7 +4,7 @@
  * the email once connected — never the token or the license.
  */
 
-import { loadAccount } from './store.js';
+import { loadAccount, readLicense } from './store.js';
 import { login, logout, type LoginOutcome } from './session.js';
 import type { LoginStart } from './client.js';
 
@@ -16,6 +16,10 @@ export interface AccountState {
   last: LoginOutcome['status'] | null;
   /** Signed in during this run with Pro installed but off: it loads on the next start */
   restartNeeded: boolean;
+  /** The account has Pro and it isn't on this machine: downloading it now */
+  installing: boolean;
+  /** That download didn't work: `ilse upgrade` tries again */
+  installFailed: boolean;
 }
 
 export function createAccountControl({
@@ -24,6 +28,7 @@ export function createAccountControl({
   openBrowser,
   proActive,
   proInstalled,
+  installPro,
 }: {
   locale: () => 'pt' | 'en';
   broadcast: (state: AccountState) => void;
@@ -32,14 +37,22 @@ export function createAccountControl({
   proActive: boolean;
   /** Pro's files are on this machine (licensed or not) */
   proInstalled: boolean;
+  /**
+   * Installs Pro (and tells the site), true when it's on the machine after. Signing in
+   * is how a founder gets Pro, the same as `ilse login`; only ~/.ilse changes.
+   */
+  installPro?: () => Promise<boolean>;
 }) {
+  let installed = proInstalled;
+  let installing = false;
+  let installFailed = false;
   let pending: AccountState['pending'] = null;
   let last: AccountState['last'] = null;
   let abort: AbortController | null = null;
 
   const state = (): AccountState => {
     const email = loadAccount()?.email ?? null;
-    return { email, pending, last, restartNeeded: !!email && proInstalled && !proActive };
+    return { email, pending, last, restartNeeded: !!email && installed && !proActive && !installing, installing, installFailed };
   };
   const push = () => broadcast(state());
 
@@ -57,10 +70,19 @@ export function createAccountControl({
           openBrowser(start.verificationUri);
           push();
         },
-      }).then((r) => {
+      }).then(async (r) => {
         abort = null;
         pending = null;
         last = r.status;
+        installFailed = false;
+        // Paid and Pro isn't here yet: install it now (a free account has no license)
+        const install = r.status === 'ok' && !installed && installPro && readLicense();
+        if (install) installing = true;
+        push();
+        if (!install) return;
+        installed = await installPro().catch(() => false);
+        installing = false;
+        installFailed = !installed;
         push();
       });
       push();

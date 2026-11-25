@@ -56,7 +56,7 @@ export function bestSnapshot(list: CatalogSnapshot[] | undefined): CatalogSnapsh
 }
 
 /** The hover card: a big copy, where it's used, its props and variant names */
-export type ComponentNotes = Record<string, { whenToUse?: string; avoid?: string; edited?: boolean }>;
+export type ComponentNotes = Record<string, { whenToUse?: string; avoid?: string; edited?: boolean; /** Written by the connected design system's package */ fromDs?: boolean }>;
 
 function HoverCard({ item, snap, at, copies, note, onEdit, onEnter, onLeave }: {
   item: CatalogItem; snap?: CatalogSnapshot; at: DOMRect; copies: boolean;
@@ -119,10 +119,17 @@ function HoverCard({ item, snap, at, copies, note, onEdit, onEnter, onLeave }: {
  * The card's form: the name (the agent renames it in the code) and why it exists
  * (when to use / not for), saved into the DS. Pro's AI drafts it; the person keeps it or not.
  */
-function EditCard({ item, at, note, editing, onClose }: { item: CatalogItem; at: DOMRect; note?: ComponentNotes[string]; editing: DsEditing; onClose: () => void }) {
+export function EditCard({ item, at, note, editing, onClose, banner, draft, cancelLabel }: {
+  item: Pick<CatalogItem, 'name'>; at: DOMRect; note?: ComponentNotes[string]; editing: DsEditing; onClose: () => void;
+  /** Said above the form ("Now a component · used in 18 places") */
+  banner?: React.ReactNode;
+  /** The agent's draft, filled in until saved (a component just made has no note yet) */
+  draft?: { whenToUse?: string; avoid?: string };
+  cancelLabel?: string;
+}) {
   const [name, setName] = useState(item.name);
-  const [when, setWhen] = useState(note?.whenToUse ?? '');
-  const [avoid, setAvoid] = useState(note?.avoid ?? '');
+  const [when, setWhen] = useState(note?.whenToUse ?? draft?.whenToUse ?? '');
+  const [avoid, setAvoid] = useState(note?.avoid ?? draft?.avoid ?? '');
   const sug = editing.suggestion?.name === item.name ? editing.suggestion.note : undefined;
   // A draft arrived: it fills the form, to be read and saved — never written on its own
   React.useEffect(() => {
@@ -150,6 +157,7 @@ function EditCard({ item, at, note, editing, onClose }: { item: CatalogItem; at:
         display: 'flex', flexDirection: 'column', gap: 8,
       }}
     >
+      {banner}
       <label style={caption}>{t('catalog.editName')}
         <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save(); }} style={{ ...field, resize: undefined }} />
         {name.trim() && name.trim() !== item.name && <span style={{ fontSize: 10 }}>{t('catalog.renameHint')}</span>}
@@ -169,9 +177,9 @@ function EditCard({ item, at, note, editing, onClose }: { item: CatalogItem; at:
               : sug
                 ? t('dsv.drafted')
                 : <button style={linkBtn} onClick={() => editing.onSuggest!(item.name)}>{t(sug === null ? 'dsv.suggestAgain' : when ? 'catalog.suggestRewrite' : 'dsv.suggest')}</button>
-            : note?.edited ? t('dsv.byYou') : null}
+            : note?.edited ? t('dsv.byYou') : note?.fromDs ? t('dsv.fromDsNote') : draft?.whenToUse ? t('dsv.drafted') : null}
         </span>
-        <button style={{ ...linkBtn, color: color.mutedForeground }} onClick={onClose}>{t('dsv.cancel')}</button>
+        <button style={{ ...linkBtn, color: color.mutedForeground }} onClick={onClose}>{cancelLabel ?? t('dsv.cancel')}</button>
         <button style={saveBtn} onClick={save}>{t('dsv.save')}</button>
       </span>
     </div>,
@@ -303,11 +311,16 @@ function MoreOptions({ items }: { items: Array<{ label: string; hint?: string; o
 /** What the Library knows of the project's design system (the bridge's DsState) */
 export interface DsInfo {
   exists: boolean; tokens: number; formats: boolean;
+  /** The design system package the project is connected to (`@acme/ui`): it is the DS, nothing to create */
+  package?: { name: string; version?: string; components: number } | null;
   /** Pro's live DS: what changed in the code since it was written */
   changes?: { added: string[]; removed: string[]; changed: string[]; tokens: string[] } | null;
   /** The CLI is writing it again right now (it follows the code by itself) */
   updating?: boolean;
 }
+
+/** Pro's agent writing each component's "when to use", after the DS is written */
+export interface DsProgress { done: number; total: number; next: string[] }
 
 /** "+1 new (Badge) · 2 changed · 3 tokens" — what Update would write */
 function changesLine(c: NonNullable<DsInfo['changes']>): string {
@@ -333,7 +346,22 @@ const proBadge: React.CSSProperties = { fontSize: 9, fontWeight: 600, padding: '
  * The top of the Library. No DS yet: what was found and the step that turns it into one.
  * With one: where it is and Export, which writes every format this install can (Free: DESIGN.md).
  */
-function DsBar({ ds, components, onCreate, onExport, onView }: { ds: DsInfo; components: number; onCreate: () => void; onExport: () => void; onView?: () => void }) {
+/** On top of the Library while the agent describes the components: how far, and which ones now */
+function DsDescribing({ p }: { p: DsProgress }) {
+  const pct = p.total ? Math.max(3, Math.round((p.done / p.total) * 100)) : 3;
+  const names = p.next.slice(0, 3).join(', ') + (p.next.length > 3 ? '…' : '');
+  return (
+    <div role="status" aria-live="polite" style={{ marginBottom: 8, fontFamily: font.sans }}>
+      <div role="progressbar" aria-valuemin={0} aria-valuemax={p.total} aria-valuenow={p.done} style={{ height: 3, borderRadius: radius.full, background: color.muted, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: ilse.brand, transition: 'width 0.6s ease' }} />
+      </div>
+      <div style={{ marginTop: 5, fontSize: 10, lineHeight: 1.4, color: color.foreground }}>{t('ds.describing', { done: p.done, total: p.total })}</div>
+      {names && <div style={{ fontSize: 10, lineHeight: 1.4, color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('ds.describingNext', { names })}</div>}
+    </div>
+  );
+}
+
+function DsBar({ ds, components, onCreate, onExport, onView, progress }: { ds: DsInfo; components: number; onCreate: () => void; onExport: () => void; onView?: () => void; progress?: DsProgress | null }) {
   const [open, setOpen] = useState(false);
   const ref = React.useRef<HTMLDivElement | null>(null);
   React.useEffect(() => {
@@ -343,6 +371,21 @@ function DsBar({ ds, components, onCreate, onExport, onView }: { ds: DsInfo; com
     return () => uiWindow().removeEventListener('mousedown', away, true);
   }, [open]);
 
+  const pkgName = ds.package ? `${ds.package.name}${ds.package.version ? ` ${ds.package.version}` : ''}` : null;
+  // Connected to a DS package and nothing written yet: the DS is there already. Export writes
+  // DESIGN.md for agents, pointing at the package
+  if (!ds.exists && ds.package) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${color.border}` }}>
+        <div style={{ flex: 1, minWidth: 0, fontFamily: font.sans }}>
+          <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: color.mutedForeground }}>{t('library.ds')}</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: color.foreground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pkgName ?? undefined}>{pkgName}</div>
+          <div style={{ fontSize: 10, color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t('library.dsPackage', { components, tokens: ds.tokens })}</div>
+        </div>
+        <button onClick={onCreate} title={t('library.dsPackageExport')} style={secondaryButton}>{t('library.export')}</button>
+      </div>
+    );
+  }
   if (!ds.exists) {
     return (
       <div style={{ padding: 10, marginBottom: 8, borderRadius: radius.md, background: ilse.orangePale, border: `1px solid ${ilse.brand}33` }}>
@@ -360,10 +403,11 @@ function DsBar({ ds, components, onCreate, onExport, onView }: { ds: DsInfo; com
   const changes = ds.changes && (ds.changes.added.length + ds.changes.changed.length + ds.changes.removed.length + ds.changes.tokens.length) > 0 ? ds.changes : null;
   return (
     <>
+    {progress && <DsDescribing p={progress} />}
     <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${color.border}` }}>
       {/* The DS itself, on screen: what Create DS gave the person */}
       <div style={{ flex: 1, minWidth: 0, fontFamily: font.sans }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: color.foreground }}>{t('library.ds')}</div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: color.foreground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={pkgName ?? undefined}>{pkgName ?? t('library.ds')}</div>
         <div style={{ fontSize: 10, color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>.ilse/ds/DESIGN.md</div>
       </div>
       {onView && <button onClick={onView} title={t('dsv.open')} style={secondaryButton}>{t('library.view')}</button>}
@@ -448,7 +492,7 @@ function GroupBy({ value, onChange }: { value: 'type' | 'folder'; onChange: (v: 
   return <div role="group" aria-label={t('catalog.groupBy')} style={{ display: 'flex', gap: 2 }}>{option('type')}{option('folder')}</div>;
 }
 
-export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDragStart, selected, onSpot, onEditFile, copies = true, ds, onCreateDs, onExportDs, onViewDs, notes, editing }: {
+export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDragStart, selected, onSpot, onEditFile, copies = true, ds, dsProgress, onCreateDs, onExportDs, onViewDs, notes, editing }: {
   /** Why each component exists (from the DS), shown on its card */
   notes?: ComponentNotes;
   /** The card's Edit: name and reasoning. Absent while picking */
@@ -457,6 +501,7 @@ export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDrag
   copies?: boolean;
   /** The project's design system, for the bar on top (absent while picking) */
   ds?: DsInfo | null;
+  dsProgress?: DsProgress | null;
   onCreateDs?: () => void;
   onExportDs?: () => void;
   /** Opens the DS window (the files in .ilse/ds, drawn as a DS) */
@@ -503,13 +548,20 @@ export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDrag
   const shown = useMemo(() => (items ?? []).filter(i => show === 'all' || (show === 'page' ? onPage.has(i.name) : isBase(i))), [items, show, onPage]);
   const counts = useMemo(() => ({ all: items?.length ?? 0, page: (items ?? []).filter(i => onPage.has(i.name)).length, base: (items ?? []).filter(isBase).length }), [items, onPage]);
   /** Each item's group key and label, by the current way of grouping */
+  // The design system's group names: a kit piece of the same kind joins its group (one "Actions", not two)
+  const dsGroups = useMemo(() => new Map((items ?? []).flatMap(i => i.dsGroup ? [[i.dsGroup.toLowerCase(), i.dsGroup] as const] : [])), [items]);
   const groupOf = React.useCallback((i: CatalogItem): { key: string; label: string; section?: 'base' | 'product' } => {
     if (by === 'folder' || !i.layer) return { key: `f:${i.folder}`, label: i.folder };
-    // The design system's own group (a story title's) wins over Ilse's kinds
+    // The design system's own group (a story title's, its manifest's category) wins over Ilse's kinds
     if (i.layer === 'base' && i.dsGroup) return { key: `b:ds:${i.dsGroup}`, label: i.dsGroup, section: 'base' };
-    if (i.layer === 'base') return { key: `b:${i.kind ?? 'other'}`, label: t(`catalog.kind.${(i.kind ?? 'other') as CatalogKind}`), section: 'base' };
+    if (i.layer === 'base') {
+      const label = t(`catalog.kind.${(i.kind ?? 'other') as CatalogKind}`);
+      const same = dsGroups.get(label.toLowerCase());
+      if (same) return { key: `b:ds:${same}`, label: same, section: 'base' };
+      return { key: `b:${i.kind ?? 'other'}`, label, section: 'base' };
+    }
     return { key: `p:${i.feature ?? ''}`, label: i.featureLabel ?? (i.feature ? featureLabel(i.feature) : t('catalog.featureNone')), section: 'product' };
-  }, [by]);
+  }, [by, dsGroups]);
   const groups = useMemo(() => {
     const m = new Map<string, { label: string; section?: 'base' | 'product'; list: CatalogItem[] }>();
     for (const i of shown) {
@@ -541,7 +593,7 @@ export function CatalogPanel({ items, snapshots, onPage, loading, onPick, onDrag
   return (
     <div style={{ fontFamily: font.sans }}>
       {ds && items && onCreateDs && onExportDs && (
-        <DsBar ds={ds} components={items.filter(i => !i.library).length} onCreate={onCreateDs} onExport={onExportDs} onView={onViewDs} />
+        <DsBar ds={ds} components={ds.package ? items.filter(i => i.ds === ds.package!.name).length : items.filter(i => !i.library).length} onCreate={onCreateDs} onExport={onExportDs} onView={onViewDs} progress={dsProgress} />
       )}
       {/* Search stays at the top while the list scrolls */}
       <div style={{ position: 'sticky', top: -10, zIndex: 1, background: color.popover, padding: '0 0 6px', margin: ds && items ? 0 : '-10px 0 0', paddingTop: ds && items ? 0 : 10, display: 'flex', gap: 4, alignItems: 'center' }}>

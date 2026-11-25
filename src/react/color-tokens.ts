@@ -234,3 +234,93 @@ export function byBaseness(a: DSToken, b: DSToken): number {
 function naturalCompare(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true });
 }
+
+// ── Which token a colour is, when several have its value ──────────────────
+// In a dark theme `foreground` and `ai-to` can both be #FAFAFA. The shortest
+// name used to win, so the text's colour read as `ai-to`. Now: the token the
+// element's CSS actually names wins; then the one whose role fits the property
+// (foreground for text); and if that still ties, the panel says there are
+// several instead of guessing.
+
+/** Token name without `color.` / `color-` */
+const plainName = (name: string) => name.replace(/^color[.-]/, '');
+
+/** How well a token's name fits the property it would paint: 0 is the property's own token */
+export function roleRank(name: string, key: string): number {
+  const n = plainName(name).toLowerCase();
+  const roles: Record<string, [RegExp, RegExp]> = {
+    color: [/^(foreground|text)$/, /foreground|^text|-text$/],
+    backgroundColor: [/^(background|bg)$/, /background|^bg|card|surface|muted|popover|canvas|panel/],
+    borderColor: [/^border$/, /border|input|ring|outline|stroke|divider|separator/],
+  };
+  const r = roles[key];
+  if (!r) return 1;
+  return r[0].test(n) ? 0 : r[1].test(n) ? 1 : 2;
+}
+
+/** `surface-2` → surface, `accent-foreground` → accent: tokens of one family differ by a step */
+const family = (name: string) => plainName(name).toLowerCase().replace(/[-.]?\d+$/, '').split(/[-.]/)[0];
+
+export interface TokenMatch<T extends DSToken = DSToken> {
+  token?: T;
+  /** Several tokens have this value and nothing says which one the code means */
+  ambiguous?: boolean;
+}
+
+/**
+ * The token among `equal` (all of the value) for property `key`. `preferred`:
+ * the one the designer picked, or the element's classes / CSS name.
+ */
+export function pickToken<T extends DSToken>(equal: T[], key: string, preferred?: string): TokenMatch<T> {
+  if (equal.length === 0) return {};
+  const named = preferred ? equal.find(t => t.name === preferred) : undefined;
+  if (named) return { token: named };
+  if (equal.length === 1) return { token: equal[0] };
+  const best = Math.min(...equal.map(t => roleRank(t.name, key)));
+  const top = equal.filter(t => roleRank(t.name, key) === best).sort(byBaseness);
+  // One family (surface-2…8): its first step. Different families: no guess
+  if (top.length === 1 || new Set(top.map(t => family(t.name))).size === 1) return { token: top[0] };
+  return { ambiguous: true };
+}
+
+/** `var(--color-foreground, #000)` → `--color-foreground` */
+export function varName(value: string | undefined): string | undefined {
+  return /^\s*var\(\s*(--[\w-]+)/.exec(value ?? '')?.[1];
+}
+
+/** The token a CSS variable stands for: its own `cssVar`, or Tailwind's `--color-x` alias of `--x` */
+export function tokenForVar(cssVar: string | undefined, tokens: Array<DSToken & { cssVar?: string }>): string | undefined {
+  if (!cssVar) return undefined;
+  const plain = cssVar.replace(/^--(color-)?/, '');
+  return (tokens.find(t => t.cssVar === cssVar) ?? tokens.find(t => t.cssVar === `--${plain}` || plainName(t.name) === plain))?.name;
+}
+
+/** A selector's weight: [ids, classes/attributes/pseudo-classes, types] */
+export function specificity(selector: string): [number, number, number] {
+  const s = selector.replace(/::?[\w-]+\((?:[^()]|\([^()]*\))*\)/g, m => /^:(?:where)\(/.test(m) ? '' : ' .x ').replace(/::[\w-]+/g, ' t ');
+  const ids = (s.match(/#[\w-]+/g) ?? []).length;
+  const classes = (s.match(/\.[\w-]+|\[[^\]]*\]|:[\w-]+/g) ?? []).length;
+  const types = (s.replace(/#[\w-]+|\.[\w-]+|\[[^\]]*\]|:[\w-]+/g, ' ').match(/(?:^|[\s>+~])[a-zA-Z][\w-]*/g) ?? []).length;
+  return [ids, classes, types];
+}
+
+const heavier = (a: [number, number, number], b: [number, number, number]) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+/**
+ * The value the cascade gives a property on an element, as written: inline first, then the
+ * heaviest matching rule (the later one on a tie). `matches` says if a selector hits the element.
+ */
+export function cascadeValue(rules: Array<{ selector: string; value: string }>, matches: (selector: string) => boolean, inline?: string): string | undefined {
+  if (inline) return inline;
+  let best: { value: string; weight: [number, number, number] } | undefined;
+  for (const r of rules) {
+    for (const sel of r.selector.split(',').map(x => x.trim()).filter(Boolean)) {
+      let hit = false;
+      try { hit = matches(sel); } catch { /* a selector this browser can't read */ }
+      if (!hit) continue;
+      const weight = specificity(sel);
+      if (!best || heavier(weight, best.weight) >= 0) best = { value: r.value, weight };
+    }
+  }
+  return best?.value;
+}

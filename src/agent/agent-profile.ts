@@ -38,14 +38,15 @@ const DEFAULT_TIERS: Partial<Record<AgentName, ModelTiers>> = {
 };
 
 const MECHANICAL = new Set(['style', 'resize']);
-const EDITS = new Set(['fix', 'change', 'style', 'resize', 'move']);
+const EDITS = new Set(['fix', 'change', 'style', 'resize', 'move', 'componentize']);
 
 /** Which tier does this batch as well as the top model would */
 export function pickTier(annotations: Annotation[]): Tier {
   const located = annotations.every(a => a.source?.[0]?.kind === 'element' && !a.source[0].ambiguous);
   const withImages = annotations.some(a => !!a.imageRef || (a.imageRefs?.length ?? 0) > 0);
   // Open-ended work stays on the agent's own model: new UI, free chat, a picture to match
-  if (withImages || annotations.some(a => a.intent === 'create' || a.intent === 'chat')) return 'default';
+  // Making a component searches and edits the whole project: the agent's own model too
+  if (withImages || annotations.some(a => a.intent === 'create' || a.intent === 'chat' || a.intent === 'componentize')) return 'default';
   if (annotations.length > 3 || !located) return 'strong';
   if (annotations.every(a => MECHANICAL.has(a.intent ?? ''))) return 'fast';
   return 'strong';

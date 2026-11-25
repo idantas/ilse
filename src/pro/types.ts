@@ -247,8 +247,11 @@ export interface ProPlugin {
    * registry, written into `dir`. Returns the file names. Optional: without it Free writes DESIGN.md only
    */
   dsFormats?: (input: DsInput) => string[];
-  /** Create DS: "when to use" for each component handed over (only the new or changed ones), by the user's agent */
-  dsNotes?: (input: DsInput, ask: AskAgent) => Promise<Record<string, DsNote>>;
+  /**
+   * Create DS: "when to use" for each component handed over (only the new or changed ones), by the user's agent.
+   * `onBatch` (optional) hears each batch as it lands, so the core writes it at once and shows the progress
+   */
+  dsNotes?: (input: DsInput, ask: AskAgent, onBatch?: (notes: Record<string, DsNote>, done: number, total: number, next: string[]) => void) => Promise<Record<string, DsNote>>;
   /** Create DS: an agent that knows only DESIGN.md does a few tasks; what it got wrong becomes suggested rules */
   dsCheck?: (input: DsInput & { designMd: string }, ask: AskAgent) => Promise<DsCheck>;
   /** The Consistency tab: the user's agent reviews one screen against the DS (opening the tab runs it) */

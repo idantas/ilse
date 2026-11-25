@@ -11,15 +11,19 @@
  * Written only when the user asks (`ilse ds`, or Create DS in the toolbar).
  */
 
-import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync, appendFileSync, readdirSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, statSync, appendFileSync, readdirSync, rmSync, cpSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { homedir } from 'node:os';
 import type { CatalogEntry, CatalogProp } from './catalog.js';
 import type { DetectedToken } from '../setup/token-detect.js';
 import type { DsInput, DsNote, AskAgent } from '../pro/types.js';
+import { connectedDs, manifestNote } from './ds-source.js';
 import { createHash } from 'node:crypto';
 import { instructionsFile } from '../git/commit-context.js';
 import { moreTokens, tokenModes, type DsToken, type DsMode } from './ds-tokens.js';
 import { ensureScanIgnore } from '../config/scan-ignore.js';
+import { t } from '../i18n/index.js';
+import { zipStore } from './zip.js';
 
 export const DS_DIR = join('.ilse', 'ds');
 
@@ -38,9 +42,13 @@ export interface ComponentContract {
 
 /** The project's own components: the ones the DS is made of (libraries are dependencies, not the DS) */
 export function dsComponents(catalog: CatalogEntry[]): CatalogEntry[] {
-  return catalog.filter(c => !c.library).sort((a, b) =>
+  // A design system package's components are the project's DS too (`@acme/ui`); other libraries aren't
+  return catalog.filter(c => !c.library || isDsPackage(c.ds)).sort((a, b) =>
     (a.layer === b.layer ? 0 : a.layer === 'base' ? -1 : 1) || b.uses - a.uses || a.name.localeCompare(b.name));
 }
+
+/** `@acme/ui`, not Storybook or shadcn/ui (those name the project's own files) */
+const isDsPackage = (ds?: string) => !!ds && ds !== 'Storybook' && ds !== 'shadcn/ui';
 
 export function contractOf(c: CatalogEntry): ComponentContract {
   return {
@@ -127,8 +135,31 @@ export function dedent(code: string): string {
   return [first, ...rest.map(l => l.slice(pad))].join('\n');
 }
 
-/** DESIGN.md: the front matter Ilse itself reads back (design-md.ts), then prose for agents */
-export function buildDesignMd(name: string, catalog: CatalogEntry[], tokens: DsToken[], machine: string[] = [], notes: Record<string, DsNote> = {}, rules: string[] = [], modes: DsMode[] = []): string {
+// What every element takes: an agent knows these without being told, and on 700 components they were half the file
+const COMMON_PROPS = new Set(['id', 'role', 'tabIndex', 'autoComplete', 'autoFocus', 'form', 'style', 'className', 'ref', 'key', 'dir', 'lang', 'hidden', 'draggable', 'spellCheck']);
+const HTML_TYPES = new Set(['button', 'submit', 'reset', 'text', 'email', 'password', 'number', 'search', 'tel', 'url', 'date', 'time', 'datetime-local', 'month', 'week', 'checkbox', 'radio', 'file', 'hidden', 'range', 'color', 'image']);
+// `type` is the element's when its values are HTML's (`submit | button`); an Alert's `type: error | warning` is the component's own
+const commonProp = (p: CatalogProp) => COMMON_PROPS.has(p.name) || /^(aria|data)-/.test(p.name)
+  || (p.name === 'type' && (p.kind !== 'enum' || p.values.every(v => HTML_TYPES.has(v))));
+// `<Spinner />` or `<Badge>New</Badge>`: the import line says as much
+const trivialExample = (code: string) => /^<([\w.]+)\s*(\/>|>[^<{]*<\/\1>)$/.test(code.trim());
+
+/** Above this many components DESIGN.md keeps the most used in full and sends the rest to one file per area */
+export const DS_SPLIT_AT = 60;
+const FULL_BASE = 40;
+const FULL_PRODUCT = 30;
+export const DS_AREAS_DIR = 'components';
+
+const areaOf = (c: CatalogEntry) => c.featureLabel ?? c.feature ?? 'other';
+export const areaFile = (area: string) => `${DS_AREAS_DIR}/${area.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'other'}.md`;
+
+/**
+ * The DS as files: DESIGN.md (front matter Ilse itself reads back, design-md.ts, then prose for agents)
+ * and, on a large project, `components/<area>.md`. An agent pays for every line it reads on every task:
+ * the rules, tokens, Base and the most used Product components stay in DESIGN.md; the rest get one line
+ * there and their full entry in their area's file, read only when working in that area.
+ */
+export function buildDsFiles(name: string, catalog: CatalogEntry[], tokens: DsToken[], machine: string[] = [], notes: Record<string, DsNote> = {}, rules: string[] = [], modes: DsMode[] = [], pkg?: DsPackageInfo): Record<string, string> {
   const by = (prefix: string) => tokens.filter(t => t.name.startsWith(prefix + '.')).map(t => [t.name.slice(prefix.length + 1), t.value] as const);
   // A scale reads small to large, however the tokens were found
   const scale = (prefix: string) => by(prefix).sort((a, b) => (parseFloat(a[1]) || 0) - (parseFloat(b[1]) || 0));
@@ -151,34 +182,59 @@ export function buildDesignMd(name: string, catalog: CatalogEntry[], tokens: DsT
   const describe = (c: CatalogEntry) => {
     // The file, project-relative: the agent writes the import the way this project does (alias or path)
     const imp = c.importAs === 'named' ? `import { ${c.name} }` : `import ${c.name}`;
-    const props = c.props.map(p => {
-      const values = p.kind === 'enum' && p.values.length ? `: ${p.values.slice(0, 8).map(v => `\`${v}\``).join(' | ')}` : p.kind === 'boolean' ? ': boolean' : '';
+    const prop = (p: CatalogProp) => {
+      const values = p.kind === 'enum' && p.values.length ? `: ${p.values.slice(0, 8).map(v => `\`${v}\``).join(' | ')}${p.values.length > 8 ? ' | …' : ''}` : p.kind === 'boolean' ? ': boolean' : '';
       return `\`${p.name}\`${p.required ? '' : '?'}${values}${p.default !== undefined ? ` (default \`${p.default}\`)` : ''}`;
-    });
+    };
+    const own = c.props.filter(p => !commonProp(p));
+    // A prop the code comments carries the team's rule for it (which size where): one line each, rule beside it
+    const props = own.filter(p => !p.doc).map(prop);
+    const ruled = own.filter(p => p.doc).map(p => `- ${prop(p)}: ${p.doc}`);
     return [
       `### ${c.name}`,
       `\`${imp}\` from \`${c.source}\` · used ${c.uses}×${c.renders ? ` · renders <${c.renders}>` : ''}`,
       ...(notes[c.name]?.whenToUse ? [`When to use: ${notes[c.name].whenToUse}`] : []),
       ...(notes[c.name]?.avoid ? [`Not for: ${notes[c.name].avoid}`] : []),
-      ...(props.length ? [`Props: ${props.join(', ')}`] : []),
-      ...(c.example ? ['```tsx', dedent(c.example.code), '```'] : []),
+      ...(ruled.length ? ['Props:', ...ruled, ...(props.length ? [`- ${props.join(', ')}`] : [])] : props.length ? [`Props: ${props.join(', ')}`] : []),
+      ...(c.example && !trivialExample(c.example.code) ? ['```tsx', dedent(c.example.code), '```'] : []),
     ].join('\n');
   };
   const base = comps.filter(c => c.layer === 'base');
   const product = comps.filter(c => c.layer !== 'base');
-  return [
+  // dsComponents sorts by uses: the head of Product is what the agent reaches for most
+  const split = comps.length > DS_SPLIT_AT;
+  const fullBase = split ? base.slice(0, FULL_BASE) : base;
+  const full = split ? product.slice(0, FULL_PRODUCT) : product;
+  const areas = new Map<string, CatalogEntry[]>();
+  // The rest of Base is one more area: a project can have 170 of them
+  if (split && base.length > FULL_BASE) areas.set('Base', base.slice(FULL_BASE));
+  for (const c of split ? product.slice(FULL_PRODUCT) : []) areas.set(areaOf(c), [...(areas.get(areaOf(c)) ?? []), c]);
+  const short = (text: string) => text.length > 100 ? text.slice(0, 99).trimEnd() + '…' : text;
+  const index = [...areas].flatMap(([area, list]) => [
+    `### ${area} · \`${areaFile(area)}\``, '',
+    ...list.map(c => `- \`${c.name}\` (${c.uses}×)${notes[c.name]?.whenToUse ? `: ${short(notes[c.name].whenToUse)}` : ''}`), '',
+  ]);
+  const main = [
     ...front,
     '',
     `# ${name} — design system`,
     '',
     'Written by Ilse from this project\'s code (`ilse ds`). It lists what already exists: build with it before writing anything new.',
     '',
+    // The design system the project is connected to: where its components and rules really live
+    ...(pkg ? [
+      '## Design system',
+      '',
+      `This project uses the \`${pkg.name}\` design system${pkg.version ? ` (${pkg.version})` : ''}. Its components below come from the package: import them from \`${pkg.name}\`, never copy them into the project.${pkg.manifest ? ` Its own documentation of each component: \`${pkg.manifest}\`.` : ''}`,
+      '',
+    ] : []),
     '## Rules for agents',
     '',
     '- Use these components before creating new ones; compose them before writing a new one.',
     '- Use the props and values listed — not new variants, not inline styles to imitate one.',
     '- Colors, spacing and radius come from the tokens above, never raw values when a token exists.',
     '- A component in "Product" belongs to one feature; reuse it there, and ask before moving it to Base.',
+    ...(split ? [`- Components under "More, by area" have one line here: before using or changing one, read its area's file in \`${DS_AREAS_DIR}/\`, next to this one.`] : []),
     // Learned from the fresh-agent test, approved by the person
     ...rules.map(r => `- ${r}`),
     '',
@@ -186,11 +242,40 @@ export function buildDesignMd(name: string, catalog: CatalogEntry[], tokens: DsT
     ...(modes.length ? ['## Themes', '', ...modes.map(m => `- **${m.name}**: ${Object.entries(m.values).map(([k, v]) => `\`${k}\` ${v}`).join(', ')}`), ''] : []),
     // Why a token exists, in the team's words: an agent picks `brand` over `clay` for the right reason
     ...(tokens.some(t => t.description) ? ['## Tokens, and why', '', ...tokens.filter(t => t.description).map(t => `- \`${t.name}\` (${t.value}): ${t.description}`), ''] : []),
-    ...(base.length ? ['## Base', '', ...base.map(describe).flatMap(s => [s, ''])] : []),
-    ...(product.length ? ['## Product', '', ...product.map(describe).flatMap(s => [s, ''])] : []),
+    ...(fullBase.length ? [split ? '## Base, most used' : '## Base', '', ...fullBase.map(describe).flatMap(s => [s, ''])] : []),
+    ...(full.length ? [split ? '## Product, most used' : '## Product', '', ...full.map(describe).flatMap(s => [s, ''])] : []),
+    ...(index.length ? ['## More, by area', '', ...index] : []),
     // Only what was written: Free has DESIGN.md alone
     ...(machine.length ? [`Machine-readable, next to this file: ${machine.map(f => `\`${f}\``).join(', ')}.`, ''] : []),
   ].join('\n');
+  return {
+    'DESIGN.md': main,
+    ...Object.fromEntries([...areas].map(([area, list]) => [areaFile(area), [
+      `# ${name} — ${area}`, '',
+      'Part of `../DESIGN.md`: its rules and tokens apply here.', '',
+      ...list.map(describe).flatMap(s => [s, '']),
+    ].join('\n')])),
+  };
+}
+
+export interface DsPackageInfo { name: string; version?: string; /** Its components manifest, project-relative (`node_modules/@acme/ui/dist/components.json`) */ manifest?: string; components: number }
+
+/** The connected design system package, as the Library and DESIGN.md name it; null without one */
+export function dsPackageInfo(cwd: string): DsPackageInfo | null {
+  const pkg = connectedDs(cwd);
+  if (!pkg) return null;
+  const manifestPath = pkg.manifest?.file;
+  return {
+    name: pkg.name,
+    ...(pkg.version ? { version: pkg.version } : {}),
+    ...(manifestPath ? { manifest: relative(cwd, manifestPath).split(sep).join('/') } : {}),
+    components: pkg.manifest ? pkg.manifest.components.length + pkg.manifest.withoutMeta.length : 0,
+  };
+}
+
+/** DESIGN.md alone */
+export function buildDesignMd(...args: Parameters<typeof buildDsFiles>): string {
+  return buildDsFiles(...args)['DESIGN.md'];
 }
 
 /** The project's name for the files: package.json's, else the folder's */
@@ -239,7 +324,8 @@ function homepageOf(cwd: string): string | undefined {
 
 /** What Pro's formats are given: the core's reading, no paths to resolve again */
 export function dsInput(cwd: string, dir: string, name: string, catalog: CatalogEntry[], tokens: DsToken[], notes: Record<string, DsNote> = {}): DsInput {
-  const comps = dsComponents(catalog);
+  // Pro's formats carry the project's own files: a DS package's components are in the package already
+  const comps = dsComponents(catalog).filter(c => !c.library);
   const names = new Set(comps.map(c => c.name));
   const homepage = homepageOf(cwd);
   const modes = tokenModes(cwd, tokens);
@@ -264,10 +350,20 @@ export function writeDs(cwd: string, catalog: CatalogEntry[], tokens: DetectedTo
   let machine: string[] = [];
   // Pro failing must not cost the user the free file
   try { machine = formats?.(dsInput(cwd, dir, name, catalog, all, notes)) ?? []; } catch { machine = []; }
-  const rules = readDsState(cwd)?.rules ?? [];
-  writeFileSync(join(dir, 'DESIGN.md'), buildDesignMd(name, catalog, all, machine, notes, rules, tokenModes(cwd, all)), 'utf8');
-  writeDsState(cwd, catalog, all, notes, rules);
-  return { dir: DS_DIR, files: ['DESIGN.md', ...machine].map(f => join(DS_DIR, f)), components: dsComponents(catalog).length, tokens: all.length };
+  const prev = readDsState(cwd);
+  const rules = prev?.rules ?? [];
+  const docs = buildDsFiles(name, catalog, all, machine, notes, rules, tokenModes(cwd, all), dsPackageInfo(cwd) ?? undefined);
+  // The area files are Ilse's alone: an area that's gone takes its file with it
+  rmSync(join(dir, DS_AREAS_DIR), { recursive: true, force: true });
+  for (const [file, content] of Object.entries(docs)) {
+    mkdirSync(dirname(join(dir, file)), { recursive: true });
+    writeFileSync(join(dir, file), content, 'utf8');
+  }
+  writeDsState(cwd, catalog, all, notes, rules, prev?.publishTo);
+  // The copy for people without Ilse follows every write; a folder that went away isn't recreated by surprise
+  if (prev?.publishTo) try { publishDs(cwd, prev.publishTo, { components: dsComponents(catalog).length, tokens: all.length }); } catch { /* not ours any more, or unwritable */ }
+  const areas = Object.keys(docs).length > 1 ? [DS_AREAS_DIR] : [];
+  return { dir: DS_DIR, files: ['DESIGN.md', ...machine, ...areas].map(f => join(DS_DIR, f)), components: dsComponents(catalog).length, tokens: all.length };
 }
 
 // ── What the DS was written from: `.ilse/ds/state.json` ─────────────────────
@@ -280,6 +376,8 @@ export interface DsState {
   tokens: Record<string, string>;
   /** Rules for agents the person added (from the fresh-agent test); kept across rewrites */
   rules?: string[];
+  /** Where the person publishes a copy for people without Ilse (project-relative, or absolute / `~/…`) */
+  publishTo?: string;
 }
 
 export function contractHash(c: CatalogEntry): string {
@@ -291,12 +389,13 @@ export function readDsState(cwd: string): DsState | null {
   try { return JSON.parse(readFileSync(join(cwd, DS_DIR, 'state.json'), 'utf8')) as DsState; } catch { return null; }
 }
 
-function writeDsState(cwd: string, catalog: CatalogEntry[], tokens: DsToken[], notes: Record<string, DsNote>, rules: string[] = []): void {
+function writeDsState(cwd: string, catalog: CatalogEntry[], tokens: DsToken[], notes: Record<string, DsNote>, rules: string[] = [], publishTo?: string): void {
   const state: DsState = {
     writtenAt: new Date().toISOString(),
     components: Object.fromEntries(dsComponents(catalog).map(c => [c.name, { hash: contractHash(c), ...(notes[c.name] ?? {}) }])),
     tokens: Object.fromEntries(tokens.map(t => [t.name, t.value])),
     ...(rules.length ? { rules } : {}),
+    ...(publishTo ? { publishTo } : {}),
   };
   writeFileSync(join(cwd, DS_DIR, 'state.json'), JSON.stringify(state, null, 2) + '\n', 'utf8');
 }
@@ -307,9 +406,17 @@ export function notesToKeep(cwd: string, catalog: CatalogEntry[]): { kept: Recor
   const kept: Record<string, DsNote> = {};
   const stale: CatalogEntry[] = [];
   const said = readDsEdits(cwd).components;
+  // The connected DS's own words: its purpose and "when to use" stand in for an agent's draft
+  const pkg = connectedDs(cwd);
+  const fromDs = new Map((pkg?.manifest?.components ?? []).map(c => [c.name, manifestNote(c)]));
   for (const c of dsComponents(catalog)) {
     const p = prev[c.name];
     const mine = said[c.name];
+    const theirs = c.library && c.ds === pkg?.name ? fromDs.get(c.name) : undefined;
+    if (theirs?.whenToUse && !mine?.whenToUse) {
+      kept[c.name] = { whenToUse: theirs.whenToUse, ...(mine?.avoid ?? theirs.avoid ? { avoid: mine?.avoid ?? theirs.avoid! } : {}) };
+      continue;
+    }
     // The person's reasoning stands whatever the code does; the agent only fills what they left empty
     if (mine?.whenToUse) kept[c.name] = { whenToUse: mine.whenToUse, ...(mine.avoid ?? p?.avoid ? { avoid: mine.avoid ?? p!.avoid! } : {}) };
     else if (p?.whenToUse && p.hash === contractHash(c)) kept[c.name] = { whenToUse: p.whenToUse, ...(mine?.avoid ?? p.avoid ? { avoid: mine?.avoid ?? p.avoid! } : {}) };
@@ -319,11 +426,15 @@ export function notesToKeep(cwd: string, catalog: CatalogEntry[]): { kept: Recor
 }
 
 /** Each component's reasoning as the DS has it now (the person's words win), for the Library's card */
-export function dsNotesByName(cwd: string, catalog: CatalogEntry[]): Record<string, DsNote & { edited?: boolean }> {
+export function dsNotesByName(cwd: string, catalog: CatalogEntry[]): Record<string, DsNote & { edited?: boolean; fromDs?: boolean }> {
   const { kept } = notesToKeep(cwd, catalog);
   const said = readDsEdits(cwd).components;
-  const out: Record<string, DsNote & { edited?: boolean }> = {};
-  for (const [name, note] of Object.entries(kept)) out[name] = said[name] ? { ...note, edited: true } : note;
+  const out: Record<string, DsNote & { edited?: boolean; fromDs?: boolean }> = {};
+  const pkg = connectedDs(cwd);
+  const fromDs = new Set(pkg ? catalog.filter(c => c.library && c.ds === pkg.name).map(c => c.name) : []);
+  for (const [name, note] of Object.entries(kept)) {
+    out[name] = said[name]?.whenToUse ? { ...note, edited: true } : fromDs.has(name) ? { ...note, fromDs: true, ...(said[name] ? { edited: true } : {}) } : said[name] ? { ...note, edited: true } : note;
+  }
   return out;
 }
 
@@ -374,6 +485,8 @@ export interface DsView {
   modes: Array<{ name: string; content: string }>;
   /** The themes as read from the CSS: what each one changes */
   themes: DsMode[];
+  /** The copy for people without Ilse: the folder named, and the one Ilse suggests */
+  publish: { to: string | null; suggested: string; path?: string };
 }
 
 export const DS_FILES = ['DESIGN.md', 'tokens.json', 'registry.json'];
@@ -401,6 +514,7 @@ export function dsView(cwd: string, catalog: CatalogEntry[], tokens: DetectedTok
     dir: DS_DIR, files, formats,
     agents: { linked: dsInstructionsIn(cwd), target: relative(cwd, instructionsFile(cwd).path) },
     rules: readDsState(cwd)?.rules ?? [], modes, themes: tokenModes(cwd, all),
+    publish: publishInfo(cwd),
     tokens: all,
     components: dsComponents(catalog).map(c => ({
       name: c.name, uses: c.uses, ...(notes[c.name] ?? {}), ...(edited.has(c.name) ? { edited: true } : {}),
@@ -470,4 +584,118 @@ export function addDsRule(cwd: string, rule: string): boolean {
   if (!rules.includes(text)) rules.push(text);
   writeFileSync(join(cwd, DS_DIR, 'state.json'), JSON.stringify({ ...state, rules }, null, 2) + '\n', 'utf8');
   return true;
+}
+
+// ── A copy for people without Ilse: a folder the person names ──────────────────
+// `.ilse/ds` is Ilse's working copy (state, edits). The published folder is what a teammate opens,
+// sends to a prototyping tool or commits to a DS repo: the same files, and a README saying what
+// they are, who wrote them and how to use them. Written again with every write of the DS.
+
+export const PUBLISH_MARKER = '<!-- ilse:published-design-system -->';
+const PUBLISHED = (f: string) => f === 'DESIGN.md' || f === 'README.md' || f === 'registry.json' || f === DS_AREAS_DIR || /^tokens(\.[\w-]+)?\.json$/.test(f) || f === '.ignore';
+
+export function publishPath(cwd: string, to: string): string {
+  const raw = to.trim();
+  return raw.startsWith('~/') || raw === '~' ? join(homedir(), raw.slice(1)) : isAbsolute(raw) ? raw : resolve(cwd, raw);
+}
+
+/** Why a folder can't take the copy, or null: never the project itself, Ilse's folder, or a folder of someone else's files */
+export function publishProblem(cwd: string, to: string): 'empty' | 'project' | 'ilse' | 'not-ours' | null {
+  if (!to.trim()) return 'empty';
+  const dest = publishPath(cwd, to);
+  const root = resolve(cwd);
+  const up = relative(dest, root);
+  if (dest === root || (!up.startsWith('..') && !isAbsolute(up))) return 'project';
+  const inside = relative(root, dest);
+  if (inside === '.ilse' || inside.startsWith('.ilse/') || inside.startsWith('.ilse\\')) return 'ilse';
+  let entries: string[] = [];
+  try { entries = readdirSync(dest); } catch { return null; }
+  if (!entries.length) return null;
+  try { if (readFileSync(join(dest, 'README.md'), 'utf8').includes(PUBLISH_MARKER)) return null; } catch { /* no README */ }
+  return 'not-ours';
+}
+
+function publishReadme(name: string, counts: { components: number; tokens: number }, files: string[]): string {
+  const has = (f: string) => files.includes(f);
+  return [
+    PUBLISH_MARKER,
+    `# ${name} · design system`,
+    '',
+    t('dsPub.intro', { name, components: counts.components, tokens: counts.tokens, date: new Date().toISOString().slice(0, 10) }),
+    '',
+    `## ${t('dsPub.use')}`,
+    '',
+    t('dsPub.agents'),
+    ...(has(DS_AREAS_DIR) ? [t('dsPub.agentsAreas')] : []),
+    ...(has('tokens.json') ? [t('dsPub.figma')] : []),
+    ...(has('registry.json') ? [t('dsPub.shadcn')] : []),
+    '',
+    `## ${t('dsPub.files')}`,
+    '',
+    t('dsPub.designMd'),
+    ...(has(DS_AREAS_DIR) ? [t('dsPub.areas')] : []),
+    ...(has('tokens.json') ? [t('dsPub.tokens')] : []),
+    ...(has('registry.json') ? [t('dsPub.registry')] : []),
+    '',
+  ].join('\n');
+}
+
+/** The folder as the person reads it: home as ~, so "spine.ds" shows where it really is */
+export function shownPath(path: string): string {
+  const home = homedir();
+  return path === home || path.startsWith(home + sep) ? '~' + path.slice(home.length) : path;
+}
+
+function publishInfo(cwd: string): DsView['publish'] {
+  const to = readDsState(cwd)?.publishTo ?? null;
+  return { to, suggested: 'design-system', ...(to ? { path: shownPath(publishPath(cwd, to)) } : {}) };
+}
+
+/** The whole DS as one .zip, the same files a published copy gets (README included) */
+export function dsZip(cwd: string, counts: { components: number; tokens: number }): { name: string; data: Buffer } {
+  const src = join(cwd, DS_DIR);
+  const top = readdirSync(src).filter(f => PUBLISHED(f) && f !== 'README.md' && f !== '.ignore');
+  const name = projectName(cwd);
+  const folder = `${name.replace(/[^\w.-]+/g, '-')}-design-system`;
+  const entries: Array<{ path: string; data: Buffer }> = [
+    { path: `${folder}/README.md`, data: Buffer.from(publishReadme(name, counts, top), 'utf8') },
+  ];
+  const add = (rel: string) => {
+    const abs = join(src, rel);
+    if (statSync(abs).isDirectory()) for (const f of readdirSync(abs).sort()) add(join(rel, f));
+    else entries.push({ path: `${folder}/${rel.split(sep).join('/')}`, data: readFileSync(abs) });
+  };
+  for (const f of top) add(f);
+  return { name: `${folder}.zip`, data: zipStore(entries) };
+}
+
+/** Copies the DS files to the folder (replacing only what Ilse writes there) with a README; returns the files */
+export function publishDs(cwd: string, to: string, counts: { components: number; tokens: number }): string[] {
+  const problem = publishProblem(cwd, to);
+  if (problem) throw new Error(problem);
+  const src = join(cwd, DS_DIR);
+  const dest = publishPath(cwd, to);
+  mkdirSync(dest, { recursive: true });
+  try { for (const f of readdirSync(dest)) if (PUBLISHED(f)) rmSync(join(dest, f), { recursive: true, force: true }); } catch { /* new folder */ }
+  const files = readdirSync(src).filter(f => PUBLISHED(f) && f !== 'README.md' && f !== '.ignore');
+  for (const f of files) cpSync(join(src, f), join(dest, f), { recursive: true });
+  writeFileSync(join(dest, 'README.md'), publishReadme(projectName(cwd), counts, files), 'utf8');
+  // Inside the project, the dev server's scanner would reload the page on every write (scan-ignore.ts)
+  const inside = relative(resolve(cwd), dest);
+  if (!inside.startsWith('..') && !isAbsolute(inside)) writeFileSync(join(dest, '.ignore'), '# Written by Ilse: file scanners (Tailwind) skip this folder. Git still tracks it.\n*\n', 'utf8');
+  return ['README.md', ...files];
+}
+
+/** The person names the folder (or clears it with null): kept in state.json, published at once */
+export function setDsPublish(cwd: string, to: string | null, counts: { components: number; tokens: number }): { to: string | null; files: string[] } {
+  const state = readDsState(cwd);
+  if (!state) throw new Error('no-ds');
+  if (to === null) {
+    const { publishTo: _, ...rest } = state;
+    writeFileSync(join(cwd, DS_DIR, 'state.json'), JSON.stringify(rest, null, 2) + '\n', 'utf8');
+    return { to: null, files: [] };
+  }
+  const files = publishDs(cwd, to, counts);
+  writeFileSync(join(cwd, DS_DIR, 'state.json'), JSON.stringify({ ...state, publishTo: to.trim() }, null, 2) + '\n', 'utf8');
+  return { to: to.trim(), files };
 }

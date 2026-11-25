@@ -21,6 +21,7 @@ import { classify, type CatalogKind, type CatalogLayer } from './catalog-kinds.j
 import { readCatalogFile } from './catalog-file.js';
 import { inKit, readDesignSystem } from './design-system.js';
 import { libraryChoices, type LibraryChoice } from './library-types.js';
+import { connectedDs } from './ds-source.js';
 
 export interface CatalogProp {
   name: string;
@@ -31,6 +32,8 @@ export interface CatalogProp {
   kind: 'enum' | 'boolean' | 'text' | 'other';
   /** What it is when left out, when the code says so (`= 'md'`, cva's `defaultVariants`, a library's `@default`); a boolean is false */
   default?: string;
+  /** The comment the code puts on it (`/** compact: dense surfaces *\/` on the type or over a cva() variant): the team's own rule */
+  doc?: string;
 }
 
 export interface CatalogEntry {
@@ -105,8 +108,11 @@ const EXTS = ['.tsx', '.ts', '.jsx', '.js', '/index.tsx', '/index.ts', '/index.j
 export function resolveImport(cwd: string, fromRel: string, source: string): string | null {
   let bases: string[];
   if (source.startsWith('.')) bases = [posix.join(posix.dirname(fromRel), source)];
-  else if (/^[@~]\//.test(source)) bases = [posix.join('src', source.slice(2)), source.slice(2)];
-  else return null;
+  else if (/^[@~]\//.test(source)) {
+    // `@/` is the app's own src: in a monorepo, the workspace the file is in (`web/src/…`), not the root's
+    const pkg = workspaceOf(cwd, fromRel);
+    bases = [posix.join(pkg, 'src', source.slice(2)), posix.join(pkg, source.slice(2))];
+  } else return null;
   for (const base of bases) {
     for (const ext of ['', ...EXTS]) {
       const rel = base + ext;
@@ -114,6 +120,21 @@ export function resolveImport(cwd: string, fromRel: string, source: string): str
     }
   }
   return null;
+}
+
+const workspaceCache = new Map<string, string>();
+/** The project folder (posix, relative to cwd) holding `rel`: the nearest one with a package.json, '' for cwd itself */
+function workspaceOf(cwd: string, rel: string): string {
+  const dir = posix.dirname(rel);
+  const key = `${cwd}\0${dir}`;
+  const hit = workspaceCache.get(key);
+  if (hit !== undefined) return hit;
+  let out = '';
+  for (let d = dir; d && d !== '.'; d = posix.dirname(d)) {
+    if (existsSync(join(cwd, d, 'package.json'))) { out = d; break; }
+  }
+  workspaceCache.set(key, out);
+  return out;
 }
 
 /** `src/components/ui/button.tsx` → `ui`; `src/components/stat-card.tsx` → `components`; `src/app/x.tsx` → `app` */
@@ -126,8 +147,18 @@ export function folderOf(rel: string): string {
   return parts.at(-2) ?? '.';
 }
 
-interface TypeInfo { required: boolean; values: string[]; kind: CatalogProp['kind']; default?: string }
-type CvaMap = Map<string, Map<string, { values: string[]; def?: string }>>;
+interface TypeInfo { required: boolean; values: string[]; kind: CatalogProp['kind']; default?: string; doc?: string }
+type CvaMap = Map<string, Map<string, { values: string[]; def?: string; doc?: string }>>;
+
+/** A node's comments as one line of prose: no `*`, no lint or ts directives, short enough for a DS entry */
+function docOf(n: Node): string | undefined {
+  const text = (n.leadingComments ?? [])
+    .map(c => c.value.replace(/^\*+/, '').split('\n').map(l => l.replace(/^\s*\*\s?/, '').trim()).join(' ').trim())
+    .filter(c => c && !/^(eslint|@ts-|prettier|biome|TODO|FIXME)/i.test(c))
+    .join(' ').replace(/\s+/g, ' ').trim();
+  if (!text) return undefined;
+  return text.length > 240 ? text.slice(0, 239).trimEnd() + '…' : text;
+}
 
 function literalsOf(t: Node | null | undefined, local?: Map<string, Node>, depth = 0): TypeInfo['values'] | null {
   if (!t || depth > 4) return null;
@@ -165,7 +196,8 @@ function propsOfType(t: Node | null | undefined, local: Map<string, Node>, cva: 
     for (const m of members) {
       if (m.type !== 'TSPropertySignature' || m.key.type !== 'Identifier') continue;
       const ann = m.typeAnnotation?.typeAnnotation;
-      out.set(m.key.name, { required: !m.optional, values: literalsOf(ann, local) ?? (ann?.type === 'TSBooleanKeyword' ? ['true', 'false'] : []), kind: kindOf(ann, local) });
+      const doc = docOf(m);
+      out.set(m.key.name, { required: !m.optional, values: literalsOf(ann, local) ?? (ann?.type === 'TSBooleanKeyword' ? ['true', 'false'] : []), kind: kindOf(ann, local), ...(doc ? { doc } : {}) });
     }
   } else if (t.type === 'TSIntersectionType') {
     for (const part of t.types) merge(propsOfType(part, local, cva, depth + 1));
@@ -175,7 +207,7 @@ function propsOfType(t: Node | null | undefined, local: Map<string, Node>, cva: 
     if (name === 'VariantProps') {
       const arg = t.typeParameters?.params[0];
       const ref = arg?.type === 'TSTypeQuery' && arg.exprName.type === 'Identifier' ? arg.exprName.name : undefined;
-      for (const [k, { values, def }] of cva.get(ref ?? '') ?? []) out.set(k, { required: false, values, kind: 'enum', ...(def ? { default: def } : {}) });
+      for (const [k, { values, def, doc }] of cva.get(ref ?? '') ?? []) out.set(k, { required: false, values, kind: 'enum', ...(def ? { default: def } : {}), ...(doc ? { doc } : {}) });
     } else if (local.has(name)) {
       const decl = local.get(name)!;
       merge(propsOfType(decl.type === 'TSInterfaceDeclaration' ? decl.body : decl.type === 'TSTypeAliasDeclaration' ? decl.typeAnnotation : null, local, cva, depth + 1));
@@ -207,13 +239,20 @@ function cvaMaps(ast: Node): CvaMap {
       const v = literalValue(d.value);
       if (key && v !== undefined) defaults.set(key, v);
     }
-    const map = new Map<string, { values: string[]; def?: string }>();
+    const map = new Map<string, { values: string[]; def?: string; doc?: string }>();
     for (const v of variants.value.properties) {
       if (v.type !== 'ObjectProperty' || v.value.type !== 'ObjectExpression') continue;
       const key = v.key.type === 'Identifier' ? v.key.name : v.key.type === 'StringLiteral' ? v.key.value : null;
       if (!key) continue;
       const values = v.value.properties.flatMap(o => o.type === 'ObjectProperty' ? [o.key.type === 'Identifier' ? o.key.name : o.key.type === 'StringLiteral' ? o.key.value : o.key.type === 'NumericLiteral' ? String(o.key.value) : ''] : []).filter(Boolean);
-      map.set(key, { values, ...(defaults.has(key) ? { def: defaults.get(key) } : {}) });
+      // Over the variant (`// default = 36px, compact = 28px for dense surfaces`), then over each value
+      const valueDocs = v.value.properties.flatMap(o => {
+        const d = o.type === 'ObjectProperty' ? docOf(o) : undefined;
+        const name = o.type === 'ObjectProperty' ? (o.key.type === 'Identifier' ? o.key.name : o.key.type === 'StringLiteral' ? o.key.value : '') : '';
+        return d && name ? [`${name}: ${d}`] : [];
+      });
+      const doc = [docOf(v), ...valueDocs].filter(Boolean).join(' ');
+      map.set(key, { values, ...(defaults.has(key) ? { def: defaults.get(key) } : {}), ...(doc ? { doc } : {}) });
     }
     out.set(n.id.name, map);
   });
@@ -317,6 +356,7 @@ function exportedComponents(ast: Node): Exported[] {
       if (!v.values.length || !v.values.every(x => info.values.includes(x))) continue;
       info.values = v.values;
       if (info.default === undefined && v.def !== undefined) info.default = v.def;
+      if (!info.doc && v.doc) info.doc = v.doc;
     }
     out.push({ name, props, renders, isDefault, line: decl.loc?.start.line ?? 1 });
   }
@@ -445,7 +485,7 @@ export function buildCatalog(cwd: string): CatalogEntry[] {
         : values.length > 0 && values.every(v => /^[\w.-]{1,24}$/.test(v)) ? 'enum'
         : values.length > 0 ? 'text' : 'other';
       const def = typed?.default ?? (kind === 'boolean' ? 'false' : undefined);
-      return { name, required: typed?.required ?? false, values, kind, ...(def !== undefined ? { default: def } : {}) };
+      return { name, required: typed?.required ?? false, values, kind, ...(def !== undefined ? { default: def } : {}), ...(typed?.doc ? { doc: typed.doc } : {}) };
     });
     // Enums first (what the Component section offers as selects), then required, then the rest
     const rank = (p: CatalogProp) => (p.kind === 'enum' ? 0 : p.kind === 'boolean' ? 1 : p.required ? 2 : 3);
@@ -463,6 +503,38 @@ export function buildCatalog(cwd: string): CatalogEntry[] {
     const { typed: _t, usages: _u, ...entry } = e;
     out.push({ ...entry, ...(best ? { example: { file: best.u.file, line: best.u.line, code: best.u.code } } : {}) });
   }
+  // The connected design system lists everything it offers, used here or not yet, with its own
+  // choices (the manifest's values) where the types gave none
+  const connected = connectedDs(cwd);
+  const manifest = connected?.manifest;
+  if (connected && manifest) {
+    const have = new Map(out.filter(e => e.library && packageRoot(e.source) === connected.name).map(e => [e.name, e]));
+    for (const c of manifest.components) {
+      let e = have.get(c.name);
+      if (!e) {
+        const typed = libraryTyped(libraryChoices(cwd, connected.name, c.name));
+        e = {
+          id: `${connected.name}#${c.name}`, name: c.name, source: connected.name, folder: connected.name, library: true,
+          importAs: 'named', module: connected.name, uses: 0,
+          props: [...typed].map(([name, t]) => ({ name, required: false, values: t.values, kind: t.kind, ...(t.default ? { default: t.default } : {}) })),
+        };
+        out.push(e);
+        usedIn.set(e.id, []);
+      }
+      for (const [name, p] of Object.entries(c.props ?? {})) {
+        const cur = e.props.find(x => x.name === name);
+        const values = [...new Set([...(p.values ?? []), ...(cur?.values ?? [])])].slice(0, MAX_VALUES);
+        if (cur) {
+          if (p.values?.length) { cur.values = values; cur.kind = 'enum'; }
+          if (p.default !== undefined && cur.default === undefined) cur.default = p.default;
+          if (p.notes && !cur.doc) cur.doc = p.notes;
+        } else if (p.values?.length) {
+          e.props.push({ name, required: false, values, kind: 'enum', ...(p.default !== undefined ? { default: p.default } : {}), ...(p.notes ? { doc: p.notes } : {}) });
+        }
+      }
+      e.props.sort((a, b) => (a.kind === 'enum' ? 0 : 1) - (b.kind === 'enum' ? 0 : 1));
+    }
+  }
   const where = classify(out, usedIn);
   for (const e of out) Object.assign(e, where.get(e.id));
   // A design system the project declares names and groups its own pieces
@@ -475,7 +547,10 @@ export function buildCatalog(cwd: string): CatalogEntry[] {
     e.layer = 'base';
     delete e.feature;
     e.ds = pkg ?? (group !== undefined ? 'Storybook' : 'shadcn/ui');
+    // The connected DS's own group for it (its manifest's category: Actions, Forms)
+    const category = pkg && pkg === connected?.name ? manifest?.components.find(c => c.name === e.name)?.category : undefined;
     if (group) e.dsGroup = group;
+    else if (category) e.dsGroup = category;
   }
   // The team's own corrections and names (.ilse/catalog.md) win over the rules
   const file = readCatalogFile(cwd);

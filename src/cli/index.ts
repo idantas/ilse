@@ -183,14 +183,23 @@ program
     if (r.status === 'ok') {
       console.log(chalk.green(`\n  ✓ ${t('account.connected', { email: r.email })}`));
       console.log(chalk.dim(`  ${t('account.oneMachine')}\n`));
-      // Paid but Pro isn't here yet: offer it now rather than leave them hunting for the command
+      // Paid but Pro isn't here yet: install it now. Signing in is how a founder gets Pro
+      // (the account page says so), so asking again would only be a step. A free account
+      // has no license and nothing to install. Only ~/.ilse changes, never the project.
       const { existsSync } = await import('node:fs');
       const { proEntry } = await import('../pro/load.js');
-      if (!existsSync(proEntry())) {
-        const p = await import('@clack/prompts');
-        const yes = process.stdin.isTTY ? await p.confirm({ message: t('account.installPro'), initialValue: true }) : false;
-        if (yes === true) await runUpgrade();
-        else console.log(chalk.dim(`  ${t('account.installLater')}\n`));
+      const { readLicense } = await import('../account/store.js');
+      if (readLicense() && !existsSync(proEntry())) {
+        console.log(chalk.dim(`  ${t('account.installingPro')}`));
+        const installed = await runUpgrade();
+        // Tell the site now, so the account page shows Pro on this machine instead of
+        // "if Pro didn't install" until the next start's check
+        if (installed) {
+          const { dailyCheck } = await import('../account/session.js');
+          const { createRequire } = await import('node:module');
+          const ilseVersion = (createRequire(import.meta.url)('../../package.json') as { version: string }).version;
+          await dailyCheck({ ilseVersion, proVersion: installed }).catch(() => undefined);
+        }
       }
     } else {
       console.log(chalk.yellow(`\n  ${t(`account.${r.status}`)}\n`));
@@ -198,24 +207,26 @@ program
     }
   });
 
-async function runUpgrade(): Promise<void> {
+/** Installs or updates Pro; the version on this machine afterwards, or null when it didn't happen */
+async function runUpgrade(): Promise<string | null> {
   const chalk = (await import('chalk')).default;
   const { upgradePro } = await import('../pro/upgrade.js');
   console.log(chalk.dim(`\n  ${t('upgrade.downloading')}`));
   const r = await upgradePro();
-  if (r.status === 'installed') console.log(chalk.green(`\n  ✓ ${t('upgrade.installed', { version: r.version })}\n`));
-  else if (r.status === 'up-to-date') console.log(`\n  ${t('upgrade.up-to-date', { version: r.version })}\n`);
-  else if (r.status === 'updates-ended') console.log(chalk.yellow(`\n  ${t('upgrade.updates-ended', { version: r.version, date: r.updatesUntil })}\n`));
+  if (r.status === 'installed') { console.log(chalk.green(`\n  ✓ ${t('upgrade.installed', { version: r.version })}\n`)); return r.version; }
+  if (r.status === 'up-to-date') { console.log(`\n  ${t('upgrade.up-to-date', { version: r.version })}\n`); return r.version; }
+  if (r.status === 'updates-ended') console.log(chalk.yellow(`\n  ${t('upgrade.updates-ended', { version: r.version, date: r.updatesUntil })}\n`));
   else {
     console.log(chalk.yellow(`\n  ${t(`upgrade.${r.status}`)}\n`));
     process.exitCode = 1;
   }
+  return null;
 }
 
 program
   .command('upgrade')
   .description(t('cmd.upgrade'))
-  .action(runUpgrade);
+  .action(async () => { await runUpgrade(); });
 
 program
   .command('logout')
@@ -238,10 +249,11 @@ program
 program
   .command('ds')
   .description(t('cmd.ds'))
-  .action(async () => {
+  .option('--to <folder>', t('cmd.dsTo'))
+  .action(async (opts: { to?: string }) => {
     const { buildCatalog } = await import('../design-context/catalog.js');
     const { detectTokens } = await import('../setup/token-detect.js');
-    const { createDs } = await import('../design-context/ds-export.js');
+    const { createDs, setDsPublish, publishProblem } = await import('../design-context/ds-export.js');
     const { askAgent } = await import('../agent/ask.js');
     const cwd = process.cwd();
     // `pro` is loaded below, before parse(); a locked Pro has no dsFormats / dsNotes
@@ -251,6 +263,14 @@ program
     } : undefined);
     console.log(`\n  ${t('cli.dsWritten', { components: out.components, tokens: out.tokens })}`);
     for (const f of out.files) console.log(`    ${f}`);
+    if (opts.to) {
+      const problem = publishProblem(cwd, opts.to);
+      if (problem) console.log(`\n  ${t(`cli.dsPublish.${problem}` as Parameters<typeof t>[0], { folder: opts.to })}`);
+      else {
+        setDsPublish(cwd, opts.to, { components: out.components, tokens: out.tokens });
+        console.log(`\n  ${t('cli.dsPublished', { folder: opts.to })}`);
+      }
+    }
     console.log(`\n  ${t('cli.dsHint')}\n`);
   });
 

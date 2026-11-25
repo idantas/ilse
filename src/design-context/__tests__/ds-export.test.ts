@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { dsTokens, dsInput, buildDesignMd, writeDs, hasDs, dedent, dsView, componentImports, createDs, readDsState, dsChanges, addDsRule, addDsInstructions, dsInstructionsIn, DS_MARKER, writeDsEdit, readDsEdits, dsNotesByName } from '../ds-export.js';
+import { dsTokens, dsInput, buildDesignMd, buildDsFiles, DS_SPLIT_AT, setDsPublish, publishProblem, PUBLISH_MARKER, writeDs, hasDs, dedent, dsView, componentImports, createDs, readDsState, dsChanges, addDsRule, addDsInstructions, dsInstructionsIn, DS_MARKER, writeDsEdit, readDsEdits, dsNotesByName } from '../ds-export.js';
 import type { DsInput } from '../../pro/types.js';
 import { parseFrontMatter, designMdTokens } from '../../setup/design-md.js';
 import type { CatalogEntry } from '../catalog.js';
@@ -47,6 +47,41 @@ describe('buildDesignMd — readable, and readable back by Ilse', () => {
     expect(md).toContain('`variant`?: `primary` | `ghost` (default `primary`)');
     expect(md).toContain('## Product');
     expect(md).not.toContain('Dialog');
+  });
+});
+
+describe('buildDsFiles — what an agent pays to read', () => {
+  it('leaves out what every element takes and examples that say nothing', () => {
+    const md = buildDesignMd('acme', [entry('Field', { layer: 'base', props: [
+      { name: 'type', required: false, kind: 'enum', values: ['text', 'email'] },
+      { name: 'aria-label', required: false, kind: 'string' },
+      { name: 'autoComplete', required: false, kind: 'string' },
+      { name: 'label', required: true, kind: 'string' },
+    ], example: { file: 'src/App.tsx', line: 1, code: '<Field />' } }),
+    entry('Alert', { layer: 'base', props: [{ name: 'type', required: false, kind: 'enum', values: ['error', 'warning'] }] })], tokens);
+    expect(md).toContain('Props: `label`');
+    expect(md).not.toMatch(/aria-label|autoComplete|`text`/);
+    expect(md).not.toContain('<Field />');
+    expect(md).toContain('`type`?: `error` | `warning`');
+  });
+  it("a prop's comment goes beside it: the team's rule for which value where", () => {
+    const md = buildDesignMd('acme', [entry('Select', { layer: 'base', props: [
+      { name: 'size', required: false, kind: 'enum', values: ['default', 'compact'], default: 'default', doc: 'compact: dense surfaces; forms use default.' },
+      { name: 'placeholder', required: false, kind: 'text', values: [] },
+    ] })], tokens);
+    expect(md).toContain('Props:\n- `size`?: `default` | `compact` (default `default`): compact: dense surfaces; forms use default.\n- `placeholder`?');
+  });
+  it('a large project: the most used in full, the rest one line in DESIGN.md and in full in its area file', () => {
+    const many = Array.from({ length: DS_SPLIT_AT + 10 }, (_, i) => entry(`Piece${i}`, { layer: 'product', uses: 100 - i, featureLabel: i % 2 ? 'Relatórios' : 'Orders' }));
+    const files = buildDsFiles('acme', many, tokens, [], { Piece69: { whenToUse: 'Totals row at the end of a report.' } });
+    expect(Object.keys(files).sort()).toEqual(['DESIGN.md', 'components/orders.md', 'components/relatorios.md']);
+    const md = files['DESIGN.md'];
+    expect(md).toContain('### Piece0\n');
+    expect(md).not.toContain('### Piece69');
+    expect(md).toContain('### Relatórios · `components/relatorios.md`');
+    expect(md).toContain('- `Piece69` (31×): Totals row at the end of a report.');
+    expect(files['components/relatorios.md']).toContain('### Piece69');
+    expect(files['components/relatorios.md']).not.toContain('### Piece0\n');
   });
 });
 
@@ -261,5 +296,40 @@ describe('addDsRule — a rule from the fresh-agent test, approved by the person
     expect(readDsState(cwd)!.rules).toEqual(['Use Button variant="ghost" for secondary actions.']);
     expect(readFileSync(join(cwd, '.ilse/ds/DESIGN.md'), 'utf8')).toContain('- Use Button variant="ghost" for secondary actions.');
     expect(dsView(cwd, catalog, tokens, true).rules).toEqual(['Use Button variant="ghost" for secondary actions.']);
+  });
+});
+
+describe('publishing a copy for people without Ilse', () => {
+  const project = () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ilse-pub-'));
+    writeFileSync(join(cwd, 'package.json'), '{"name":"sac"}');
+    return cwd;
+  };
+  it('copies the DS with a signed README, follows every write, and never takes over a folder that isn\'t its own', () => {
+    const cwd = project();
+    writeDs(cwd, catalog, tokens);
+    expect(publishProblem(cwd, '.')).toBe('project');
+    expect(publishProblem(cwd, '.ilse/ds')).toBe('ilse');
+    mkdirSync(join(cwd, 'docs'));
+    writeFileSync(join(cwd, 'docs', 'intro.md'), 'mine');
+    expect(publishProblem(cwd, 'docs')).toBe('not-ours');
+
+    setDsPublish(cwd, 'SAC DS', { components: 2, tokens: 2 });
+    const readme = readFileSync(join(cwd, 'SAC DS', 'README.md'), 'utf8');
+    expect(readme.startsWith(PUBLISH_MARKER)).toBe(true);
+    expect(readme).toContain('# sac · design system');
+    expect(readFileSync(join(cwd, 'SAC DS', 'DESIGN.md'), 'utf8')).toContain('### Button');
+    // Inside the project: the dev server's scanner must not reload the page on each write
+    expect(existsSync(join(cwd, 'SAC DS', '.ignore'))).toBe(true);
+    expect(existsSync(join(cwd, 'SAC DS', 'state.json'))).toBe(false);
+    expect(publishProblem(cwd, 'SAC DS')).toBeNull();
+
+    writeDs(cwd, [...catalog, entry('Badge', { layer: 'base' })], tokens);
+    expect(readFileSync(join(cwd, 'SAC DS', 'DESIGN.md'), 'utf8')).toContain('### Badge');
+    expect(readDsState(cwd)?.publishTo).toBe('SAC DS');
+
+    setDsPublish(cwd, null, { components: 3, tokens: 2 });
+    writeDs(cwd, catalog, tokens);
+    expect(readFileSync(join(cwd, 'SAC DS', 'DESIGN.md'), 'utf8')).toContain('### Badge');
   });
 });

@@ -13,6 +13,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { connectedDs, findPackage, projectDependencies } from './ds-source.js';
 
 export interface DesignSystem {
   /** Component name → the group its stories put it in (`Forms`); '' when the title only says "Components" */
@@ -98,11 +99,15 @@ export function readDesignSystem(cwd: string): DesignSystem {
     if (folder) { ds.kitFolders.push(folder.split(sep).join('/')); ds.name ??= 'shadcn/ui'; }
   }
 
-  // A dependency that says it's a design system
-  const pkg = readJson(join(cwd, 'package.json'));
-  const deps = Object.keys({ ...(pkg?.dependencies as object ?? {}), ...(pkg?.peerDependencies as object ?? {}) });
-  for (const dep of deps) {
-    const meta = readJson(join(cwd, 'node_modules', dep, 'package.json'));
+  // A dependency that is a design system: the connected one first (manifest, theme imported,
+  // declared), then any other that calls itself one. Found as Node finds it, so a monorepo's
+  // hoisted install counts, and at a workspace root the workspaces' dependencies too
+  const connected = connectedDs(cwd);
+  if (connected) ds.packages.push(connected.name);
+  for (const dep of projectDependencies(cwd)) {
+    if (dep === connected?.name) continue;
+    const root = findPackage(cwd, dep);
+    const meta = root ? readJson(join(root, 'package.json')) : null;
     if (!meta) continue;
     const words = [String(meta.description ?? ''), ...((meta.keywords as unknown[]) ?? []).map(String)].join(' ');
     if (/design[\s-]?system/i.test(words)) ds.packages.push(dep);

@@ -123,6 +123,54 @@ describe('startProxy', () => {
   });
 });
 
+describe('startProxy: many cookies, a dev server that stopped', () => {
+  let upstream: http.Server;
+  let proxy: RunningProxy;
+
+  beforeAll(async () => {
+    // Node's default 16 KB, like a dev server Ilse didn't start
+    upstream = http.createServer((_req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('ok'); });
+    await new Promise<void>(r => upstream.listen(0, '127.0.0.1', () => r()));
+    const port = (upstream.address() as net.AddressInfo).port;
+    proxy = await startProxy({ target: { host: '127.0.0.1', port }, port: 4800, maxPort: 4809 });
+  });
+
+  afterAll(async () => {
+    await proxy.close();
+    upstream.closeAllConnections();
+    await new Promise(r => upstream.close(r));
+  });
+
+  const cookie = (kb: number) => ({ cookie: `a=${'x'.repeat(kb * 1024)}` });
+
+  it('takes cookies past 16 KB, and explains a 431 from the dev server', async () => {
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/`, { headers: cookie(20) });
+    expect(res.status).toBe(431);
+    const body = await res.text();
+    expect(body).toMatch(/localhost/);
+    expect(body).toContain(`127.0.0.1:${proxy.port}`);
+  });
+
+  it('explains headers past its own limit too', async () => {
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/`, { headers: cookie(80) });
+    expect(res.status).toBe(431);
+    expect(await res.text()).toContain(`127.0.0.1:${proxy.port}`);
+  });
+
+  it('says the app\'s server stopped, and follows a new target', async () => {
+    const dead = net.createServer();
+    await new Promise<void>(r => dead.listen(0, '127.0.0.1', () => r()));
+    const deadPort = (dead.address() as net.AddressInfo).port;
+    await new Promise(r => dead.close(r));
+    proxy.setTarget({ host: '127.0.0.1', port: deadPort });
+    const down = await fetch(`http://127.0.0.1:${proxy.port}/`);
+    expect(down.status).toBe(502);
+    expect(await down.text()).toContain(String(deadPort));
+    proxy.setTarget({ host: '127.0.0.1', port: (upstream.address() as net.AddressInfo).port });
+    expect(await (await fetch(`http://127.0.0.1:${proxy.port}/`)).text()).toBe('ok');
+  });
+});
+
 describe('candidatePorts', () => {
   it('puts the dev script port and framework default first', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ilse-ports-'));

@@ -17,6 +17,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { radius, color, shadow, font, ilse } from './tokens.js';
 import { scopeTwins, itemLabel } from './live-layout.js';
+import { anchorOf, findByAnchor, type ElementAnchor } from './element-anchor.js';
+import { hasHoverEffect, heldHover, onHoverChange, startHover, stopHover } from './hover-state.js';
 import { useFrontLayer } from './front-layer.js';
 import { t, type MessageKey } from '../i18n/index.js';
 
@@ -24,7 +26,7 @@ import { t, type MessageKey } from '../i18n/index.js';
 const translate = t;
 import { getDSTokens, type DSToken } from './analyze.js';
 import { readColor, canonicalColor, toHex, isTransparent } from './color.js';
-import { collectColorTokens, collectGradientTokens, gradientIn, withStaticTokens, byBaseness, type ColorToken, type GradientToken } from './color-tokens.js';
+import { collectColorTokens, collectGradientTokens, gradientIn, withStaticTokens, byBaseness, pickToken, varName, tokenForVar, cascadeValue, type ColorToken, type GradientToken, type TokenMatch } from './color-tokens.js';
 import { ColorPicker } from './color-picker.js';
 import { readPageScales, onScale, isTailwindV4, type PageScales } from './scale.js';
 import { readEffectScales, blurOf, withBlur, type EffectScales } from './effects.js';
@@ -34,6 +36,7 @@ import {
   type Flow, type Pos, type Axis, type SizeMode, type ParentFlow, type BoxProp, type BoxMode, type Sides,
 } from './layout-flow.js';
 import { ValueSelect } from './value-select.js';
+import { isOrdered, scrubInput } from './scrub.js';
 import type { StyleChange } from '../types.js';
 import { EMBEDDED, SCREENS_BAR_H, uiDocument, uiLayer, uiWindow } from './screens.js';
 
@@ -180,10 +183,58 @@ function tokenFromClasses(el: Element | null, key: string, tokens: DSToken[]): s
  * Several tokens can share a colour (surface-2…8 are all white in light mode).
  * `preferred` — the token the designer actually picked — wins among equals.
  */
-function matchToken(value: string, tokens: DSToken[], isColor: boolean, preferred?: string): DSToken | undefined {
+function matchToken(value: string, tokens: DSToken[], isColor: boolean, preferred?: string, key = ''): DSToken | undefined {
+  return tokenMatch(value, tokens, isColor, preferred, key).token;
+}
+
+function tokenMatch(value: string, tokens: DSToken[], isColor: boolean, preferred?: string, key = ''): TokenMatch {
   const equal = tokens.filter(t => sameValue(t.value, value, isColor));
-  // Otherwise the base token over its derivatives: foreground, not accent-foreground.
-  return equal.find(t => t.name === preferred) ?? equal.sort(byBaseness)[0];
+  // Colours: the one the code names, then the one whose role fits the property, else "several"
+  if (isColor) return pickToken(equal, key, preferred);
+  // Scales: the base token over its derivatives
+  return { token: equal.find(t => t.name === preferred) ?? equal.sort(byBaseness)[0] };
+}
+
+/** Every style rule declaring `prop` in the page's stylesheets (media that applies, layers, supports) */
+function rulesFor(prop: string): Array<{ selector: string; value: string }> {
+  const out: Array<{ selector: string; value: string }> = [];
+  const walk = (list: CSSRuleList) => {
+    for (const r of Array.from(list)) {
+      if (r instanceof CSSStyleRule) {
+        const v = r.style.getPropertyValue(prop);
+        if (v) out.push({ selector: r.selectorText, value: v.trim() });
+        // Nested rules (CSS nesting) are rare in built CSS: not followed
+      } else if (r instanceof CSSMediaRule) {
+        if (window.matchMedia(r.conditionText).matches) walk(r.cssRules);
+      } else if ('cssRules' in r && (r as CSSGroupingRule).cssRules) {
+        walk((r as CSSGroupingRule).cssRules);
+      }
+    }
+  };
+  for (const sheet of Array.from(document.styleSheets)) {
+    if ((sheet.ownerNode as Element | null)?.closest?.('[data-ilse-toolbar]')) continue;
+    try { walk(sheet.cssRules); } catch { /* another origin's sheet */ }
+  }
+  return out;
+}
+
+/**
+ * The token the element's CSS names for a colour (`color: var(--foreground)` in a rule), so
+ * among equal values the panel shows the one in the code. Text colour is inherited: the
+ * nearest ancestor that sets it counts.
+ */
+function authoredToken(el: Element | null, key: string, tokens: ColorToken[]): string | undefined {
+  const prop = { color: 'color', backgroundColor: 'background-color', borderColor: 'border-top-color' }[key];
+  if (!el || !prop) return undefined;
+  const rules = rulesFor(prop).concat(prop === 'border-top-color' ? rulesFor('border-color') : []);
+  const depth = key === 'color' ? 12 : 1;
+  for (let node: Element | null = el, i = 0; node && i < depth; node = node.parentElement, i++) {
+    const inline = (node as HTMLElement).style?.getPropertyValue(prop) || undefined;
+    const value = cascadeValue(rules, sel => node!.matches(sel), inline);
+    if (value === undefined || value === 'inherit') continue;
+    return tokenForVar(varName(value), tokens);
+  }
+  return undefined;
 }
 
 // ── Panel ──────────────────────────────────────────────────────────────────
@@ -261,7 +312,7 @@ export function keptPosition(): { top: number; left: number } | null {
   };
 }
 
-export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep, onRemove, onDuplicate, removed, textEdit, onTextChange, mirrorAll, tab = 'props', onTab, catalog, consistency, consistencyLocked, componentSection }: {
+export function PropertyPanel({ styles, targetId, textSelection, contextLabel, committedRef, onChange, onPickerOpen, onClose, historyRef, onStep, onRemove, onDuplicate, removed, textEdit, onTextChange, mirrorAll, tab = 'props', onTab, catalog, consistency, consistencyLocked, componentSection, componentize }: {
   /** Which tab shows: the element's properties, or the product's components */
   tab?: PanelTab;
   onTab?: (tab: PanelTab) => void;
@@ -273,6 +324,9 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   consistencyLocked?: boolean;
   /** The Component section, on top of Properties, when the element is a catalog component */
   componentSection?: React.ReactNode;
+  /** Not a component the DS lists (hand-written, or declared inside one file): offer to make it one.
+   *  `local` names the component it already is in that file */
+  componentize?: { onMake: () => void; local?: string };
   /** "Apply to: all of them" — preview the edits on the component's other instances too */
   mirrorAll?: boolean;
   /** The text already retyped in this draft — a remounted panel picks it up again */
@@ -309,6 +363,13 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   // Held once found: on cancel the selection's marker attribute can be gone
   // before this panel unmounts, and the preview must still be put back
   const targetEl = useRef<HTMLElement | null>(null);
+  // Where the element is and what it is, to find it again if the app replaces its node
+  const anchor = useRef<ElementAnchor | null>(null);
+  // Text layer or box: read once from the element. An edit, or the node being replaced,
+  // doesn't turn a text into a box halfway through
+  const textMode = useRef<boolean | null>(null);
+  // The text is being retyped (set by setTextValue; read before the text state exists)
+  const textChanged = useRef(false);
   const dsTokens = getDSTokens();
   const [edits, setEdits] = useState<Record<string, string>>({});
   // Values that follow another edit (line height follows the font size): read again
@@ -370,6 +431,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   function setTextValue(value: string) {
     setText(value);
     textRef.current = value;
+    textChanged.current = value !== textOriginal;
     if (value === textOriginal) revertText(); else previewText(value);
     onTextChange?.(value === textOriginal ? undefined : { from: textOriginal, to: value });
   }
@@ -391,6 +453,22 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [colorEpoch, targetId],
   );
+  // The token the code names for each colour: a class (`text-foreground`), else the CSS rule's var()
+  const codeTokens = useMemo<Record<string, string | undefined>>(() => {
+    const e = getElement();
+    const out: Record<string, string | undefined> = {};
+    for (const key of ['color', 'backgroundColor', 'borderColor']) {
+      try { out[key] = tokenFromClasses(e, key, colorTokens) ?? authoredToken(e, key, colorTokens); } catch { out[key] = undefined; }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colorTokens, targetId]);
+  // Hover held on (this element or another one picked before): re-render when it changes
+  const [, setHoverEpoch] = useState(0);
+  useEffect(() => onHoverChange(() => setHoverEpoch(n => n + 1)), []);
+  const hoverable = useMemo(() => { try { return hasHoverEffect(getElement()); } catch { return false; } },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [targetId]);
   const scales = useMemo<Scales>(() => ({ ...readPageScales(dsTokens), ...readEffectScales(isTailwindV4()) }), [dsTokens]);
   // Computed styles + the padding/margin longhands they imply — what "no change" is compared against
   const base = useMemo(() => withBoxLonghands(styles), [styles]);
@@ -460,8 +538,22 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   function getElement(): HTMLElement | null {
     if (targetEl.current?.isConnected) return targetEl.current;
     if (!targetId) return null;
-    targetEl.current = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${targetId}"]`);
-    return targetEl.current;
+    const marked = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${targetId}"]`);
+    if (marked) {
+      targetEl.current = marked;
+      anchor.current ??= anchorOf(marked);
+      return marked;
+    }
+    // The app re-created the node (React replaced it, the marker went with the old one):
+    // the same element, found where it was, gets the marker and the previews back
+    const again = anchor.current ? findByAnchor(document.documentElement, anchor.current, textChanged.current) as HTMLElement | null : null;
+    if (!again) return null;
+    again.setAttribute('data-ilse-pixel-target', targetId);
+    for (const [prop, value] of Object.entries(previews.current)) again.style.setProperty(prop, value);
+    targetEl.current = again;
+    textNodes.current = null;
+    if (textChanged.current) previewText(textRef.current);
+    return again;
   }
 
   // Revert every preview on unmount — unless the annotation was sent, in which
@@ -549,14 +641,15 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
     return Object.entries(next).map(([key, to]) => {
       const s = PROPS.find(p => p.key === key)!;
       const family = tokensFor(s, dsTokens, colorTokens, scales);
-      const token = matchToken(to, family, COLOR_PROPS.has(key), editTokens.current[key]);
+      const match = tokenMatch(to, family, COLOR_PROPS.has(key), editTokens.current[key] ?? codeTokens[key], key);
+      const token = match.token;
       const gradient = key === 'backgroundImage';
       return {
         property: key,
         from: gradient ? currentImage() : base[key] ?? restingValue(key),
         to,
         token: gradient ? editTokens.current[key] : token?.name,
-        offToken: family.length > 0 && !token && !onScale(to, family) && !(COLOR_PROPS.has(key) && isTransparent(to))
+        offToken: family.length > 0 && !token && !match.ambiguous && !onScale(to, family) && !(COLOR_PROPS.has(key) && isTransparent(to))
           && !(NONE_KEYS.test(key) && isZero(to)),
       };
     });
@@ -569,7 +662,8 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
   // Text reads like a Figma text layer: its colour *is* the fill. A separate
   // "Text" row next to a transparent "Fill" is two answers to one question.
   const el = getElement();
-  const isText = !!textSelection || (!!el && editableText(el) !== null);
+  if (el && textMode.current === null) textMode.current = editableText(el) !== null;
+  const isText = !!textSelection || !!textMode.current;
   const parentStyle = el?.parentElement ? getComputedStyle(el.parentElement) : null;
   const parentFlow: ParentFlow = parentStyle && /flex/.test(parentStyle.display)
     ? (parentStyle.flexDirection.startsWith('column') ? 'column' : 'row') : null;
@@ -757,7 +851,62 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
 
       <div style={{ padding: '10px 12px 12px', overflowY: 'auto', fontSize: 11 }}>
         {tab === 'consistency' && consistency ? consistency : tab === 'catalog' && catalog ? catalog : (<>
+        {(() => {
+          const held = heldHover();
+          if (!hoverable && !held) return null;
+          const on = !!held && held.el === el;
+          return (
+            <div style={{ marginBottom: GROUP_GAP, display: 'flex', alignItems: 'center', gap: 8 }} title={t('panel.hover.hint')}>
+              <div style={{ ...groupTitle, marginBottom: 0, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {t('panel.hover.title')}
+                {held && !on && <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, marginLeft: 6 }}>{t('panel.hover.elsewhere', { name: held.label })}</span>}
+              </div>
+              <button
+                type="button"
+                aria-pressed={on}
+                // Held for another element (the one whose card this is): only off here, since
+                // moving the hover would close what was opened to be selected
+                onClick={() => {
+                  if (held) stopHover();
+                  else if (el) startHover(el, contextLabel || el.tagName.toLowerCase());
+                }}
+                style={{
+                  height: 22, padding: '0 8px', borderRadius: radius.md, flexShrink: 0,
+                  border: `1px solid ${on ? color.primary : color.border}`,
+                  background: on ? color.primary : color.background,
+                  color: on ? color.primaryForeground : color.foreground,
+                  fontSize: 11, fontFamily: font.sans, cursor: 'pointer',
+                }}
+              >
+                {held ? t('panel.hover.off') : t('panel.hover.on')}
+              </button>
+            </div>
+          );
+        })()}
         {componentSection}
+        {!componentSection && componentize && (
+          <div style={{ marginBottom: GROUP_GAP, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={groupTitle}>{t('panel.componentTitle')}</div>
+            <div style={{ color: color.mutedForeground, lineHeight: 1.4 }}>
+              {componentize.local ? t('panel.localComponent', { name: componentize.local }) : t('panel.notComponent')}
+            </div>
+            <button
+              type="button"
+              onClick={componentize.onMake}
+              title={t('panel.componentizeHint')}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, height: 26,
+                borderRadius: radius.md, border: `1px solid ${color.border}`, background: color.background,
+                color: color.foreground, fontSize: 11, fontFamily: font.sans, cursor: 'pointer',
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M8 1.5 10.5 4 8 6.5 5.5 4zM4 5.5 6.5 8 4 10.5 1.5 8zM12 5.5 14.5 8 12 10.5 9.5 8zM8 9.5l2.5 2.5L8 14.5 5.5 12z" />
+              </svg>
+              {t('panel.componentize')}
+            </button>
+          </div>
+        )}
         {isText && !textSelection && el && (
           <div style={{ marginBottom: GROUP_GAP }}>
             <div style={groupTitle}>Text</div>
@@ -871,7 +1020,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
                   ? (spec.key in edits ? blurOf(edits[spec.key]) : undefined)
                   : edits[spec.key] ?? (spec.key === 'backgroundColor' ? edits.backgroundImage : undefined)}
                 tokens={tokensFor(spec, dsTokens, colorTokens, scales)}
-                preferredToken={editTokens.current[spec.key] ?? tokenFromClasses(getElement(), spec.key, colorTokens)}
+                preferredToken={editTokens.current[spec.key] ?? codeTokens[spec.key]}
                 gradient={spec.key === 'backgroundColor' ? fillGradient : undefined}
                 pickerOpen={picker?.key === spec.key}
                 onOpenPicker={(el) => {
@@ -973,7 +1122,7 @@ export function PropertyPanel({ styles, targetId, textSelection, contextLabel, c
           <ColorPicker
             value={edits[spec.key] ?? display[spec.key] ?? ''}
             tokens={colorTokens}
-            tokenName={editTokens.current[spec.key] ?? tokenFromClasses(getElement(), spec.key, colorTokens)}
+            tokenName={editTokens.current[spec.key] ?? codeTokens[spec.key]}
             {...(spec.key === 'backgroundColor' ? {
               gradients: gradientTokens,
               gradientName: fillGradient?.name,
@@ -1079,6 +1228,7 @@ function SizeRow({ axis, size }: { axis: Axis; size: SizeControl }) {
         defaultValue={shortValue(value)}
         placeholder={t('panel.size.placeholder')}
         title={mode === 'fixed' ? t('panel.size.title') : t('panel.size.measured')}
+        onPointerDown={scrubInput(v => size.onValue(axis, v))}
         onBlur={(e) => { if (e.target.value.trim() && e.target.value.trim() !== shortValue(value)) size.onValue(axis, e.target.value); }}
         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         style={{
@@ -1341,10 +1491,13 @@ function PropertyRow({ spec, current, edited, tokens, preferredToken, gradient, 
 }) {
   const value = edited ?? current;
   const isColor = COLOR_PROPS.has(spec.key);
-  const matched = matchToken(value, tokens, isColor, preferredToken);
+  const match = tokenMatch(value, tokens, isColor, preferredToken, spec.key);
+  const matched = match.token;
   // `transparent` is a keyword every system has (bg-transparent), not a stray value.
   const clear = isColor && !matched && isTransparent(value);
-  const isOffToken = !gradient && tokens.length > 0 && !matched && !clear && !onScale(value, tokens) && !(NONE_KEYS.test(spec.key) && isZero(value));
+  // Several tokens have this colour and the code names none: said, not guessed
+  const several = isColor && !matched && !clear && !!match.ambiguous;
+  const isOffToken = !gradient && tokens.length > 0 && !matched && !clear && !several && !onScale(value, tokens) && !(NONE_KEYS.test(spec.key) && isZero(value));
   const controlStyle = {
     flex: 1, minWidth: 0, fontSize: 11, fontFamily: font.sans,
     padding: '3px 4px', borderRadius: radius.sm,
@@ -1377,7 +1530,7 @@ function PropertyRow({ spec, current, edited, tokens, preferredToken, gradient, 
             ? <span style={{ width: 14, height: 14, flexShrink: 0, borderRadius: 3, backgroundImage: gradient.value, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,0.1)' }} />
             : <Swatch value={value} />}
           <span style={{
-            flex: isOffToken ? 'none' : 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            flex: isOffToken || several ? 'none' : 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             fontFamily: gradient || matched || clear ? font.sans : font.mono,
           }}>
             {gradient ? gradient.label : matched ? tokenLabel(matched) : clear ? 'transparent' : toHex(value).toUpperCase()}
@@ -1385,6 +1538,11 @@ function PropertyRow({ spec, current, edited, tokens, preferredToken, gradient, 
           {isOffToken && (
             <span style={{ flex: 1, minWidth: 0, textAlign: 'right', fontSize: 9, color: '#8A4B12', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               fora do padrão
+            </span>
+          )}
+          {several && (
+            <span title={t('panel.severalTokensHint')} style={{ flex: 1, minWidth: 0, textAlign: 'right', fontSize: 9, color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {t('panel.severalTokens')}
             </span>
           )}
         </button>
@@ -1440,6 +1598,7 @@ function ScaleControl({ spec, value, tokens, preferredToken, onApply, prefix, co
         autoFocus={custom}
         defaultValue={value}
         placeholder="ex. 10px"
+        onPointerDown={custom ? undefined : scrubInput(onApply)}
         onBlur={(e) => { setCustom(false); if (e.target.value.trim()) onApply(e.target.value.trim()); }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
@@ -1453,7 +1612,7 @@ function ScaleControl({ spec, value, tokens, preferredToken, onApply, prefix, co
   return (
     <ValueSelect
       options={options}
-      current={isNone ? '0px' : matched?.value}
+      current={isNone ? '0px' : matched?.value ?? options.find(o => o.value === value)?.value}
       display={isOffToken && !compact ? `${shown} · ${t('panel.offScale')}` : shown}
       offToken={isOffToken}
       prefix={prefix}
@@ -1461,6 +1620,7 @@ function ScaleControl({ spec, value, tokens, preferredToken, onApply, prefix, co
       groupLabel={tokens.length > 0 ? t('panel.group.project') : t('panel.group.common')}
       onPick={onApply}
       onCustom={() => setCustom(true)}
+      scrub={isOrdered(options.map(o => o.value))}
     />
   );
 }

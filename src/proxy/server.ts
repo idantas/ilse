@@ -33,7 +33,28 @@ export interface ProxyOptions {
   dualStack?: boolean;
 }
 
-export interface RunningProxy { port: number; close: () => Promise<void> }
+export interface RunningProxy {
+  port: number;
+  close: () => Promise<void>;
+  /** Point the proxy at another dev server (the one it used stopped and Ilse started its own) */
+  setTarget: (target: DevTarget) => void;
+}
+
+/**
+ * The browser sends every `localhost` cookie to every port: with a few local apps
+ * logged in, the header passes Node's 16 KB and the request is refused (431).
+ * The proxy takes more, and the dev servers Ilse starts too.
+ */
+export const MAX_HEADER_SIZE = 64 * 1024;
+
+/** The page for a request whose headers are too big: what happened and how to get past it */
+export function tooManyCookiesPage(port: number): string {
+  const msg = t('proxy.headersTooLarge', { port });
+  const hint = t('proxy.headersTooLargeHint', { port });
+  return `<!doctype html><meta charset="utf-8"><title>Ilse · 431</title>`
+    + `<body style="font:16px/1.5 system-ui,sans-serif;max-width:560px;margin:64px auto;padding:0 16px;color:#222;background:#fff">`
+    + `<h1 style="font-size:20px">${msg}</h1><p>${hint}</p></body>`;
+}
 
 /** Absolute redirects to the dev server must come back through the proxy. */
 function rewriteLocation(location: string, target: DevTarget, proxyPort: number): string {
@@ -44,10 +65,10 @@ function rewriteLocation(location: string, target: DevTarget, proxyPort: number)
 }
 
 export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
-  const target = opts.target;
+  let target = opts.target;
   let proxyPort = 0;
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer({ maxHeaderSize: MAX_HEADER_SIZE }, (req, res) => {
     if (serveToolbar(req, res, { file: opts.toolbarFile, bridgePort: opts.bridgePort })) return;
 
     const headers = { ...req.headers };
@@ -57,6 +78,13 @@ export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
     const upstream = http.request(
       { host: target.host, port: target.port, method: req.method, path: req.url, headers },
       (up) => {
+        // A dev server Ilse didn't start keeps Node's 16 KB: say why, not a blank 431
+        if (up.statusCode === 431) {
+          up.resume();
+          res.writeHead(431, { 'content-type': 'text/html; charset=utf-8' });
+          res.end(tooManyCookiesPage(proxyPort));
+          return;
+        }
         const outHeaders = { ...up.headers };
         if (typeof outHeaders.location === 'string') {
           outHeaders.location = rewriteLocation(outHeaders.location, target, proxyPort);
@@ -94,10 +122,25 @@ export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
     upstream.on('error', (err) => {
       if (res.headersSent) { res.destroy(); return; }
       res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end(t('proxy.unreachable', { host: target.host, port: target.port, error: err.message }));
+      const stopped = (err as NodeJS.ErrnoException).code === 'ECONNREFUSED';
+      res.end(stopped
+        ? t('proxy.devStopped', { port: target.port })
+        : t('proxy.unreachable', { host: target.host, port: target.port, error: err.message }));
     });
     req.pipe(upstream);
   });
+
+  // Headers past even the raised limit: Node answers before any handler — give it the page
+  const onClientError = (err: NodeJS.ErrnoException, socket: net.Socket) => {
+    if (!socket.writable) return;
+    if (err.code === 'HPE_HEADER_OVERFLOW') {
+      const body = tooManyCookiesPage(proxyPort);
+      socket.end(`HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+    } else {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    }
+  };
+  server.on('clientError', onClientError);
 
   // Upgraded sockets leave the HTTP server's bookkeeping — track them for close()
   const tunnels = new Set<net.Socket>();
@@ -138,7 +181,8 @@ export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
   // Same handlers on the IPv6 loopback, still loopback only
   let v6: http.Server | null = null;
   if (opts.dualStack) {
-    const s = http.createServer();
+    const s = http.createServer({ maxHeaderSize: MAX_HEADER_SIZE });
+    s.on('clientError', onClientError);
     for (const l of server.listeners('request')) s.on('request', l as (...a: unknown[]) => void);
     for (const l of server.listeners('upgrade')) s.on('upgrade', l as (...a: unknown[]) => void);
     v6 = await new Promise<http.Server | null>((resolve) => {
@@ -149,6 +193,7 @@ export async function startProxy(opts: ProxyOptions): Promise<RunningProxy> {
 
   return {
     port: proxyPort,
+    setTarget: (next) => { target = next; },
     close: () => new Promise<void>((resolve) => {
       for (const s of tunnels) s.destroy();
       v6?.closeAllConnections?.();

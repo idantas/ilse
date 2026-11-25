@@ -14,6 +14,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { Node } from '@babel/types';
 import { parseCode } from './ast.js';
+import { findPackage } from './ds-source.js';
 
 const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
 
@@ -21,8 +22,9 @@ const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCas
 export function declarationFile(cwd: string, module: string, name: string): string | null {
   const parts = module.split('/');
   const rootName = module.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
-  const root = join(cwd, 'node_modules', rootName);
-  if (!existsSync(root)) return null;
+  // As Node finds it: a monorepo installs at its root, above the app
+  const root = findPackage(cwd, rootName);
+  if (!root) return null;
   const sub = module.slice(rootName.length); // '' or '/Button'
   const dirs = [...new Set([name, kebab(name), name.toLowerCase()])];
   const candidates = [
@@ -33,10 +35,20 @@ export function declarationFile(cwd: string, module: string, name: string): stri
       join(root, 'dist', 'components', d, 'index.d.ts'),
     ]),
   ];
-  return candidates.find(f => existsSync(f)) ?? null;
+  const hit = candidates.find(f => existsSync(f));
+  if (hit) return hit;
+  // One bundled declaration file (tsup, rollup): the package's `types`
+  if (sub) return null;
+  try {
+    const meta = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as Record<string, unknown>;
+    const exp = (meta.exports as Record<string, Record<string, unknown> | string> | undefined)?.['.'];
+    const types = [meta.types, meta.typings, typeof exp === 'object' ? exp?.types : undefined].find((x): x is string => typeof x === 'string');
+    if (types && existsSync(join(root, types))) return join(root, types);
+  } catch { /* no package.json */ }
+  return null;
 }
 
-interface Parsed { decls: Map<string, Node>; imports: Map<string, string>; reexports: string[] }
+interface Parsed { decls: Map<string, Node>; imports: Map<string, string>; reexports: string[]; /** `declare function X(…)` and `declare const X: T` */ values: Map<string, Node> }
 
 const cache = new Map<string, Parsed | null>();
 
@@ -48,10 +60,12 @@ function parseFile(file: string): Parsed | null {
     if (code.length < 400_000) {
       const res = parseCode(code, file.replace(/\.d\.ts$/, '.ts'));
       if (res.ok) {
-        out = { decls: new Map(), imports: new Map(), reexports: [] };
+        out = { decls: new Map(), imports: new Map(), reexports: [], values: new Map() };
         for (const s of (res.value as unknown as { program: { body: Node[] } }).program.body) {
           const d = (s.type === 'ExportNamedDeclaration' && s.declaration) ? s.declaration : s;
           if ((d.type === 'TSInterfaceDeclaration' || d.type === 'TSTypeAliasDeclaration') && d.id.type === 'Identifier') out.decls.set(d.id.name, d);
+          if (d.type === 'TSDeclareFunction' && d.id) out.values.set(d.id.name, d);
+          if (d.type === 'VariableDeclaration') for (const v of d.declarations) if (v.id.type === 'Identifier' && v.id.typeAnnotation?.type === 'TSTypeAnnotation') out.values.set(v.id.name, v.id.typeAnnotation.typeAnnotation);
           if (s.type === 'ImportDeclaration' && s.source.value.startsWith('.')) {
             for (const sp of s.specifiers) if (sp.type === 'ImportSpecifier') out.imports.set(sp.local.name, s.source.value);
           }
@@ -119,6 +133,22 @@ function choicesIn(file: string, name: string, depth = 0): Map<string, LibraryCh
       out.set(m.key.name, { values, ...(def && values.includes(def) ? { def } : {}) });
     }
   }
+  // A bundled .d.ts (tsup): `declare function Button({…}: X.Props & VariantProps<typeof buttonVariants>)`,
+  // the cva() variants typed on `declare const buttonVariants: (props?: { variant?: 'a' | 'b' … }) => string`
+  if (out.size === 0) {
+    const fn = parsed.values.get(name);
+    const param = fn?.type === 'TSDeclareFunction' ? fn.params[0] : undefined;
+    let t: Node | undefined = param && 'typeAnnotation' in param && param.typeAnnotation?.type === 'TSTypeAnnotation' ? param.typeAnnotation.typeAnnotation : undefined;
+    // `declare const Card: React.FC<CardProps>` / ForwardRefExoticComponent<Props & RefAttributes<…>>
+    if (!t && fn && fn.type !== 'TSDeclareFunction' && fn.type === 'TSTypeReference') t = fn.typeParameters?.params[0];
+    for (const m of membersOf(t, parsed, file)) {
+      if (m.type !== 'TSPropertySignature' || m.key.type !== 'Identifier' || out.has(m.key.name)) continue;
+      const values = [...new Set(literals(m.typeAnnotation?.typeAnnotation, file))].filter(v => v !== 'null');
+      if (values.length < 2 || values.length > 30) continue;
+      const def = jsDocDefault(m);
+      out.set(m.key.name, { values, ...(def && values.includes(def) ? { def } : {}) });
+    }
+  }
   // An index that only re-exports: look one level in
   if (out.size === 0) {
     for (const spec of parsed.reexports) {
@@ -127,6 +157,32 @@ function choicesIn(file: string, name: string, depth = 0): Map<string, LibraryCh
     }
   }
   return out;
+}
+
+/** The property signatures a props type spells out: literals, `A & B`, local aliases, `VariantProps<typeof x>` */
+function membersOf(t: Node | null | undefined, parsed: Parsed, file: string, depth = 0): Node[] {
+  if (!t || depth > 6) return [];
+  if (t.type === 'TSTypeLiteral') return t.members;
+  if (t.type === 'TSParenthesizedType') return membersOf(t.typeAnnotation, parsed, file, depth + 1);
+  if (t.type === 'TSIntersectionType' || t.type === 'TSUnionType') return t.types.flatMap(x => membersOf(x, parsed, file, depth + 1));
+  if (t.type === 'TSTypeReference' && t.typeName.type === 'Identifier') {
+    const name = t.typeName.name;
+    if (name === 'VariantProps') {
+      const arg = t.typeParameters?.params[0];
+      const ref = arg?.type === 'TSTypeQuery' && arg.exprName.type === 'Identifier' ? arg.exprName.name : undefined;
+      const fnType = ref ? parsed.values.get(ref) : undefined;
+      if (fnType?.type === 'TSFunctionType') {
+        const p = ((fnType as unknown as { parameters?: Node[]; params?: Node[] }).parameters ?? (fnType as unknown as { params?: Node[] }).params ?? [])[0];
+        const ann = p && 'typeAnnotation' in p && (p as { typeAnnotation?: Node }).typeAnnotation;
+        return ann && ann.type === 'TSTypeAnnotation' ? membersOf(ann.typeAnnotation, parsed, file, depth + 1) : [];
+      }
+      return [];
+    }
+    const decl = parsed.decls.get(name);
+    if (decl?.type === 'TSInterfaceDeclaration') return decl.body.body;
+    if (decl?.type === 'TSTypeAliasDeclaration') return membersOf(decl.typeAnnotation, parsed, file, depth + 1);
+  }
+  return [];
 }
 
 /** A library component's props that take one of a declared set of values */

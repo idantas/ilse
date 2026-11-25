@@ -9,6 +9,7 @@
  */
 
 import { componentTypeName, firstAppFrame } from './annotator.js';
+import { creatorUrl, pickByOrigin } from './component-origin.js';
 
 /** What the panel needs to know about a catalog entry */
 export interface CatalogItem {
@@ -114,29 +115,40 @@ export interface ComponentHit {
  * `<Button>` the app wrote rather than the `ButtonBase` inside the library.
  */
 export function componentAt(el: Element, items: CatalogItem[]): ComponentHit | null {
-  const byName = new Map(items.map(i => [i.name, i]));
+  // Same name, different components (a project's Badge and its DS's Badge): all kept, told apart by origin
+  const byName = new Map<string, CatalogItem[]>();
+  for (const i of items) byName.set(i.name, [...(byName.get(i.name) ?? []), i]);
+  const only = (name: string) => { const c = byName.get(name) ?? []; return c.length === 1 ? c[0] : null; };
   let hit: ComponentHit | null = null;
   // A Server Component leaves no fiber of its own: the element it returned carries its name
-  const server = (fiberOf(el)?._debugInfo ?? []).find(i => i?.name && byName.has(i.name));
+  const server = (fiberOf(el)?._debugInfo ?? []).find(i => i?.name && only(i.name));
   if (server) {
     const props: Record<string, string | number | boolean> = {};
     for (const [k, v] of Object.entries(server.props ?? {})) {
       if (k !== 'children' && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')) props[k] = v;
     }
     const children = server.props?.children;
-    hit = { item: byName.get(server.name!)!, props, ...(typeof children === 'string' ? { text: children } : {}) };
+    hit = { item: only(server.name!)!, props, ...(typeof children === 'string' ? { text: children } : {}) };
   }
-  for (let x = fiberOf(el)?.return ?? null, d = 0; x && typeof x.type !== 'string' && d < 40; x = x.return ?? null, d++) {
+  // The fibers below the component being looked at: the ones its JSX created carry its file in their stack
+  const below: F[] = [];
+  const self = fiberOf(el);
+  if (self) below.push(self);
+  for (let x = self?.return ?? null, d = 0; x && typeof x.type !== 'string' && d < 40; below.push(x), x = x.return ?? null, d++) {
     const typeName = componentTypeName(x.type);
     const name = typeName ? sourceNames(typeName).find(n => byName.has(n)) : undefined;
     if (!name) continue;
+    const created = below.find(f => f._debugOwner && (f._debugOwner === x || f._debugOwner === x.alternate));
+    const item = pickByOrigin(byName.get(name)!, creatorUrl(created?._debugStack?.stack));
+    // Two components share this name and nothing says which: no hit beats the wrong file
+    if (!item) continue;
     const props: Record<string, string | number | boolean> = {};
     for (const [k, v] of Object.entries(x.memoizedProps ?? {})) {
       if (k !== 'children' && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')) props[k] = v;
     }
     const children = x.memoizedProps?.children;
     hit = {
-      item: byName.get(name)!,
+      item,
       props,
       ...(typeof children === 'string' ? { text: children } : {}),
       ...(firstAppFrame(x._debugStack?.stack) ? { frameUrl: firstAppFrame(x._debugStack?.stack)!.url } : {}),

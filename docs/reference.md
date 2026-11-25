@@ -34,6 +34,8 @@ The browser keeps the same address, so what is tied to it keeps working: the log
 - **Monorepos:** when the root script is a task runner (`turbo dev`, …), Ilse finds the Vite and Next apps in the workspace (`workspaces` in `package.json`, or `pnpm-workspace.yaml`) and runs the app's own `dev` script from its folder — the runner wouldn't pass the hidden port on. Several apps: it asks once which one to open.
 - **The hidden port:** `PORT` for everyone, plus `--port` for Next and Vite (a flag after the script's own wins over it).
 - **Port already in use:** Ilse says who holds it (another `ilse`, or another app's dev server) and offers, best first: a free port your code names (`.env.example`, `next.config`, `vite.config`, auth/middleware files, the dev script); stopping the other `ilse` when your login is tied to that port; the next free port — with a warning when the login points to the taken one; or a port you type. The choice is saved for this project. Real `.env` files are never opened: only committed templates, and only `host:port` and the variable name are kept. When the code doesn't say, Ilse asks once whether the login depends on the port. It never puts the toolbar over a server it didn't start. Without a terminal to ask, it stops and lists the ports your code names. The toolbar is used right on the app's port only when the project's `vite.config` loads `ilse-design/vite`.
+- **Already running (Next):** Next allows one dev server per folder. When one of this project is already running, Ilse uses it, and says so in one line. If that server stops, Ilse starts its own behind the same address: reload the page.
+- **Too many cookies:** the browser sends every `localhost` cookie to every port, and with a few local apps logged in they can pass Node's 16 KB limit (HTTP 431). Ilse's proxy and the dev server it starts take up to 64 KB; past that, or from a server Ilse didn't start, a page says to open `127.0.0.1:<port>` or clear the cookies of `localhost`.
 - **Separate address:** `--separate` for one run, or choose it in the first run. You run the dev server yourself and Ilse opens `localhost:4700`; anything tied to the original address (logins, callbacks) stays there.
 - **Not covered yet:** a dev script that starts several servers at once (they'd all get the same `PORT`), apps that need other workspace services running alongside, and frameworks that read neither `PORT` nor `--port`. Use `--separate` there.
 
@@ -51,7 +53,7 @@ The first run asks how Ilse should hand annotations to your agent:
 
 - **3 ways to point:** click an element, select text, or draw an area.
 - **Select the parent:** the ↰ button on the note card moves the selection up to the containing element (library wrappers of the same size are skipped). The element's label at the top of the card opens its place in the page: a couple of elements above, the ones beside it and the ones inside, named by the component that renders them. Hover a row to see it on the page; click to select it. A click inside an SVG selects the whole `<svg>`; ⌘-click (Ctrl-click) selects the exact element, such as one path of an icon.
-- **Property panel:** text, position (static · relative · absolute · fixed · sticky with X/Y; out of the flow the element drags anywhere, ignoring its parent's layout), layout (width/height as Fixed · Hug · Fill, flow, alignment, gap, padding and margin per side), typography (size, weight, line height, left · center · right alignment), colors, stroke, radius, opacity and effects (shadow, blur, backdrop blur — shown when the element has them, "+" adds a shadow) — with your project's scale and tokens.
+- **Property panel:** text, position (static · relative · absolute · fixed · sticky with X/Y; out of the flow the element drags anywhere, ignoring its parent's layout), layout (width/height as Fixed · Hug · Fill, flow, alignment, gap, padding and margin per side), typography (size, weight, line height, left · center · right alignment), colors, stroke, radius, opacity and effects (shadow, blur, backdrop blur — shown when the element has them, "+" adds a shadow) — with your project's scale and tokens. Drag a value sideways to change it: on a scale it walks the steps one by one (never off the scale), on a free number (X, Y, a fixed width) it moves the number, Shift ×10, Alt ×0.1; a click still opens the list or types.
 - **None:** spacing, radius and stroke-weight lists start with *None* (zero) — no padding, square corners, no stroke.
 - **Stroke:** *+* adds one and shows its color, weight, style and sides; *−* takes it away.
 - **Apply to — only this one or all:** when the element belongs to a component repeated on the page. With *All · N*, panel edits preview on every instance at once.
@@ -71,9 +73,10 @@ The first run asks how Ilse should hand annotations to your agent:
 - **Run:** sends the pending annotations together. **Stop:** interrupts the agent; annotations go back to pending.
 - **Live progress:** see each fix land as the agent works.
 - **Pause animations:** freeze tooltips, toasts and dropdowns to annotate them.
+- **Hover (property panel):** when the selected element changes on hover (its `:hover` styles, or a card or tooltip that opens), **Turn on hover** holds it hovered. The pointer can leave for the card and select it; the hover lasts until **Turn off**, or until nothing is selected.
 - **Hide markers:** hide the annotation dots on the page.
 - **Clear annotations:** removes them all (click twice to confirm).
-- **Settings:** connection and annotation status, the Claude account in use, **Design System** (paste a W3C `tokens.json` when Ilse doesn't find your tokens), **Snap to grid**, **Connect agent** (MCP), **Logs**, **Project memory** ([what it shows](how-it-works.md#project-memory)), **Keyboard shortcuts** and **Language** (English / Portuguese, detected automatically).
+- **Settings:** connection and annotation status, the Claude account in use, **Design System** (paste a W3C `tokens.json` when Ilse doesn't find your tokens), **Snap to grid**, **Sounds** (one when a change lands, another when something needs you: an error, a question, a login; on by default), **Connect agent** (MCP), **Logs**, **Project memory** ([what it shows](how-it-works.md#project-memory)), **Keyboard shortcuts** and **Language** (English / Portuguese, detected automatically).
 
 ### Keyboard shortcuts
 
@@ -162,7 +165,7 @@ It never records your note text, prompts, code or file paths.
 
 ## Ilse Pro: signing in
 
-`ilse login` shows a code and opens the Ilse site; confirm it there and Pro turns on the next time Ilse runs. No key to copy. If Pro isn't on the machine yet, `ilse login` offers to install it.
+`ilse login` shows a code and opens the Ilse site; confirm it there and Pro turns on the next time Ilse runs. No key to copy. If your account has Pro and it isn't on the machine yet, `ilse login` installs it right away. Signing in from the toolbar (Settings → Accounts → Ilse Pro) does the same. Without Ilse installed globally, run it as `npx ilse-design@latest login`.
 
 `ilse upgrade` installs or updates Pro: it downloads it with this machine's access, checks it was signed by Ilse (a package that fails the check isn't installed) and puts it in `~/.ilse/pro/<version>/`, with `~/.ilse/pro/current` pointing at it. Earlier versions stay there. A Pro released after your license's updates end isn't installed, and doesn't turn on.
 
