@@ -13,6 +13,7 @@ import { createPortal } from 'react-dom';
 import { radius, color, shadow, font } from './tokens.js';
 import { t } from '../i18n/index.js';
 import { uiDocument, uiLayer, uiWindow } from './screens.js';
+import { PX_PER_STEP, startIndex, startScrub, stepsFor } from './scrub.js';
 
 export interface ValueOption { label: string; value: string; hint?: string }
 
@@ -26,7 +27,7 @@ export function visibleWindow<T>(options: T[], currentIndex: number, size = VISI
   return options.slice(start, start + size);
 }
 
-export function ValueSelect({ options, current, display, offToken, prefix, groupLabel, onPick, onCustom, compact }: {
+export function ValueSelect({ options, current, display, offToken, prefix, groupLabel, onPick, onCustom, compact, scrub }: {
   options: ValueOption[];
   /** Value of the option currently in effect, when one is */
   current?: string;
@@ -39,8 +40,12 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
   onPick: (value: string) => void;
   onCustom?: () => void;
   compact?: boolean;
+  /** Drag sideways to walk the options in order (a scale), a click still opens the list */
+  scrub?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [hover, setHover] = useState(false);
+  const [scrubbing, setScrubbing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -73,6 +78,27 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
 
   const close = () => { setOpen(false); setExpanded(false); };
 
+  const values = options.map(o => o.value);
+  const onScrub = (e: React.PointerEvent) => {
+    const from = startIndex(values, current, display);
+    if (from < 0) return;
+    let last = from;
+    setScrubbing(true);
+    const done = () => { setScrubbing(false); win.removeEventListener('pointerup', done, true); };
+    const win = uiWindow();
+    win.addEventListener('pointerup', done, true);
+    startScrub(e, (dx) => {
+      const i = Math.min(Math.max(from + stepsFor(dx, PX_PER_STEP), 0), values.length - 1);
+      if (i === last) return;
+      last = i;
+      setOpen(false);
+      onPick(values[i]);
+    }, () => {});
+  };
+  // Where the value sits on its scale, drawn as a fill behind it
+  // The first step (None, 0) is an empty track, the last a full one
+  const filled = scrub && currentIndex >= 0 ? currentIndex / (options.length - 1) : 0;
+
   // Below the trigger, or above when there's no room
   const listHeight = Math.min((shown.length + 3) * 24 + 12, 320);
   const below = anchor ? uiWindow().innerHeight - anchor.bottom > listHeight + 8 : true;
@@ -82,20 +108,42 @@ export function ValueSelect({ options, current, display, offToken, prefix, group
       <button
         ref={triggerRef}
         onClick={() => setOpen(v => !v)}
-        title={offToken ? t('select.offScale') : display}
+        onPointerDown={scrub ? onScrub : undefined}
+        title={offToken ? t('select.offScale') : scrub ? t('select.scrub', { value: display }) : display}
         style={{
           flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4,
-          fontSize: 11, fontFamily: font.sans, textAlign: 'left', cursor: 'pointer',
+          fontSize: 11, fontFamily: font.sans, textAlign: 'left', cursor: scrub ? 'ew-resize' : 'pointer', touchAction: scrub ? 'none' : undefined,
           padding: compact ? '3px 4px' : '3px 4px 3px 6px', borderRadius: radius.sm,
           border: `1px solid ${open ? color.ring : offToken ? '#E8A33D' : color.border}`,
           backgroundColor: color.background, color: color.foreground,
+          position: scrub ? 'relative' : undefined, overflow: scrub ? 'hidden' : undefined,
         }}
+        onMouseEnter={scrub ? () => setHover(true) : undefined}
+        onMouseLeave={scrub ? () => setHover(false) : undefined}
       >
-        {prefix && <span style={{ color: color.mutedForeground, flexShrink: 0, display: 'flex' }}>{prefix}</span>}
-        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {/* The value's place on its scale: a fill up to it, and a handle at its edge while pointed at */}
+        {scrub && currentIndex >= 0 && (
+          <span aria-hidden style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+            <span style={{
+              position: 'absolute', top: 0, bottom: 0, left: 0, width: `${filled * 100}%`,
+              backgroundColor: `color-mix(in srgb, ${color.mutedForeground} 16%, transparent)`,
+              transition: scrubbing ? 'none' : 'width 0.12s',
+            }} />
+            {(hover || scrubbing) && (
+              <span style={{
+                position: 'absolute', top: 3, bottom: 3, width: 3, borderRadius: 2,
+                left: `calc(${filled * 100}% - 4px)`, backgroundColor: '#fff',
+                boxShadow: '0 0 0 0.5px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.2)',
+                transition: scrubbing ? 'none' : 'left 0.12s',
+              }} />
+            )}
+          </span>
+        )}
+        {prefix && <span style={{ position: 'relative', color: color.mutedForeground, flexShrink: 0, display: 'flex' }}>{prefix}</span>}
+        <span style={{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {display}
         </span>
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, color: color.mutedForeground }}>
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" style={{ position: 'relative', flexShrink: 0, color: color.mutedForeground }}>
           <path d="m4 6 4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>

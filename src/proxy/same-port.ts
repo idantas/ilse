@@ -200,6 +200,16 @@ export async function pickHiddenPort(appPort: number): Promise<number> {
   throw new Error('no free port for the dev server');
 }
 
+/**
+ * The cookies of `localhost` go to every port: past Node's 16 KB header limit the dev
+ * server answers 431. The ones Ilse starts take as much as its proxy does.
+ */
+export function withHeaderSize(nodeOptions: string | undefined, size = 64 * 1024): string {
+  const opts = (nodeOptions ?? '').trim();
+  if (/--max-http-header-size\b/.test(opts)) return opts;
+  return `${opts} --max-http-header-size=${size}`.trim();
+}
+
 export interface RunningDevServer {
   child: ChildProcess;
   hiddenPort: number;
@@ -229,7 +239,7 @@ export async function startHiddenDevServer(
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const child = spawn(npm, ['run', plan.script, ...(args.length ? ['--', ...args] : [])], {
     cwd,
-    env: { ...process.env, ...env, FORCE_COLOR: process.env.FORCE_COLOR ?? '1' },
+    env: { ...process.env, ...env, FORCE_COLOR: process.env.FORCE_COLOR ?? '1', NODE_OPTIONS: withHeaderSize(process.env.NODE_OPTIONS) },
     stdio: ['ignore', 'pipe', 'pipe'],
     // Own process group: Ctrl+C on Ilse stops the dev server and whatever it spawned
     detached: process.platform !== 'win32',
@@ -259,6 +269,9 @@ export async function startHiddenDevServer(
         holder.feed(l);
         // The other server's address isn't where this one is
         if (!holder.seen) for (const p of loggedPorts(l)) if (p !== hiddenPort) named.add(p);
+        // Next refusing a second server: Ilse uses the first one or says how to stop it,
+        // so npm's "command failed" that follows isn't a failure to show
+        if (holder.seen) continue;
         log(rewriteLog(l, hiddenPort, plan.appPort));
       }
     });

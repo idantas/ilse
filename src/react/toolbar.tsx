@@ -33,12 +33,13 @@ import { watchRepaints, REPAINT_WAIT_MS, sameText, softRefresh } from './repaint
 import { copyPlacement, lineOf, type Neighbour } from './copy-place.js';
 import { watchPageErrors, newErrors, summarizeError } from './page-errors.js';
 import { useImageInput, InlineAttachments } from './image-input.js';
-import { CatalogPanel, CatalogWindow, bestSnapshot, type DsInfo, type ComponentNotes } from './catalog-panel.js';
+import { CatalogPanel, CatalogWindow, EditCard, bestSnapshot, type DsInfo, type DsProgress, type ComponentNotes } from './catalog-panel.js';
 import { lookNote, readLookAlikes, type LookAlikeView } from './look-alike.js';
 import { decideEntry, lookEntry, readConsistency, reviewEstimate, screenKey, swapStyles, type Decision, type ReviewPiece } from './consistency.js';
 import { ConsistencyLocked, ConsistencyPanel, agentRow, ruleRow, type AgentFinding, type ConsistencyRow, type ConsistencyState, type ReviewState, type RowAction, type AppliedRow, type FixAllItem } from './consistency-panel.js';
 import { DsViewer, type DsEditing, type DsViewData, type DsCheckState } from './ds-viewer.js';
 import { componentAt, componentNameAt, findInstances, type ComponentHit, instanceAt, liftAnchor, namesOnPage, sameVariant, snapshotPage, variantKey, type InstanceRef, type CatalogItem, type CatalogSnapshot } from './catalog-snapshot.js';
+import { componentizeNote, kitFolderOf } from '../design-context/componentize.js';
 import { ComponentSection, type PropChange, type PropSourceView } from './component-section.js';
 import { endLiveProps, hasLiveProps, setLiveProps } from './live-props.js';
 import { canStage, exampleRequest, stage, type StageRequest } from './preview-stage.js';
@@ -56,6 +57,7 @@ import { beginDrag, beginInsert, anchorOf as insertAnchor, type LiveInsert, begi
 import type { StyleChange, StyleData } from '../types.js';
 import { toggleFreeze, isFrozen } from './freeze.js';
 import { shieldPage } from './shield.js';
+import { stopHover } from './hover-state.js';
 import { MemoryPanel, type MemoryData } from './memory-panel.js';
 import { TestSetup, parseOffer, type TestOffer, type TestGroup, type ScreenSize } from './test-setup.js';
 import { FindingActions, TestReport, type ReportTab } from './test-report.js';
@@ -70,6 +72,7 @@ import { ScreensMenu, ScreensView, useScreensEmbed, leaveScreens } from './scree
 import { radius, color, shadow, ilse, font, modeAccent, proText } from './tokens.js';
 import { t, detectLocale, setLocale, getLocale, toolActivity, type Locale, type MessageKey } from '../i18n/index.js';
 import { withShortcut, isTyping, doublePress, mod, SHORTCUT_GROUPS } from './shortcuts.js';
+import { playSound, soundsOn, setSoundsOn } from './sound.js';
 
 // ── Clipboard fallback: format annotations as markdown ──────────────────────
 
@@ -110,7 +113,7 @@ function formatAllAsMarkdown(annotations: AnnotationDraft[]): string {
 
 type MarkerType = 'element' | 'text' | 'area';
 
-type DraftIntent = 'fix' | 'change' | 'create' | 'move' | 'resize' | 'style';
+type DraftIntent = 'fix' | 'change' | 'create' | 'move' | 'resize' | 'style' | 'componentize';
 type DraftSeverity = 'blocking' | 'important' | 'suggestion';
 
 /** Panel edits, written out for the agent (see AutoContext). */
@@ -338,6 +341,7 @@ const INTENT_LABELS: Record<DraftIntent, string> = {
   move: 'move →',
   resize: 'resize →',
   style: 'style →',
+  componentize: 'component →',
 };
 
 function inferDraftIntent(note: string, hasElement: boolean): DraftIntent {
@@ -396,6 +400,8 @@ interface Scope {
   component: string; count: number; choice: 'one' | 'all';
   /** Places it's written in the code (catalog): one on screen can still be on other screens */
   uses?: number;
+  /** Defined in this package (node_modules), not in the project */
+  package?: string;
 }
 
 interface AnnotationDraft {
@@ -475,6 +481,8 @@ interface PopoverRect {
 }
 
 interface PendingCapture {
+  /** "Make it a component": the agent extracts it and replaces where it repeats (sent at once) */
+  componentize?: boolean;
   /** The element's text, retyped in the panel */
   textEdit?: TextEdit;
   /** Props of the component it is, changed in the Component section */
@@ -804,6 +812,12 @@ function AnnotationPopover({
           }}>
             {`<${scope.component}>`}
           </span>
+        </div>
+      )}
+      {/* All of a package's component: its code isn't in this project, so the agent can't change it here */}
+      {scope?.choice === 'all' && scope.package && (
+        <div style={{ margin: '-4px 0 8px', fontSize: 11, lineHeight: 1.45, color: color.mutedForeground }}>
+          {t('toolbar.scope.package', { component: `<${scope.component}>`, package: scope.package })}
         </div>
       )}
 
@@ -1434,6 +1448,8 @@ type ProAccountState = {
   pending: { userCode: string; uri: string } | null;
   last: 'ok' | 'denied' | 'expired' | 'cancelled' | 'failed' | null;
   restartNeeded: boolean;
+  installing?: boolean;
+  installFailed?: boolean;
 };
 
 export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; demoEndpoint?: string } = {}) {
@@ -1521,10 +1537,19 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const [catalog, setCatalog] = useState<{ items: CatalogItem[]; snapshots: Record<string, CatalogSnapshot[]> } | null>(null);
   // The Library's design system: "Create" until .ilse/ds exists, then "Export"
   const [dsInfo, setDsInfo] = useState<DsInfo | null>(null);
+  const [dsProgress, setDsProgress] = useState<DsProgress | null>(null);
+  const dsViewerOpen = useRef(false);
+  // The DS window's .zip, asked of the CLI and answered on the socket
+  const dsZipWait = useRef<((zip: { name: string; data: string } | null) => void) | null>(null);
   // The DS window: opened by Create DS / Export (just written) or by the DS's path in the Library
   const [dsViewer, setDsViewer] = useState<{ data: DsViewData; justWritten: boolean } | null>(null);
+  dsViewerOpen.current = !!dsViewer;
   // The agent's draft of a component's reasoning, waiting for the person to keep it
   const [dsSuggestion, setDsSuggestion] = useState<DsEditing['suggestion']>(null);
+  /** A component the agent just made from an element: shown in a card to rename and explain */
+  const [componentized, setComponentized] = useState<{ name: string; file?: string; whenToUse?: string; avoid?: string; uses?: number; replaced?: number; listed: boolean; at: DOMRect } | null>(null);
+  /** Where the element was when asked: the card opens beside it */
+  const componentizeAt = useRef<DOMRect>(new DOMRect(window.innerWidth / 2, 120, 0, 0));
   // Why each component exists, from the DS: the Library's cards show and edit it
   const [dsNotes, setDsNotes] = useState<ComponentNotes>({});
   const dsJustWritten = useRef(false);
@@ -1622,6 +1647,13 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     setSnapSize(val);
     gridSize = snapEnabled ? val : 1;
     try { localStorage.setItem('ilse-grid-size', String(val)); } catch { /* ignore */ }
+  };
+  const [soundOn, setSoundOn] = useState(() => typeof window === 'undefined' || soundsOn());
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    setSoundsOn(next);
+    if (next) playSound('done');
   };
   const toggleSnap = () => {
     const next = !snapEnabled;
@@ -1913,6 +1945,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   const snapRectsRef = useRef<Array<{ top: number; left: number; right: number; bottom: number; centerX: number; centerY: number }>>([]);
   const contentRectsRef = useRef<SnapRect[]>([]);
   const [pendingCapture, setPendingCapture] = useState<PendingCapture | null>(null);
+  // A hover held from the panel lasts while something is selected (the card it opened
+  // included); nothing selected, or Ilse closed, lets the element go
+  useEffect(() => { if (!pendingCapture || !isOpen) stopHover(); }, [pendingCapture, isOpen]);
   // When the current capture started — composeMs in the journal is "designer effort"
   const captureStartedAt = useRef<number>(0);
   const captureOpen = !!pendingCapture;
@@ -2096,7 +2131,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         if (catalogFullRef.current) loadCatalog(); else send({ type: 'catalog', lite: true });
         setTimeout(() => {
           const errors = newErrors(pageErrors.current?.seen() ?? [], since, writtenAt);
-          if (errors.length) setPageError({ changeSetId, files, errors });
+          if (errors.length) { setPageError({ changeSetId, files, errors }); playSound('attention'); }
         }, ERROR_WAIT_MS);
       }
       if (msg.type === 'annotated' && msg.annotation) {
@@ -2115,6 +2150,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         const a = msg.annotation as Record<string, unknown>;
         resolvedInRunRef.current = true;
         const draft = annotationsRef.current.find(d => d.id === a.id);
+        if (draft && draft.status !== 'resolved' && a.intent !== 'chat' && a.intent !== 'analyze') playSound('done');
         // What the designer previewed (a style, a copy, a hidden element) stands in for the real
         // change until the page repaints with it — never a blink back to the old look
         const since = draft?.id ? sinceOf([draft.id]) : runStart.current;
@@ -2211,14 +2247,17 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, confirm: undefined, waiting: undefined, lines: [...prev.lines, line].slice(-30) } : prev);
       }
       if (msg.type === 'journey_needs' && Array.isArray(msg.needs)) {
+        playSound('attention');
         const needs = (msg.needs as unknown[]).filter((n): n is string => typeof n === 'string');
         setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, needs } : prev);
       }
       if (msg.type === 'journey_waiting') {
+        playSound('attention');
         setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, waiting: { need: String(msg.need ?? ''), say: String(msg.say ?? '') } } : prev);
         setJourneysOpen(true);
       }
       if (msg.type === 'journey_confirm') {
+        playSound('attention');
         setJourneyLive(prev => prev && prev.id === msg.id ? { ...prev, confirm: String(msg.name ?? '') } : prev);
         setJourneysOpen(true);
       }
@@ -2228,6 +2267,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         celebrate('test');
       }
       if (msg.type === 'journey_error') {
+        playSound('attention');
         setJourneyLive(null);
         setJourneySuggesting(false);
         setJourneyError(msg.reason === 'no-browser' ? t('toolbar.testNoBrowser')
@@ -2235,7 +2275,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           : msg.reason === 'no-agent' ? t('journeys.noRecording') : t('toolbar.testFailed'));
       }
       if (msg.type === 'test_checking') { setTestRun({ phase: 'checking' }); setTestSteps([t('toolbar.testStepChecking')]); }
-      if (msg.type === 'test_login_needed') { setTestRun({ phase: 'login-ask', expired: msg.expired === true }); if (toolbarModeRef.current === 'test') setScanOpen(true); }
+      if (msg.type === 'test_login_needed') { playSound('attention'); setTestRun({ phase: 'login-ask', expired: msg.expired === true }); if (toolbarModeRef.current === 'test') setScanOpen(true); }
       if (msg.type === 'test_login_open') setTestRun({ phase: 'login-open' });
       if (msg.type === 'test_login_cancelled') setTestRun(null);
       if (msg.type === 'test_stopped') {
@@ -2275,6 +2315,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         setTimeout(() => setClipboardToast(null), 5000);
       }
       if (msg.type === 'test_error') {
+        playSound('attention');
         setTestRun({ phase: 'error', error: msg.reason === 'no-browser' ? t('toolbar.testNoBrowser') : t('toolbar.testFailed') });
         if (toolbarModeRef.current === 'test') setScanOpen(true);
       }
@@ -2300,6 +2341,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         const ids = new Set((msg.annotationIds as string[]) ?? []);
         setAnnotations(prev => prev.map(ann => ann.id && ids.has(ann.id) ? { ...ann, status: 'resolved' as const } : ann));
         const conflicts = (msg.conflicts as string[]) ?? [];
+        if (conflicts.length) playSound('attention');
         setClipboardToast(conflicts.length
           ? saying(t('undo.toastConflicts', { files: conflicts.map(f => f.split('/').pop()).join(', ') }), 'conflict')
           : saying(t('redo.toast')));
@@ -2307,6 +2349,23 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       }
       if (msg.type === 'agent-usage') {
         setAgentInfo(prev => prev ? { ...prev, calls: typeof msg.calls === 'number' ? msg.calls : prev.calls, model: typeof msg.model === 'string' ? msg.model : prev.model } : prev);
+      }
+      // Create DS says what it's doing; with Pro the agent's notes come after, batch by batch
+      if (msg.type === 'ds_progress') {
+        if (msg.phase === 'read') setClipboardToast(saying(t('ds.read', { components: Number(msg.components) || 0, tokens: Number(msg.tokens) || 0 })));
+        if (msg.phase === 'notes') {
+          setDsProgress({ done: Number(msg.done) || 0, total: Number(msg.total) || 0, next: Array.isArray(msg.next) ? msg.next.filter((x: unknown): x is string => typeof x === 'string') : [] });
+          // What landed shows where the person is looking: the Library's cards, the open DS window
+          if (Number(msg.done) > 0) { send({ type: 'catalog', lite: true }); if (dsViewerOpen.current) send({ type: 'ds_view' }); }
+        }
+        if (msg.phase === 'done') {
+          setDsProgress(null);
+          const got = Number(msg.got) || 0, missing = Number(msg.missing) || 0;
+          setClipboardToast(saying(missing ? t('ds.describedSome', { n: got, m: missing }) : t('ds.describedAll', { n: got })));
+          setTimeout(() => setClipboardToast(null), missing ? 9000 : 6000);
+          send({ type: 'catalog', lite: true });
+          if (dsViewerOpen.current) send({ type: 'ds_view' });
+        }
       }
       // Pro rewrites the DS by itself after a change: the banner says so, then the list reads it again
       if (msg.type === 'ds_updating') setDsInfo(prev => prev ? { ...prev, updating: true } : prev);
@@ -2368,6 +2427,16 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           ? { status: 'done', tasks: r.tasks as Array<{ task: string; code: string; problems: string[] }>, rules: Array.isArray(r.rules) ? r.rules as string[] : [] }
           : { status: 'failed' });
       }
+      if (msg.type === 'componentized' && typeof msg.name === 'string') {
+        const str = (v: unknown) => typeof v === 'string' && v ? v : undefined;
+        setComponentized({
+          name: msg.name, file: str(msg.file), whenToUse: str(msg.whenToUse), avoid: str(msg.avoid),
+          uses: typeof msg.uses === 'number' ? msg.uses : undefined, replaced: typeof msg.replaced === 'number' ? msg.replaced : undefined,
+          listed: msg.listed === true, at: componentizeAt.current,
+        });
+        // The Library sees it now (Component section, On this page)
+        loadCatalog();
+      }
       if (msg.type === 'ds_suggest' && typeof msg.name === 'string') {
         const note = msg.note as { whenToUse?: unknown; avoid?: unknown } | null;
         setDsSuggestion({ name: msg.name, note: note && typeof note.whenToUse === 'string' ? { whenToUse: note.whenToUse, ...(typeof note.avoid === 'string' ? { avoid: note.avoid } : {}) } : null });
@@ -2380,15 +2449,21 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         if (msg.view && typeof msg.view === 'object') {
           // A refresh of the open window (Add to AGENTS.md) keeps its "just written"
           const fresh = dsJustWritten.current;
-          setDsViewer(prev => ({ data: msg.view as DsViewData, justWritten: fresh || !!prev?.justWritten }));
+          const publishError = typeof msg.publishError === 'string' ? msg.publishError : undefined;
+          setDsViewer(prev => ({ data: { ...(msg.view as DsViewData), ...(publishError ? { publishError } : {}) }, justWritten: fresh || !!prev?.justWritten }));
         }
         dsJustWritten.current = false;
+      }
+      if (msg.type === 'ds_zip') {
+        dsZipWait.current?.(typeof msg.name === 'string' && typeof msg.data === 'string' ? { name: msg.name, data: msg.data } : null);
+        dsZipWait.current = null;
       }
       if (msg.type === 'memory') {
         setMemoryData({ design: msg.design as MemoryData['design'], pro: !!msg.pro, test: (msg.test ?? null) as MemoryData['test'], looks: Array.isArray(msg.looks) ? msg.looks as MemoryData['looks'] : [] });
         if (Array.isArray(msg.looks)) ignoredLooksRef.current = new Set((msg.looks as Array<{ id?: unknown }>).flatMap(x => typeof x?.id === 'string' ? [x.id] : [])); ignoredLabelsRef.current = new Map((msg.ignoredLooks as Array<{ id?: unknown; label?: unknown }>).flatMap(x => typeof x?.id === 'string' && typeof x?.label === 'string' ? [[x.id, x.label] as [string, string]] : []));
       }
       if (msg.type === 'check-failed' && typeof msg.changeSetId === 'string') {
+        playSound('attention');
         setCheckFailed({
           changeSetId: msg.changeSetId,
           problems: Array.isArray(msg.problems) ? (msg.problems as string[]) : [],
@@ -2396,6 +2471,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         });
       }
       if (msg.type === 'off-page' && typeof msg.changeSetId === 'string') {
+        playSound('attention');
         setOffPage({
           changeSetId: msg.changeSetId,
           files: Array.isArray(msg.files) ? (msg.files as string[]) : [],
@@ -2411,6 +2487,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           ann.id && ids.has(ann.id) ? { ...ann, status: 'pending' as const, resolvedSummary: undefined } : ann
         ));
         const conflicts = (msg.conflicts as string[]) ?? [];
+        if (conflicts.length) playSound('attention');
         setClipboardToast(conflicts.length
           ? saying(t('undo.toastConflicts', { files: conflicts.map(f => f.split('/').pop()).join(', ') }), 'conflict')
           : saying(t('undo.toast')));
@@ -2423,6 +2500,7 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         ));
       }
       if (msg.type === 'error') {
+        playSound('attention');
         // Revert sent annotations back to pending so user can retry
         if (typeof msg.id === 'string') {
           setAnnotations(prev => prev.map(ann =>
@@ -2565,7 +2643,9 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     const wasResized = orig && (Math.abs(curr.width - orig.width) > 3 || Math.abs(curr.height - orig.height) > 3);
     const inferred = inferDraftIntent(pendingCapture.note, hasElement);
     const styleChanges = pendingCapture.styleChanges ?? [];
-    const intent = resolveIntent(inferred, { hasStyle: styleChanges.length > 0, orig, curr });
+    const intent: DraftIntent = pendingCapture.componentize ? 'componentize' : resolveIntent(inferred, { hasStyle: styleChanges.length > 0, orig, curr });
+    // Asked from the panel's button: nothing else to write, it goes to the agent now
+    if (pendingCapture.componentize && pendingCapture.pixelTargetId) sendNow.current.add(pendingCapture.pixelTargetId);
     const fix = consFix.current && consFix.current.targetId === pendingCapture.pixelTargetId ? consFix.current : null;
     consFix.current = null;
     // The fix's other pieces: one panel edit each, previewed already, sent in the same batch
@@ -2706,7 +2786,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     // Part of a component repeated on the page, or written on other screens too? Then the
     // designer chooses: this one (the default) or all of them. Once on screen isn't once in the code
     const owned = componentScope(target);
-    const item = owned ? catalogRef.current?.items.find(i => i.name === owned.component && !i.library) : undefined;
+    // By origin, not name: a project's Badge and its DS's Badge are two components
+    const item = owned ? catalogRef.current?.items.find(i => i.name === owned.component && i.library === !!owned.package && (!owned.package || i.source === owned.package)) : undefined;
     const uses = item && item.uses > 1 ? item.uses : undefined;
     setPanelEpoch(n => n + 1); // a fresh panel for the new element
     setPendingCapture({
@@ -4576,6 +4657,31 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
   };
   /** "Make it a component": the first one selected, the request as a chip on its new note — the person adds words or sends */
   /** 'now' sends it at once; 'edit' opens the note to say more; 'batch' waits for Fix all's send */
+  /**
+   * "Make it a component" (panel): the selected element isn't one the DS lists. The agent
+   * searches where it repeats, writes the component next to the others and replaces every
+   * copy; its answer comes back as `componentized` and opens the card
+   */
+  const componentizeSelected = () => {
+    const pc = pendingCaptureRef.current;
+    if (!pc?.pixelTargetId || pc.insert || pc.markerType !== 'element') return;
+    const el = document.querySelector<HTMLElement>(`[data-ilse-pixel-target="${pc.pixelTargetId}"]`);
+    if (!el) return;
+    componentizeAt.current = el.getBoundingClientRect();
+    const local = componentNameAt(el);
+    const text = (el.innerText ?? '').replace(/\s+/g, ' ').trim();
+    const note = componentizeNote({
+      tag: el.tagName.toLowerCase(), ...(local ? { component: local } : {}), ...(text ? { text } : {}),
+      ...(kitFolderOf(catalog?.items ?? []) ? { kitFolder: kitFolderOf(catalog?.items ?? [])! } : {}),
+      locale: getLocale() === 'pt' ? 'pt' : 'en',
+    });
+    autoConfirm.current = pc.pixelTargetId;
+    setPendingCapture(prev => prev ? {
+      ...prev, scope: undefined, componentize: true,
+      auto: { ...prev.auto, component: note, componentLabel: t('toolbar.chip.componentize') },
+    } : prev);
+  };
+
   const makeLookComponent = (v: LookAlikeView, mode: 'now' | 'edit' | 'batch' = 'now') => {
     const batch = mode === 'batch';
     const all = v.family.variants.reduce((n, x) => n + x.members.length, 0) + v.family.nearMisses.length;
@@ -4870,11 +4976,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
     onDragStart: proCatalog ? startCatalogDrag : undefined,
     onEditFile: proCatalog ? () => send({ type: 'catalog_file' }) : undefined,
     ds: dsInfo,
+    dsProgress,
     onCreateDs: () => exportDs(),
     onExportDs: () => exportDs(),
     onViewDs: () => send({ type: 'ds_view' }),
     notes: dsNotes,
-    editing: dsInfo?.exists ? dsEditing(true) : undefined,
+    editing: dsInfo?.exists ? { ...dsEditing(true), describing: !!dsProgress } : undefined,
   };
 
   /** The draft dragged to another spot: same component and props, a new place in the page and the code */
@@ -5505,6 +5612,33 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
         />
       )}
 
+      {/* ── A component the agent just made: its name and why it exists, to keep or change ── */}
+      {componentized && (
+        <EditCard
+          key={componentized.name}
+          item={{ name: componentized.name }}
+          at={componentized.at}
+          editing={dsEditing(true)}
+          draft={{ whenToUse: componentized.whenToUse, avoid: componentized.avoid }}
+          cancelLabel={t('componentized.later')}
+          onClose={() => setComponentized(null)}
+          banner={
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 12, color: color.foreground }}>
+                <span aria-hidden style={{ color: ilse.brand }}>✓</span>{t('componentized.title')}
+              </span>
+              <span style={{ color: color.mutedForeground }}>
+                {!componentized.listed
+                  ? t('componentized.unlisted', { file: componentized.file ?? componentized.name })
+                  : componentized.uses !== undefined
+                    ? t('componentized.uses', { n: componentized.uses })
+                    : componentized.replaced !== undefined ? t('componentized.replaced', { n: componentized.replaced }) : componentized.file}
+              </span>
+            </div>
+          }
+        />
+      )}
+
       {/* ── Property panel — docked right, open while an element is selected ── */}
       {pendingCapture && !panelClosed && !pendingCapture.sketch && pendingCapture.capture.styles && Object.keys(pendingCapture.capture.styles).length > 0 && (
         <PropertyPanel
@@ -5521,6 +5655,15 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
           catalog={<CatalogPanel {...libraryProps} selected={componentHit?.item.id} />}
           consistency={consistencyPanel}
           consistencyLocked={!proCatalog}
+          componentize={!componentHit && !pendingCapture.insert && pendingCapture.markerType === 'element' && catalog?.items.length
+            && !(pendingCapture.note.trim() || hasAuto(pendingCapture.auto) || pendingCapture.styleChanges?.length || pendingCapture.propEdit)
+            ? (() => {
+              const el = pendingCapture.pixelTargetId ? document.querySelector(`[data-ilse-pixel-target="${pendingCapture.pixelTargetId}"]`) : null;
+              // The page itself (body, a full-screen wrapper) is a screen, not a piece
+              if (!el || el === document.body || el.getBoundingClientRect().height > window.innerHeight * 0.8) return undefined;
+              const local = componentNameAt(el);
+              return { onMake: componentizeSelected, ...(local ? { local } : {}) };
+            })() : undefined}
           componentSection={componentHit ? (
             <ComponentSection
               hit={componentHit}
@@ -5602,10 +5745,12 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
       )}
 
       {dsViewer && (
-        <DsViewer data={dsViewer.data} justWritten={dsViewer.justWritten} onClose={() => setDsViewer(null)} onExport={() => exportDs()} onLinkAgents={() => send({ type: 'ds_agents' })}
+        <DsViewer data={dsViewer.data} justWritten={dsViewer.justWritten} onClose={() => setDsViewer(null)} onExport={() => exportDs()} onLinkAgents={() => send({ type: 'ds_agents' })} onPublish={(to) => send({ type: 'ds_publish', to })}
+          onReveal={() => send({ type: 'ds_reveal' })}
+          onZip={() => new Promise(done => { dsZipWait.current = done; send({ type: 'ds_zip' }); setTimeout(() => { if (dsZipWait.current === done) { dsZipWait.current = null; done(null); } }, 20000); })}
           check={dsCheck} onCheck={() => { setDsCheck({ status: 'running' }); send({ type: 'ds_check' }); }}
           onAddRule={(rules) => send({ type: 'ds_rule', rules })}
-          editing={{ ...dsEditing(false), ...(dsViewer.data.formats ? {} : { onSuggest: undefined }) }} />
+          editing={{ ...dsEditing(false), describing: !!dsProgress, ...(dsViewer.data.formats ? {} : { onSuggest: undefined }) }} />
       )}
 
       {/* ── Annotation popover — out of the way while the element is being dragged,
@@ -6375,6 +6520,8 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                           {proAccount.email ? (
                             <>
                               {mail(proAccount.email)}
+                              {proAccount.installing && <div style={{ marginTop: 4, color: color.mutedForeground }}>{t('proAccount.installing')}</div>}
+                              {proAccount.installFailed && <div style={{ marginTop: 4, color: color.mutedForeground }}>{t('proAccount.installFailed')}</div>}
                               {proAccount.restartNeeded && <div style={{ marginTop: 4, color: ilse.test }}>{t('proAccount.restart')}</div>}
                             </>
                           ) : proAccount.pending ? (
@@ -6475,6 +6622,28 @@ export function IlseToolbar({ demoMode, demoEndpoint }: { demoMode?: boolean; de
                   >
                     <span style={{
                       position: 'absolute', top: 2, left: snapEnabled ? 14 : 2,
+                      width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff',
+                      transition: 'left 0.15s',
+                    }} />
+                  </button>
+                </div>
+
+                {/* Sounds: a chime when a change lands, a warning when something needs the person */}
+                <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 8, paddingTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span title={t('settings.soundsHint')} style={{ color: color.mutedForeground, fontSize: 11, marginRight: 'auto', whiteSpace: 'nowrap' }}>{t('settings.sounds')}</span>
+                  <button
+                    onClick={toggleSound}
+                    role="switch"
+                    aria-checked={soundOn}
+                    aria-label={t('settings.sounds')}
+                    style={{
+                      width: 28, height: 16, borderRadius: 8, border: 'none', cursor: 'pointer', flexShrink: 0,
+                      backgroundColor: soundOn ? ilse.orange : '#d4d4d4',
+                      position: 'relative', transition: 'background-color 0.15s',
+                    }}
+                  >
+                    <span style={{
+                      position: 'absolute', top: 2, left: soundOn ? 14 : 2,
                       width: 12, height: 12, borderRadius: 6, backgroundColor: '#fff',
                       transition: 'left 0.15s',
                     }} />

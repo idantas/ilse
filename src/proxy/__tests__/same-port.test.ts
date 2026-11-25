@@ -3,7 +3,7 @@ import net from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { planSamePort, hiddenPortArgs, rewriteLog, portIsFree, planProject, loggedPorts, LockHolderWatch, stopGroup } from '../same-port.js';
+import { planSamePort, hiddenPortArgs, rewriteLog, portIsFree, planProject, loggedPorts, LockHolderWatch, stopGroup, withHeaderSize } from '../same-port.js';
 import { spawn } from 'node:child_process';
 
 describe('planSamePort', () => {
@@ -23,6 +23,14 @@ describe('planSamePort', () => {
   it('falls back to start, and to null without a script', () => {
     expect(planSamePort({ pkg: { scripts: { start: 'node server.js' } } })).toEqual({ script: 'start', framework: 'other', appPort: 3000, dir: '.' });
     expect(planSamePort({ pkg: {} })).toBeNull();
+  });
+});
+
+describe('withHeaderSize', () => {
+  it('raises the header limit, keeping the person\'s options and their own limit', () => {
+    expect(withHeaderSize(undefined)).toBe('--max-http-header-size=65536');
+    expect(withHeaderSize('--inspect')).toBe('--inspect --max-http-header-size=65536');
+    expect(withHeaderSize('--max-http-header-size=131072')).toBe('--max-http-header-size=131072');
   });
 });
 

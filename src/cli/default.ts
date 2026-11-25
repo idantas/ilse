@@ -1,8 +1,10 @@
 import chalk from 'chalk';
 import { canViewAsFree, readViewAsFree, writeViewAsFree } from '../pro/view-as.js';
 import { loadPro, proEntry } from '../pro/load.js';
-import { askAgent } from '../agent/ask.js';
+import type { DsNote } from '../pro/types.js';
+import { askAgent, type AskOptions } from '../agent/ask.js';
 import { buildCatalog } from '../design-context/catalog.js';
+import { parseComponentized } from '../design-context/componentize.js';
 import { createCatalogFile } from '../design-context/catalog-file.js';
 import { planPropSwap, propSource } from '../context/prop-swap.js';
 import { planInsert } from '../context/insert-component.js';
@@ -58,7 +60,7 @@ import type { FileChange } from '../agent/changeset.js';
 import { projectDir } from '../config/project-dir.js';
 import { ensureScanIgnore } from '../config/scan-ignore.js';
 import { cleanPieces, reviewInput, reviewKey } from '../design-context/consistency-review.js';
-import { createDs, hasDs, dsTokens, dsView, addDsInstructions, dsChanges, dsInput, notesToKeep, dsNotesByName, projectName, addDsRule, writeDsEdit, DS_DIR } from '../design-context/ds-export.js';
+import { createDs, writeDs, dsComponents, publishProblem, setDsPublish, dsZip, publishPath, readDsState, hasDs, dsTokens, dsView, addDsInstructions, dsChanges, dsInput, notesToKeep, dsNotesByName, dsPackageInfo, projectName, addDsRule, writeDsEdit, DS_DIR } from '../design-context/ds-export.js';
 import { planClassEdit } from '../context/token-swap.js';
 import { hasCommitContext, addCommitContext, commitContextChoice, saveCommitContextChoice, instructionsFile } from '../git/commit-context.js';
 
@@ -437,7 +439,7 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
     }
     console.log(chalk.dim(`  ${t('samePort.lockReuse', { port: reused.port, pid: pid ?? '?' })}`));
   }
-  dev?.onExit(({ code, lockHolder }) => {
+  const sayExit = ({ code, lockHolder }: { code: number | null; lockHolder?: { pid?: number } }) => {
     console.log('');
     if (lockHolder) {
       console.log(chalk.red(`  ✗ ${t('samePort.lockStuck', { pid: lockHolder.pid ?? '?' })}`));
@@ -445,7 +447,8 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
     } else {
       console.log(chalk.red(`  ✗ ${t('samePort.exited', { code: String(code) })}`));
     }
-  });
+  };
+  dev?.onExit(sayExit);
   // The script fixed its own port and ignored the hidden one: proxy to where it is.
   // On the app's port when that's still free, else the separate address.
   const ownPort = dev?.ownPort;
@@ -458,6 +461,8 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
       : await startProxy({ target, port: options.proxyPort, bridgePort });
     setOwnPorts([proxy.port, target.port]);
     url = `http://localhost:${proxy.port}`;
+    // The server Ilse borrowed isn't hers: when it stops, the lock is free — start her own
+    if (reused) watchReused(plan, reused, (next) => { proxy.setTarget(next); setOwnPorts([proxy.port, next.port]); }, sayExit);
   } catch (err) {
     dev?.stop();
     console.log(chalk.red(`  ✗ ${t('proxy.failed')}: ${(err as Error).message}`));
@@ -473,6 +478,36 @@ async function startSamePort(options: DefaultOptions, bridgePort: number): Promi
   console.log('');
   if (options.open !== false) openBrowser(url);
   return 'same-port';
+}
+
+/**
+ * Watches a dev server Ilse is using but didn't start. Two misses in a row and it's
+ * gone: Ilse starts the project's own on a hidden port and points the proxy there,
+ * or says the app's server stopped.
+ */
+function watchReused(
+  plan: SamePortPlan, reused: DevTarget,
+  retarget: (target: DevTarget) => void,
+  sayExit: (info: { code: number | null; lockHolder?: { pid?: number } }) => void,
+): void {
+  let misses = 0;
+  const timer = setInterval(async () => {
+    const alive = await findDevServer(plan.dir, [reused.port]);
+    misses = alive ? 0 : misses + 1;
+    if (misses < 2) return;
+    clearInterval(timer);
+    console.log('');
+    console.log(chalk.yellow(`  ${t('samePort.reusedStopped', { port: reused.port })}`));
+    try {
+      const dev = await startHiddenDevServer(plan, (line) => console.log(chalk.dim('  │ ') + line));
+      retarget(dev.target);
+      dev.onExit(sayExit);
+      console.log(chalk.green(`  ✓ ${t('samePort.restarted')}`));
+    } catch {
+      console.log(chalk.red(`  ✗ ${t('samePort.restartFailed')}`));
+    }
+  }, 3000);
+  timer.unref();
 }
 
 /**
@@ -1222,6 +1257,16 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
 
       if (result.ok) {
         const seconds = (result.durationMs / 1000).toFixed(1);
+        // "Make it a component": the agent's line names what it made; the catalog, read again,
+        // confirms it and counts its uses. The toolbar shows it in a card to keep or rename
+        for (const ann of annotations) {
+          if (ann.intent !== 'componentize') continue;
+          const made = parseComponentized(result.summaries.get(ann.id));
+          const entry = made ? buildCatalog(cwdRoot).find(c => c.name === made.name && !c.library) : undefined;
+          const summary = made ? t('cli.componentized', { name: made.name }) : t('toolbar.resolved');
+          deferredSummaries.set(ann.id, summary);
+          if (made) broadcast({ type: 'componentized', id: ann.id, ...made, ...(entry ? { file: entry.source, uses: entry.uses, listed: true } : { listed: false }) });
+        }
         // Resolve deferred single-annotation batches now that process exited
         for (const [id, summary] of deferredSummaries) {
           resolvedIds.add(id);
@@ -1422,15 +1467,53 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         if (!ch || !(ch.added.length + ch.removed.length + ch.changed.length + ch.tokens.length)) return;
         dsWriting = true;
         broadcast({ type: 'ds_updating', changes: ch });
-        await createDs(cwdRoot, catalog, tokens, { formats: pro.dsFormats, notes: pro.dsNotes, ask: (prompt, opts) => askAgent(cwdRoot, prompt, opts) });
+        // Written now without AI; the notes of what's new come after, batch by batch
+        await createDs(cwdRoot, catalog, tokens, { formats: pro.dsFormats });
         broadcast({ type: 'ds_updated', changes: ch });
+        describeDs();
       } catch { broadcast({ type: 'ds_updated', failed: true }); } finally { dsWriting = false; }
     }, 4000);
+  };
+  // Pro: each component's "when to use", by the user's agent, after the DS is written — the DS
+  // doesn't wait for it (hundreds of components are many minutes). The most used first; each
+  // batch that lands is written at once, so a stop halfway keeps what came, and the next run
+  // (this one again, or the next start) asks only for what's still missing
+  let describing = false;
+  const describeDs = () => {
+    if (describing || !proServer || !pro?.dsNotes || !hasDs(cwdRoot)) return;
+    const catalog = buildCatalog(cwdRoot);
+    const tokens = detectTokens(cwdRoot).tokens;
+    const missing = notesToKeep(cwdRoot, catalog).stale;
+    if (!missing.length) return;
+    describing = true;
+    const ask = (prompt: string, opts?: AskOptions) => askAgent(cwdRoot, prompt, opts);
+    const write = (notes: Record<string, DsNote>) => {
+      if (!Object.keys(notes).length) return;
+      try { writeDs(cwdRoot, catalog, tokens, pro.dsFormats, { ...notesToKeep(cwdRoot, catalog).kept, ...notes }); } catch { /* unwritable now: the next batch tries again */ }
+    };
+    const first = dsComponents(missing).slice(0, 24).map(c => c.name);
+    broadcast({ type: 'ds_progress', phase: 'notes', done: 0, total: missing.length, next: first });
+    const input = dsInput(cwdRoot, join(cwdRoot, DS_DIR), projectName(cwdRoot), missing, dsTokens(tokens, cwdRoot));
+    let got = 0;
+    void pro.dsNotes(input, ask, (notes, done, total, next) => {
+      got += Object.keys(notes).length;
+      write(notes);
+      broadcast({ type: 'ds_progress', phase: 'notes', done, total, next, got });
+    })
+      // A Pro without onBatch answers only at the end: written then
+      .then(all => { if (!got) { write(all); got = Object.keys(all).length; } })
+      .catch(() => { /* the agent failed: what landed is written, the rest is asked next time */ })
+      .finally(() => {
+        describing = false;
+        broadcast({ type: 'ds_progress', phase: 'done', got, missing: missing.length - got });
+      });
   };
   dsAfterChange = refreshDs;
   // Before the dev server (same-port starts it next) reads the project: Ilse's folder is never a source
   if (existsSync(join(cwdRoot, '.ilse'))) ensureScanIgnore(cwdRoot);
   refreshDs();
+  // A run stopped halfway (Ilse closed while the agent described): what's missing is asked again
+  setTimeout(describeDs, 8000);
   // The Consistency tab's reviews, per screen, while this ilse runs
   const reviewCache = new Map<string, unknown[] | { findings: unknown[]; decisions?: unknown[] }>();
 
@@ -1441,6 +1524,14 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     openBrowser,
     proActive: !!proServer,
     proInstalled: existsSync(proEntry()),
+    installPro: async () => {
+      const { upgradePro } = await import('../pro/upgrade.js');
+      const r = await upgradePro();
+      if (r.status !== 'installed' && r.status !== 'up-to-date') return false;
+      // The account page shows Pro on this machine now, not at the next start's check
+      await dailyCheck({ ilseVersion: (createRequire(import.meta.url)('../../package.json') as { version: string }).version, proVersion: r.version }).catch(() => undefined);
+      return true;
+    },
   });
 
   const server = await startServer({
@@ -1484,6 +1575,8 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
         // Pro keeps it alive: what changed since it was written, for the person to approve
         ds: {
           exists: hasDs(cwdRoot), tokens: dsTokens(tokens, cwdRoot).length, formats: !!(proServer && pro?.dsFormats),
+          // Connected to a DS package (`@acme/ui`): it is the DS, the Library shows it instead of "Create"
+          package: dsPackageInfo(cwdRoot),
           ...(proServer && pro?.dsFormats ? { changes: dsChanges(cwdRoot, entries, tokens) } : {}),
         },
       };
@@ -1498,10 +1591,37 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
     saveSnapshots: (items) => { proServer?.catalog?.saveSnapshots(items); },
     // Create DS, only when asked, no AI: DESIGN.md is Free; Pro adds tokens.json and the registry
     // (not while the owner views as Free — proServer is off then)
-    dsExport: () => createDs(cwdRoot, buildCatalog(cwdRoot), detectTokens(cwdRoot).tokens, proServer ? {
-      formats: pro?.dsFormats, notes: pro?.dsNotes, ask: (prompt, opts) => askAgent(cwdRoot, prompt, opts),
-    } : undefined),
+    // Create DS / Export: written at once, no AI, saying what it read; with Pro the notes come after
+    dsExport: async () => {
+      const catalog = buildCatalog(cwdRoot);
+      const tokens = detectTokens(cwdRoot).tokens;
+      broadcast({ type: 'ds_progress', phase: 'read', components: dsComponents(catalog).length, tokens: tokens.length });
+      const out = await createDs(cwdRoot, catalog, tokens, proServer ? { formats: pro?.dsFormats } : undefined);
+      setTimeout(describeDs, 0);
+      return out;
+    },
     dsAgents: () => addDsInstructions(cwdRoot),
+    dsPublish: (to) => {
+      const problem = to === null ? null : publishProblem(cwdRoot, to);
+      if (problem) return { error: problem };
+      const catalog = buildCatalog(cwdRoot);
+      try {
+        setDsPublish(cwdRoot, to, { components: dsComponents(catalog).length, tokens: dsTokens(detectTokens(cwdRoot).tokens, cwdRoot).length });
+        return {};
+      } catch (e) { return { error: (e as Error).message === 'no-ds' ? 'no-ds' : 'failed' }; }
+    },
+    dsZip: () => {
+      if (!hasDs(cwdRoot)) return null;
+      const catalog = buildCatalog(cwdRoot);
+      return dsZip(cwdRoot, { components: dsComponents(catalog).length, tokens: dsTokens(detectTokens(cwdRoot).tokens, cwdRoot).length });
+    },
+    dsReveal: () => {
+      const to = readDsState(cwdRoot)?.publishTo;
+      if (!to) return;
+      const dir = publishPath(cwdRoot, to);
+      const [cmd, args] = process.platform === 'darwin' ? ['open', [dir]] : process.platform === 'win32' ? ['explorer', [dir]] : ['xdg-open', [dir]];
+      spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+    },
     dsCheck: async () => {
       if (!proServer || !pro?.dsCheck || !hasDs(cwdRoot)) return null;
       const catalog = buildCatalog(cwdRoot);
@@ -1620,6 +1740,12 @@ export async function defaultCommand(options: DefaultOptions = {}): Promise<void
       process.exit(0);
     }
   });
+
+  // Closed by kill or by its terminal: exit for real, so `process.on('exit')` stops the
+  // dev server Ilse started — else it stays behind holding the project's lock
+  for (const sig of ['SIGTERM', 'SIGHUP'] as const) {
+    process.on(sig, () => { killAllActiveProcesses(); process.exit(0); });
+  }
 
   await new Promise(() => {});
 }

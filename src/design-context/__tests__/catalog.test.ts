@@ -178,3 +178,39 @@ export default function P() { return <Button href="/" variant="outline">Go</Butt
     expect(variant.values.sort()).toEqual(['dark', 'ghost', 'outline', 'primary']);
   });
 });
+
+describe('the comments the code puts on props', () => {
+  it('reads them from the type and from over a cva() variant and its values', () => {
+    const cwd = project({
+      'src/components/Field.tsx': `
+import { cva, type VariantProps } from 'class-variance-authority';
+const fieldVariants = cva('border', {
+  variants: {
+    // The two-step size ladder shared by every control.
+    size: {
+      default: 'h-9',
+      // dense surfaces: tables and filters
+      compact: 'h-7',
+    },
+  },
+});
+interface FieldProps extends VariantProps<typeof fieldVariants> {
+  /**
+   * Hides the provider picker when the screen already knows it.
+   */
+  hideProvider?: boolean;
+  // eslint-disable-next-line
+  label: string;
+}
+export function Field({ size, hideProvider, label }: FieldProps) {
+  return <input className={fieldVariants({ size })} aria-label={label} />;
+}`,
+      'src/App.tsx': `import { Field } from './components/Field';\nexport default function App() { return <Field label="Key" />; }`,
+    });
+    const field = buildCatalog(cwd).find(c => c.name === 'Field')!;
+    const doc = (n: string) => field.props.find(p => p.name === n)?.doc;
+    expect(doc('size')).toBe('The two-step size ladder shared by every control. compact: dense surfaces: tables and filters');
+    expect(doc('hideProvider')).toBe('Hides the provider picker when the screen already knows it.');
+    expect(doc('label')).toBeUndefined();
+  });
+});

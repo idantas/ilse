@@ -31,6 +31,15 @@ describe('scope', () => {
     expect(one).toContain('`page.tsx:30`');
     expect(one).toContain('Do not change <Card>\'s definition');
   });
+
+  it('a package\'s component: never a same-named project file, the agent says where it must change', () => {
+    const fromPkg = { ...ann('all', 'Card'), scope: { component: 'Card', count: 6, choice: 'all' as const, package: '@acme/ui' } };
+    // The locator found a project file whose owner is also called Card: not the one on screen
+    expect(swapMatchesScope(fromPkg)).toBe(false);
+    const text = formatScope(fromPkg)!;
+    expect(text).toContain('defined in the package `@acme/ui`');
+    expect(text).toContain('do not edit another file of this project in its place');
+  });
 });
 
 import { readHint } from '../augment.js';

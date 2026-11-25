@@ -12,6 +12,8 @@
  * the children), on cancel, or when it expires.
  */
 
+import { creatorUrl, isPackageUrl, packageOfUrl } from './component-origin.js';
+
 // ── Pure: where does a dragged item land? ─────────────────────────────────
 
 export type Axis = 'row' | 'column' | 'grid';
@@ -156,7 +158,7 @@ export function selectableParent(el: Element): Element | null {
   return null;
 }
 
-export function componentScope(el: Element): { component: string; count: number } | null {
+export function componentScope(el: Element): { component: string; count: number; package?: string } | null {
   const owner = fiberOf(el)?._debugOwner;
   const component = nameOf(owner);
   if (!owner || !component) return null;
@@ -169,7 +171,10 @@ export function componentScope(el: Element): { component: string; count: number 
     if (instances.has(o) || (alt && instances.has(alt))) continue;
     instances.add(o);
   }
-  return { component, count: instances.size };
+  // Defined in a package (its JSX ran in node_modules): the source isn't in this project
+  const url = creatorUrl((fiberOf(el) as (Fiber & { _debugStack?: { stack?: string } }) | null)?._debugStack?.stack);
+  const pkg = url && isPackageUrl(url) ? packageOfUrl(url) ?? 'a package' : undefined;
+  return { component, count: instances.size, ...(pkg ? { package: pkg } : {}) };
 }
 
 /**

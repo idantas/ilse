@@ -188,6 +188,9 @@ export function sharedScope(source: Annotation['source'], cwd: string): Annotati
 export function swapMatchesScope(annotation: Annotation): boolean {
   const scope = annotation.scope;
   if (!scope) return true;
+  // All of a package's component: its definition isn't in the project, and a project file whose
+  // owner has the same name is a different component — no class swap there, the agent decides
+  if (scope.choice === 'all' && scope.package) return false;
   const insideComponent = annotation.source?.[0]?.owner === scope.component;
   return scope.choice === 'all' ? insideComponent : !insideComponent;
 }
@@ -208,6 +211,14 @@ export function formatScope(annotation: Annotation): string | undefined {
   if (!scope) return undefined;
   const c = `<${scope.component}>`;
   const reach = [`${scope.count} on this screen`, scope.uses ? `written in ${scope.uses} places in the code` : ''].filter(Boolean).join(', ');
+  if (scope.choice === 'all' && scope.package) {
+    // Its definition is compiled in node_modules: editing a same-named file of the project would
+    // change a component that isn't on screen
+    return [
+      `**Scope: ALL ${c}** (${reach}). ${c} on screen is defined in the package \`${scope.package}\` (node_modules), not in this project: its source isn't here.`,
+      `Do not edit node_modules, and do not edit another file of this project in its place (a same-named component here is a different component). If every usage can take the change through a prop or className, apply it at each usage; otherwise make no change and say that ${c} must be changed in \`${scope.package}\`.`,
+    ].join('\n');
+  }
   if (scope.choice === 'all') {
     return `**Scope: ALL ${c}** (${reach}). The designer wants this on every ${c}: change the component's own definition so all instances get it — not just this usage.`;
   }

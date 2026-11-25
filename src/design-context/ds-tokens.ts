@@ -10,7 +10,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { CSS_CANDIDATES, type DetectedToken } from '../setup/token-detect.js';
+import { themeCss, type DetectedToken } from '../setup/token-detect.js';
 
 export interface DsToken {
   name: string;
@@ -75,10 +75,7 @@ export function modeOf(b: Pick<Block, 'selector' | 'media'>): string | null {
 }
 
 function cssOf(cwd: string): string | null {
-  for (const f of CSS_CANDIDATES) {
-    try { return readFileSync(join(cwd, f), 'utf8'); } catch { /* next */ }
-  }
-  return null;
+  return themeCss(cwd);
 }
 
 /** `var(--x)` (with or without a fallback), followed through other vars */
@@ -137,6 +134,30 @@ const LAYOUTS = [
   'pages/_app.tsx', 'pages/_app.jsx', 'src/pages/_app.tsx', 'src/pages/_app.jsx',
   'app/fonts.ts', 'src/app/fonts.ts', 'lib/fonts.ts', 'src/lib/fonts.ts', 'src/fonts.ts',
 ];
+/** Tailwind's own stacks: what a Tailwind page shows when the project loads no font */
+export const SYSTEM_SANS = 'ui-sans-serif, system-ui, sans-serif';
+export const SYSTEM_MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+const HTML_PAGES = ['index.html', 'src/index.html', 'public/index.html', 'app/index.html', '.storybook/preview-head.html'];
+const titled = (slug: string) => slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+/** Families a page loads outside next/font: a Google Fonts `<link>` or `@import`, an `@fontsource` package */
+export function loadedFamilies(cwd: string, css: string | null): string[] {
+  const out = new Set<string>();
+  let text = css ?? '';
+  for (const f of HTML_PAGES) { try { text += '\n' + readFileSync(join(cwd, f), 'utf8'); } catch { /* absent */ } }
+  for (const m of text.matchAll(/fonts\.googleapis\.com\/css2?\?([^"')\s>]+)/g)) {
+    for (const f of m[1].replace(/&amp;/g, '&').matchAll(/(?:^|&)family=([^:&]+)/g)) out.add(decodeURIComponent(f[1].replace(/\+/g, ' ')));
+  }
+  try {
+    const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8')) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })) {
+      const m = dep.match(/^@fontsource(?:-variable)?\/([\w-]+)$/);
+      if (m) out.add(titled(m[1]));
+    }
+  } catch { /* no package.json */ }
+  return [...out];
+}
+
 const GENERIC = /^(sans-serif|serif|monospace|cursive|fantasy|system-ui|ui-(sans-serif|serif|monospace|rounded)|-apple-system|BlinkMacSystemFont|inherit|initial)$/i;
 const kebab = (s: string) => s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
 
@@ -179,6 +200,17 @@ export function fontTokens(cwd: string, css = cssOf(cwd)): DsToken[] {
   }
   // No aliases in the CSS: the fonts the app loads, by their own variable
   if (!out.length) for (const [k, family] of loaded) out.push({ name: `font.${k.replace(/^font-/, '')}`, value: family, type: 'font' });
+  // Loaded another way: a Google Fonts link in index.html (Vite, Storybook), an @fontsource package
+  if (!out.length) for (const family of loadedFamilies(cwd, css)) out.push({ name: `font.${kebab(family).replace(/\s+/g, '-')}`, value: family, type: 'font' });
+  // Nothing loaded at all: the page shows the system's face. Said as Ilse's reading, not a token the
+  // project declares, so a tool reading the DS neither asks nor invents one. A font named some way
+  // this doesn't read (a `--font-*`, a v3 config's fontFamily, a body font-family) is never "none"
+  if (!out.length && css && tailwindMajor(cwd)) {
+    const named = /--font-[\w-]+\s*:/.test(css) || /(?:html|body|:root)\s*\{[^}]*font-family\s*:/.test(css)
+      || ['tailwind.config.ts', 'tailwind.config.js', 'tailwind.config.mjs', 'tailwind.config.cjs'].some(f => { try { return /fontFamily/.test(readFileSync(join(cwd, f), 'utf8')); } catch { return false; } });
+    const why = 'No font is loaded: the page shows the system\'s (read by Ilse, not declared by the project).';
+    if (!named) out.push({ name: 'font.sans', value: SYSTEM_SANS, type: 'font', description: why }, { name: 'font.mono', value: SYSTEM_MONO, type: 'font', description: why });
+  }
   return out;
 }
 

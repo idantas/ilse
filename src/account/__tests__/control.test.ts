@@ -5,9 +5,12 @@ const session = vi.hoisted(() => ({
   login: vi.fn(),
   logout: vi.fn(async () => true),
 }));
-const store = vi.hoisted(() => ({ email: null as string | null }));
+const store = vi.hoisted(() => ({ email: null as string | null, license: null as string | null }));
 vi.mock('../session.js', () => session);
-vi.mock('../store.js', () => ({ loadAccount: () => (store.email ? { email: store.email, token: 't', connectedAt: '' } : null) }));
+vi.mock('../store.js', () => ({
+  loadAccount: () => (store.email ? { email: store.email, token: 't', connectedAt: '' } : null),
+  readLicense: () => store.license,
+}));
 
 const { createAccountControl } = await import('../control.js');
 
@@ -42,7 +45,7 @@ describe('account control (toolbar sign-in)', () => {
     store.email = 'a@b.co';
     finish({ status: 'ok', email: 'a@b.co' });
     await new Promise((r) => setTimeout(r, 0));
-    expect(control.state()).toEqual({ email: 'a@b.co', pending: null, last: 'ok', restartNeeded: true });
+    expect(control.state()).toEqual({ email: 'a@b.co', pending: null, last: 'ok', restartNeeded: true, installing: false, installFailed: false });
   });
 
   it('asks for a restart only when Pro is installed and not running yet', () => {
@@ -60,5 +63,42 @@ describe('account control (toolbar sign-in)', () => {
     control.login();
     control.login();
     expect(session.login).toHaveBeenCalledTimes(1);
+  });
+
+  it('installs Pro after sign-in when the account has it and the machine does not', async () => {
+    store.email = null;
+    store.license = 'signed-license';
+    session.login.mockReset();
+    session.login.mockImplementation(async () => { store.email = 'a@b.co'; return { status: 'ok', email: 'a@b.co' }; });
+    let done!: (v: boolean) => void;
+    const installPro = vi.fn(() => new Promise<boolean>((r) => { done = r; }));
+    const { control } = make({ proInstalled: false, installPro });
+    control.login();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(installPro).toHaveBeenCalledTimes(1);
+    expect(control.state()).toMatchObject({ installing: true, restartNeeded: false });
+    done(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(control.state()).toMatchObject({ installing: false, installFailed: false, restartNeeded: true });
+  });
+
+  it('says so when the install fails, and installs nothing for a free account', async () => {
+    store.email = null;
+    store.license = 'signed-license';
+    session.login.mockReset();
+    session.login.mockImplementation(async () => { store.email = 'a@b.co'; return { status: 'ok', email: 'a@b.co' }; });
+    const failing = make({ proInstalled: false, installPro: async () => false });
+    failing.control.login();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(failing.control.state()).toMatchObject({ installing: false, installFailed: true, restartNeeded: false });
+
+    store.email = null;
+    store.license = null;
+    const installPro = vi.fn(async () => true);
+    const free = make({ proInstalled: false, installPro });
+    free.control.login();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(installPro).not.toHaveBeenCalled();
   });
 });

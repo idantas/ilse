@@ -11,7 +11,7 @@ export type AnnotationStatus = 'pending' | 'sent' | 'resolved';
 
 // What the designer wants the agent to do
 // ask / approve require Thread UI (roadmap Phase 2) — not yet active
-export type AnnotationIntent = 'fix' | 'change' | 'ask' | 'approve' | 'create' | 'move' | 'resize' | 'chat' | 'analyze' | 'style';
+export type AnnotationIntent = 'fix' | 'change' | 'ask' | 'approve' | 'create' | 'move' | 'resize' | 'chat' | 'analyze' | 'style' | 'componentize';
 
 // How critical the annotation is
 export type AnnotationSeverity = 'blocking' | 'important' | 'suggestion';
@@ -76,6 +76,8 @@ export interface Annotation {
     component: string; count: number; choice: 'one' | 'all';
     /** Places the component is written in the code — a single instance on screen can still be shared */
     uses?: number;
+    /** The component is defined in this package (node_modules): its source isn't in the project */
+    package?: string;
   };
   /**
    * The element is inside a copy Ilse put on the page (a dropped/duplicated component not yet

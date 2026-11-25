@@ -5,8 +5,9 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { readDesignMd } from './design-md.js';
+import { connectedDs, exportedFile, packageName, workspaceDirs } from '../design-context/ds-source.js';
 
 export interface DetectedToken {
   name: string;
@@ -91,37 +92,77 @@ export const CSS_CANDIDATES = [
   'src/index.css', 'src/app/layout.css',
 ];
 
-function extractCSSVariableTokens(cwd: string): DetectedToken[] | null {
-  for (const file of CSS_CANDIDATES) {
-    const content = readFile(join(cwd, file));
-    if (!content) continue;
+/**
+ * A stylesheet with its local `@import`s put in place, as the browser reads it. A theme often
+ * lives in its own file (`@import '../styles/theme.css'` in globals.css): seen live, a project's
+ * colours were all there and the DS showed none. Packages (`@import 'tailwindcss'`) stay out.
+ */
+export function withImports(file: string, depth = 0, seen = new Set<string>(), pkg?: (spec: string) => string | null): string | null {
+  const content = readFile(file);
+  if (content === null) return null;
+  if (depth > 4 || seen.has(file)) return '';
+  seen.add(file);
+  return content.replace(/@import\s+(?:url\()?\s*['"]([^'"]+)['"]\s*\)?[^;]*;/g, (whole, spec: string) => {
+    // A package's stylesheet only when it's the connected design system's theme (`@acme/ui/theme.css`)
+    const target = /^\.{1,2}\//.test(spec) ? resolve(dirname(file), spec) : pkg?.(spec) ?? null;
+    if (!target) return whole;
+    const inner = withImports(target, depth + 1, seen, pkg);
+    return inner === null ? whole : inner;
+  });
+}
 
-    const tokens: DetectedToken[] = [];
+/** `@acme/ui/theme.css` → its file, when `@acme/ui` is the project's connected design system */
+function dsImports(cwd: string): ((spec: string) => string | null) | undefined {
+  const ds = connectedDs(cwd);
+  if (!ds) return undefined;
+  return (spec) => packageName(spec) === ds.name ? exportedFile(ds.root, spec.slice(ds.name.length).replace(/^\//, '')) : null;
+}
 
-    // Extract --color-* or --*: <value> from :root / @theme
-    const varMatches = content.matchAll(/--([a-zA-Z][\w-]*)\s*:\s*([^;]+);/g);
-    const seen = new Set<string>();
-    for (const m of varMatches) {
-      const name = m[1].trim();
-      const value = m[2].trim();
-
-      // `--color-primary: var(--primary)` is an alias, not a value. Skipping it
-      // keeps the real declaration (`--primary: oklch(...)`) as the token.
-      if (value.startsWith('var(')) continue;
-      if (seen.has(name)) continue;
-
-      if (isColorValue(value)) {
-        seen.add(name);
-        tokens.push({ name: `color.${name}`, value, type: 'color' });
-      } else if (/^\d+(\.\d+)?(px|rem|em)$/.test(value)) {
-        seen.add(name);
-        tokens.push({ name: `spacing.${name}`, value, type: 'spacing' });
-      }
+/** The project's main stylesheet, imports included (also read by the DS for themes and fonts) */
+export function themeCss(cwd: string): string | null {
+  const pkg = dsImports(cwd);
+  // At a monorepo's root the app's stylesheet is in a workspace (`web/src/app/globals.css`)
+  for (const dir of [cwd, ...workspaceDirs(cwd)]) {
+    for (const file of CSS_CANDIDATES) {
+      const css = withImports(join(dir, file), 0, new Set(), pkg);
+      if (css !== null) return css;
     }
-
-    if (tokens.length > 0) return tokens;
   }
-  return null;
+  // No stylesheet of its own: the connected design system's theme is the project's
+  const ds = connectedDs(cwd);
+  return ds?.themeFile ? withImports(ds.themeFile) : null;
+}
+
+function extractCSSVariableTokens(cwd: string): DetectedToken[] | null {
+  const content = themeCss(cwd);
+  if (!content) return null;
+
+  const tokens: DetectedToken[] = [];
+
+  // Extract --color-* or --*: <value> from :root / @theme
+  const varMatches = content.matchAll(/--([a-zA-Z][\w-]*)\s*:\s*([^;]+);/g);
+  const seen = new Set<string>();
+  for (const m of varMatches) {
+    const name = m[1].trim();
+    const value = m[2].trim();
+
+    // `--color-primary: var(--primary)` is an alias, not a value. Skipping it
+    // keeps the real declaration (`--primary: oklch(...)`) as the token.
+    if (value.startsWith('var(')) continue;
+    if (seen.has(name)) continue;
+
+    if (isColorValue(value)) {
+      seen.add(name);
+      tokens.push({ name: `color.${name}`, value, type: 'color' });
+    } else if (/^\d+(\.\d+)?(px|rem|em)$/.test(value)) {
+      seen.add(name);
+      // Tailwind v4 names font sizes `--text-*` (and their line heights `--text-*--line-height`)
+      if (/^text-/.test(name)) { if (!name.includes('--')) tokens.push({ name: `typography.${name.slice(5)}`, value, type: 'typography' }); }
+      else tokens.push({ name: `spacing.${name}`, value, type: 'spacing' });
+    }
+  }
+
+  return tokens.length > 0 ? tokens : null;
 }
 
 // ── W3C tokens.json ────────────────────────────────────────────────────────
@@ -189,7 +230,9 @@ export function detectTokens(cwd: string = process.cwd()): TokenDetectionResult 
   const found = detectCodeTokens(cwd);
   // DESIGN.md adds what the code doesn't declare (yet); the code wins on a clash
   const design = readDesignMd(cwd);
-  if (!design || design.tokens.length === 0) return found;
+  // Ilse's own DESIGN.md is written from these tokens: reading it back would keep a token the
+  // code no longer has (or one read wrong once) in the DS forever
+  if (!design || design.tokens.length === 0 || design.path === '.ilse/ds/DESIGN.md') return found;
   const label = (t: DetectedToken) => t.name.replace(/^[a-z]+\./, '');
   const have = new Set(found.tokens.map(t => `${t.type}:${label(t)}`));
   const extra = design.tokens.filter(t => !have.has(`${t.type}:${label(t)}`));
@@ -212,6 +255,15 @@ function detectCodeTokens(cwd: string): TokenDetectionResult {
 
   const css = extractCSSVariableTokens(cwd);
   if (css) return { source: 'globals.css', tokens: css, libraries };
+
+  // The connected design system's W3C tokens, when the project's CSS gave none
+  const ds = connectedDs(cwd);
+  const json = ds?.tokensFile ? readJSON(ds.tokensFile) : null;
+  if (ds && json) {
+    const tokens: DetectedToken[] = [];
+    walkW3C(json, [], tokens);
+    if (tokens.length) return { source: `${ds.name} tokens.json`, tokens, libraries };
+  }
 
   return { source: 'none', tokens: [], libraries };
 }

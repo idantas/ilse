@@ -8,11 +8,12 @@
  * Laid out like the expanded test report: centered over a dimmed page, the same size.
  */
 
-import React, { Fragment, useEffect, useMemo, useState } from 'react';
+import React, { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { IconX } from '@tabler/icons-react';
 import { color, font, ilse, proText, radius, shadow } from './tokens.js';
-import { t } from '../i18n/index.js';
+import { t, type MessageKey } from '../i18n/index.js';
+import { groupColors, type ColorGroup } from './color-groups.js';
 
 /** The bridge's `ds_view` (ds-export.ts DsView) */
 export interface DsViewData {
@@ -26,6 +27,11 @@ export interface DsViewData {
   /** Pro's tokens file per theme (`tokens.dark.json`) */
   modes?: Array<{ name: string; content: string }>;
   themes?: Array<{ name: string; values: Record<string, string> }>;
+  /** The copy published for people without Ilse */
+  /** `path`: where the copy really is ("spine.ds" alone doesn't say), home shown as ~ */
+  publish?: { to: string | null; suggested: string; path?: string };
+  /** Why the last publish didn't happen (publishProblem's code) */
+  publishError?: string;
 }
 
 /** The fresh-agent test's state in the toolbar (Pro) */
@@ -119,22 +125,28 @@ const pre: React.CSSProperties = {
 type SavePicker = (o: { suggestedName: string; types: { description: string; accept: Record<string, string[]> }[] }) =>
   Promise<{ createWritable(): Promise<{ write(d: Blob): Promise<void>; close(): Promise<void> }> }>;
 
+type Saved = 'saved' | 'downloaded' | 'cancelled';
+
+const PICKER_TYPES: Record<string, { description: string; accept: Record<string, string[]> }> = {
+  json: { description: 'JSON', accept: { 'application/json': ['.json'] } },
+  md: { description: 'Markdown', accept: { 'text/markdown': ['.md'] } },
+  zip: { description: 'ZIP', accept: { 'application/zip': ['.zip'] } },
+};
+
 /** Asks where to save (Chrome/Edge's save dialog); browsers without it download to the usual folder */
-async function save(name: string, content: string) {
-  const json = name.endsWith('.json');
-  const blob = new Blob([content], { type: json ? 'application/json' : 'text/markdown' });
+async function save(name: string, content: string | Blob): Promise<Saved> {
+  const ext = name.split('.').pop() ?? 'md';
+  const blob = typeof content === 'string' ? new Blob([content], { type: ext === 'json' ? 'application/json' : 'text/markdown' }) : content;
   const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;
   if (picker) {
     try {
-      const handle = await picker({ suggestedName: name, types: [json
-        ? { description: 'JSON', accept: { 'application/json': ['.json'] } }
-        : { description: 'Markdown', accept: { 'text/markdown': ['.md'] } }] });
+      const handle = await picker({ suggestedName: name, types: [PICKER_TYPES[ext] ?? PICKER_TYPES.md] });
       const out = await handle.createWritable();
       await out.write(blob);
       await out.close();
-      return;
+      return 'saved';
     } catch (e) {
-      if ((e as Error).name === 'AbortError') return; // closed the dialog: nothing saved, on purpose
+      if ((e as Error).name === 'AbortError') return 'cancelled'; // closed the dialog: nothing saved, on purpose
     }
   }
   const url = URL.createObjectURL(blob);
@@ -143,13 +155,60 @@ async function save(name: string, content: string) {
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return 'downloaded';
 }
 
-function CopyButton({ text, children, style }: { text: string; children: React.ReactNode; style?: React.CSSProperties }) {
+/** One Download, two ways: the file for a tool (DESIGN.md for Claude Design, v0, an agent) or everything as a .zip */
+function DownloadMenu({ options }: { options: Array<{ label: string; hint: string; run: () => Promise<Saved | 'failed'> }> }) {
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<'idle' | 'busy' | Saved | 'failed'>('idle');
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); } };
+    window.addEventListener('mousedown', away, true);
+    window.addEventListener('keydown', esc, true);
+    return () => { window.removeEventListener('mousedown', away, true); window.removeEventListener('keydown', esc, true); };
+  }, [open]);
+  const run = async (o: typeof options[number]) => {
+    setOpen(false);
+    setState('busy');
+    const out = await o.run().catch(() => 'failed' as const);
+    setState(out === 'cancelled' ? 'idle' : out);
+    if (out !== 'cancelled') setTimeout(() => setState('idle'), 4000);
+  };
+  const label = state === 'busy' ? '…' : state === 'saved' ? `✓ ${t('dsv.saved')}` : state === 'downloaded' ? `✓ ${t('dsv.downloaded')}` : state === 'failed' ? t('dsv.saveFailed') : `${t('dsv.download')} ▾`;
+  return (
+    <span ref={ref} style={{ position: 'relative' }}>
+      <button onClick={() => { if (state !== 'busy') setOpen(v => !v); }} aria-haspopup="menu" aria-expanded={open} aria-live="polite" style={{ ...primary, whiteSpace: 'nowrap' }}>{label}</button>
+      {open && (
+        <span role="menu" style={{
+          position: 'absolute', right: 0, bottom: 'calc(100% + 6px)', width: 280, padding: 4, display: 'flex', flexDirection: 'column',
+          background: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.md, boxShadow: shadow.lg, zIndex: 3,
+        }}>
+          {options.map(o => (
+            <button key={o.label} role="menuitem" onClick={() => void run(o)} style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '6px 8px', border: 'none', borderRadius: radius.sm,
+              background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: font.sans,
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = color.muted; }} onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: color.foreground }}>{o.label}</span>
+              <span style={{ fontSize: 10.5, lineHeight: 1.4, color: color.mutedForeground }}>{o.hint}</span>
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function CopyButton({ text, children, style, title }: { text: string; children: React.ReactNode; style?: React.CSSProperties; title?: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
       onClick={() => { void navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1400); }); }}
+      title={title}
       style={{ ...button, ...style }}
     >{done ? `✓ ${t('dsv.copied')}` : children}</button>
   );
@@ -169,6 +228,43 @@ function ForWhom({ who, how, action, quiet }: { who: string; how: string; action
   );
 }
 
+/** A copy of the DS, with a README, in a folder the person names: for teammates and tools without Ilse */
+function PublishRow({ publish, error, onPublish, onReveal }: { publish: NonNullable<DsViewData['publish']>; error?: string; onPublish: (to: string | null) => void; onReveal?: () => void }) {
+  const [editing, setEditing] = useState(!publish.to);
+  const [to, setTo] = useState(publish.to ?? '');
+  useEffect(() => { if (publish.to && !error) setEditing(false); }, [publish.to, error]);
+  const go = () => onPublish(to.trim() || publish.suggested);
+  return (
+    <div style={{ paddingBottom: 10, marginBottom: 12, borderBottom: `1px solid ${color.border}`, fontSize: 11, lineHeight: 1.45 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ color: color.foreground }}>{t('dsv.publishWho')}</div>
+          <div style={{ color: color.mutedForeground, marginTop: 2 }}>
+            {publish.to && !editing ? t('dsv.publishedHow', { folder: publish.path ?? publish.to }) : t('dsv.publishHow')}
+          </div>
+        </div>
+        {publish.to && !editing ? (
+          <span style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+            <span title={publish.path} style={{ color: ilse.brand, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ {publish.to}</span>
+            {onReveal && <button onClick={onReveal} style={button}>{t('dsv.publishOpen')}</button>}
+            <button onClick={() => { setTo(publish.to ?? ''); setEditing(true); }} style={button}>{t('dsv.publishChange')}</button>
+            <button onClick={() => onPublish(null)} style={{ ...button, border: 'none', background: 'none', color: color.mutedForeground }}>{t('dsv.publishStop')}</button>
+          </span>
+        ) : (
+          <span style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+            <input value={to} onChange={e => setTo(e.target.value)} placeholder={publish.suggested}
+              onKeyDown={e => { if (e.key === 'Enter') go(); if (e.key === 'Escape' && publish.to) { e.stopPropagation(); setEditing(false); } }}
+              aria-label={t('dsv.publishFolder')} title={t('dsv.publishFolderHint')}
+              style={{ ...field, width: 170, padding: '4px 6px', fontFamily: font.mono }} />
+            <button onClick={go} style={primary}>{t('dsv.publish')}</button>
+          </span>
+        )}
+      </div>
+      {error && <div role="alert" style={{ color: color.destructive, marginTop: 6 }}>{t(`cli.dsPublish.${error}` as Parameters<typeof t>[0], { folder: to.trim() || publish.suggested })}</div>}
+    </div>
+  );
+}
+
 const group = (name: string) => name.split('.')[0];
 
 /** DESIGN.md drawn as a DS: the tokens as swatches and scales, the components with their variants */
@@ -180,6 +276,8 @@ export interface DsEditing {
   onSuggest?: (name: string) => void;
   /** The draft that came back (or 'loading' / null when the agent had nothing) */
   suggestion?: { name: string; note: { whenToUse: string; avoid?: string } | null | 'loading' } | null;
+  /** Pro's agent is writing the missing notes right now: an empty one says so instead of asking */
+  describing?: boolean;
 }
 
 export const field: React.CSSProperties = {
@@ -251,6 +349,7 @@ function ComponentNote({ c, editing, indent }: { c: DsViewData['components'][num
     );
   }
   if (!editing) return null;
+  if (editing.describing && sug === undefined) return <div style={{ ...box, color: color.mutedForeground }}>{t('dsv.describing')}</div>;
   // No reasoning yet: the DS asks for one — every component says why it exists
   return (
     <div style={{ ...box, display: 'flex', gap: 10, alignItems: 'center', color: color.mutedForeground }}>
@@ -277,6 +376,175 @@ function TokenNote({ tk, editing, onClose }: { tk: DsViewData['tokens'][number];
       </span>
       <textarea rows={2} value={text} onChange={e => setText(e.target.value)} placeholder={t('dsv.tokenPlaceholder')} style={field} />
       <span><button style={saveBtn} onClick={() => { editing.onEdit('token', tk.name, { description: text }); onClose(); }}>{t('dsv.save')}</button></span>
+    </div>
+  );
+}
+
+// ── Colours: by role, per theme ───────────────────────────────────────────
+
+/** A colour as a person reads it: #RRGGBB (and its opacity), whatever the CSS wrote (oklch, rgb()) */
+const hexCache = new Map<string, string>();
+function hexOf(value: string): string {
+  const hit = hexCache.get(value);
+  if (hit !== undefined) return hit;
+  let out = value;
+  try {
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+    if (ctx) {
+      ctx.fillStyle = '#010203';
+      ctx.fillStyle = value;
+      // The browser kept the probe: not a colour it can draw
+      if (ctx.fillStyle !== '#010203' || value.trim().toLowerCase() === '#010203') {
+        ctx.clearRect(0, 0, 1, 1);
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+        out = '#' + [r, g, b].map(n => n.toString(16).padStart(2, '0')).join('').toUpperCase() + (a < 255 ? ` ${Math.round(a / 2.55)}%` : '');
+      }
+    }
+  } catch { /* no canvas: the authored value */ }
+  hexCache.set(value, out);
+  return out;
+}
+
+// See-through colours over a checkerboard, so 4% black reads as "barely there", not white
+const CHECKER = 'repeating-conic-gradient(#d4d4d4 0% 25%, #fff 0% 50%) 0 0 / 8px 8px';
+
+function Swatch({ value, on, size }: { value: string; on?: string; size: number }) {
+  return (
+    <span style={{ width: size, height: size, flexShrink: 0, borderRadius: radius.md, border: `1px solid ${color.border}`, background: CHECKER, overflow: 'hidden', display: 'flex' }}>
+      <span style={{ flex: 1, background: value, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size > 26 ? 12 : 10, fontWeight: 600, color: on }}>
+        {on ? 'Aa' : null}
+      </span>
+    </span>
+  );
+}
+
+const THEME_KEY = 'ilse-ds-theme';
+
+// ── The window's size: the person's, per browser ──────────────────────────
+
+const SIZE_KEY = 'ilse-ds-window';
+const MIN = { w: 480, h: 360 };
+
+function readSize(): { w: number; h: number } | null {
+  try {
+    const s = JSON.parse(localStorage.getItem(SIZE_KEY) ?? 'null') as { w?: unknown; h?: unknown } | null;
+    return s && typeof s.w === 'number' && typeof s.h === 'number' ? { w: s.w, h: s.h } : null;
+  } catch { return null; }
+}
+
+/**
+ * Edges and corner that resize the window. It stays centred, so a drag grows it on both sides:
+ * twice the drag, and the edge stays under the pointer.
+ */
+function ResizeHandles({ box, onSize }: { box: () => HTMLElement | null; onSize: (s: { w: number; h: number } | null) => void }) {
+  const start = (e: React.PointerEvent, dx: 0 | 1, dy: 0 | 1) => {
+    const el = box();
+    if (!el || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const r = el.getBoundingClientRect();
+    const x0 = e.clientX, y0 = e.clientY;
+    let last = { w: r.width, h: r.height };
+    const move = (ev: PointerEvent) => {
+      last = {
+        w: Math.round(Math.min(Math.max(r.width + dx * 2 * (ev.clientX - x0), MIN.w), window.innerWidth - 16)),
+        h: Math.round(Math.min(Math.max(r.height + dy * 2 * (ev.clientY - y0), MIN.h), window.innerHeight - 16)),
+      };
+      onSize(last);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      document.body.style.cursor = '';
+      try { localStorage.setItem(SIZE_KEY, JSON.stringify(last)); } catch { /* not kept */ }
+    };
+    document.body.style.cursor = dx && dy ? 'nwse-resize' : dx ? 'ew-resize' : 'ns-resize';
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+  };
+  const reset = () => { onSize(null); try { localStorage.removeItem(SIZE_KEY); } catch { /* not kept */ } };
+  const edge: React.CSSProperties = { position: 'absolute', zIndex: 2, touchAction: 'none' };
+  return (
+    <>
+      <span aria-hidden onPointerDown={e => start(e, 1, 0)} onDoubleClick={reset} style={{ ...edge, top: 12, bottom: 12, right: 0, width: 6, cursor: 'ew-resize' }} />
+      <span aria-hidden onPointerDown={e => start(e, 0, 1)} onDoubleClick={reset} style={{ ...edge, left: 12, right: 12, bottom: 0, height: 6, cursor: 'ns-resize' }} />
+      <span role="separator" aria-label={t('dsv.resize')} title={t('dsv.resize')} onPointerDown={e => start(e, 1, 1)} onDoubleClick={reset}
+        style={{ ...edge, right: 2, bottom: 2, width: 14, height: 14, cursor: 'nwse-resize', color: color.mutedForeground, display: 'flex' }}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"><path d="M12 6 6 12M12 10l-2 2" /></svg>
+      </span>
+    </>
+  );
+}
+const roleTitle = (g: ColorGroup) => g.role === 'family' ? (g.family ?? '').replace(/^./, c => c.toUpperCase()) : t(`dsv.role.${g.role}` as MessageKey);
+
+function ColorSection({ data, pick, editing }: {
+  data: DsViewData;
+  pick: (tk: { name: string; description?: string }) => Record<string, unknown>;
+  editing?: DsEditing;
+}) {
+  const colors = data.tokens.filter(tk => group(tk.name) === 'color');
+  const themes = (data.themes ?? []).filter(m => Object.keys(m.values).some(k => group(k) === 'color'));
+  const tabs = themes.length ? ['base', ...themes.map(m => m.name), 'all'] : [];
+  const [tab, setTab] = useState<string>(() => {
+    try { const saved = localStorage.getItem(THEME_KEY); if (saved && tabs.includes(saved)) return saved; } catch { /* per-browser preference only */ }
+    return 'base';
+  });
+  const choose = (id: string) => { setTab(id); try { localStorage.setItem(THEME_KEY, id); } catch { /* not kept */ } };
+  const byName = new Map(colors.map(tk => [tk.name.slice(tk.name.indexOf('.') + 1), tk]));
+  const groups = useMemo(() => groupColors([...byName.keys()]), [data.tokens]);
+  const valueIn = (theme: string, name: string) => {
+    const base = byName.get(name)?.value ?? '';
+    return theme === 'base' ? base : themes.find(m => m.name === theme)?.values[`color.${name}`] ?? base;
+  };
+  const columns = tab === 'all' ? ['base', ...themes.map(m => m.name)] : [tab];
+  const themeLabel = (id: string) => id === 'base' ? t('dsv.light') : id === 'dark' ? t('dsv.dark') : id === 'all' ? t('dsv.allThemes') : id;
+  const all = tab === 'all';
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <div style={{ ...label, flex: 1 }}>{t('dsv.colors')}</div>
+        {tabs.length > 0 && (
+          <div role="tablist" aria-label={t('dsv.themes')} style={{ display: 'flex', gap: 2, padding: 2, borderRadius: radius.sm, background: color.muted }}>
+            {tabs.map(id => (
+              <button key={id} role="tab" aria-selected={tab === id} onClick={() => choose(id)} style={{
+                fontSize: 10.5, fontFamily: font.sans, padding: '2px 10px', border: 'none', borderRadius: radius.sm - 2, cursor: 'pointer',
+                background: tab === id ? color.background : 'transparent', color: tab === id ? color.foreground : color.mutedForeground,
+                fontWeight: tab === id ? 600 : 400, boxShadow: tab === id ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+              }}>{themeLabel(id)}</button>
+            ))}
+          </div>
+        )}
+      </div>
+      {groups.map(g => (
+        <div key={g.family ?? g.role} style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6, fontSize: 11, fontWeight: 600, color: color.foreground }}>
+            {roleTitle(g)}
+            {all && <span style={{ marginLeft: 'auto', fontSize: 9.5, fontWeight: 400, color: color.mutedForeground }}>{columns.map(themeLabel).join(' · ')}</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, minmax(${all ? 190 : 170}px, 1fr))`, gap: 8 }}>
+            {g.items.map(it => {
+              const tk = byName.get(it.name)!;
+              const shown = columns.map(c => hexOf(valueIn(c, it.name)));
+              return (
+                <span key={it.name} {...pick(tk)} title={[tk.description, ...columns.map(c => `${themeLabel(c)}: ${valueIn(c, it.name)}`), it.on ? `on: ${it.on}` : ''].filter(Boolean).join('\n')}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, ...(editing ? { cursor: 'pointer' } : {}) }}>
+                  <span style={{ display: 'flex', gap: 3 }}>
+                    {columns.map(c => <Swatch key={c} value={valueIn(c, it.name)} on={it.on ? valueIn(c, it.on) : undefined} size={all ? 26 : 32} />)}
+                  </span>
+                  <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <span style={{ fontSize: 11, color: color.foreground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</span>
+                    <span style={{ fontFamily: font.mono, fontSize: 9.5, color: color.mutedForeground, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {all && shown.every(v => v === shown[0]) ? shown[0] : shown.join(' · ')}
+                    </span>
+                  </span>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -326,16 +594,7 @@ function Visual({ data, editing }: { data: DsViewData; editing?: DsEditing }) {
     <div>
       {editing && pickedToken && <TokenNote tk={pickedToken} editing={editing} onClose={() => setPicked(null)} />}
       {editing && !pickedToken && <div style={{ fontSize: 10.5, color: color.mutedForeground, margin: '0 0 10px' }}>{t('dsv.editHint')}</div>}
-      {colors.length > 0 && section(t('dsv.colors'), (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 6 }}>
-          {colors.map(tk => (
-            <span key={tk.name} style={chip} {...pick(tk)}>
-              <span style={{ width: 18, height: 18, borderRadius: radius.sm, background: tk.value, border: `1px solid ${color.border}`, flexShrink: 0 }} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{short(tk.name)} <span style={value}>{tk.value}</span></span>
-            </span>
-          ))}
-        </div>
-      ))}
+      {colors.length > 0 && <ColorSection data={data} pick={pick} editing={editing} />}
       {spacing.length > 0 && section(t('dsv.spacing'), (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', alignItems: 'flex-end' }}>
           {spacing.map(tk => (
@@ -371,20 +630,16 @@ function Visual({ data, editing }: { data: DsViewData; editing?: DsEditing }) {
           {fonts.map(tk => (
             <span key={tk.name} style={{ ...chip, gap: 10 }} {...pick(tk)}>
               {/* next/font renames the family on the page; its variable still points at it */}
-              <span style={{ fontSize: 16, lineHeight: 1.2, fontFamily: `"${tk.value}", var(--font-${short(tk.name)}), inherit` }}>Aa</span>
+              <span style={{ fontSize: 16, lineHeight: 1.2, fontFamily: tk.value.includes(',') ? tk.value : `"${tk.value}", var(--font-${short(tk.name)}), inherit` }}>Aa</span>
               {short(tk.name)} <span style={value}>{tk.value}</span>
             </span>
           ))}
         </div>
       ))}
-      {(data.themes ?? []).map(m => <Fragment key={m.name}>{section(t('dsv.theme', { name: m.name }), (
+      {/* Colours per theme are in the Colors tabs; what else a theme changes stays listed here */}
+      {(data.themes ?? []).map(m => ({ name: m.name, values: Object.entries(m.values).filter(([k]) => group(k) !== 'color') })).filter(m => m.values.length).map(m => <Fragment key={m.name}>{section(t('dsv.theme', { name: m.name }), (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
-          {Object.entries(m.values).map(([k, v]) => (
-            <span key={k} style={chip}>
-              {group(k) === 'color' && <span style={{ width: 18, height: 18, borderRadius: radius.sm, background: v, border: `1px solid ${color.border}`, flexShrink: 0 }} />}
-              {short(k)} <span style={value}>{v}</span>
-            </span>
-          ))}
+          {m.values.map(([k, v]) => <span key={k} style={chip}>{short(k)} <span style={value}>{v}</span></span>)}
         </div>
       ))}</Fragment>)}
       {other.length > 0 && section(t('dsv.otherTokens'), (
@@ -417,14 +672,20 @@ function shadcnExample(data: DsViewData): { ns: string; item: string } {
   } catch { return { ns: '@your-ds', item: 'button' }; }
 }
 
-export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, check, onCheck, onAddRule, editing }: {
-  data: DsViewData; justWritten: boolean; onClose: () => void; onExport: () => void; onLinkAgents: () => void;
+export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, onPublish, onReveal, onZip, check, onCheck, onAddRule, editing }: {
+  data: DsViewData; justWritten: boolean; onClose: () => void; onExport: () => void; onLinkAgents: () => void; onPublish?: (to: string | null) => void;
   editing?: DsEditing;
+  /** Opens the published copy's folder */
+  onReveal?: () => void;
+  /** The whole DS as a .zip (DESIGN.md, components/, tokens, registry, README) */
+  onZip?: () => Promise<{ name: string; data: string } | null>;
   /** Pro: the fresh-agent test */
   check: DsCheckState | null; onCheck: () => void; onAddRule: (rules: string[]) => void;
 }) {
   const [tab, setTab] = useState<Tab>('DESIGN.md');
   const [raw, setRaw] = useState(false);
+  const [size, setSize] = useState(readSize);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     window.addEventListener('keydown', esc, true);
@@ -437,14 +698,15 @@ export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, c
   const linked = data.agents?.linked ?? null;
   const modes = data.formats ? data.modes ?? [] : [];
   const target = data.agents?.target ?? 'AGENTS.md';
-  const agentsAction = linked
-    ? <span style={{ color: ilse.brand, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ {t('dsv.linked', { file: linked })}</span>
-    : (
-      <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-        <CopyButton text={t('dsv.agentsLine')} style={{ border: 'none', background: 'none', color: color.mutedForeground }}>{t('dsv.copyLine')}</CopyButton>
-        <button onClick={onLinkAgents} style={primary}>{t('dsv.link', { file: target })}</button>
-      </span>
-    );
+  // The prompt works linked or not: it also gets an agent that's already running to start using the DS now
+  const agentsAction = (
+    <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+      <CopyButton text={t('dsv.agentsPrompt', { file: linked ?? target })} title={t('dsv.copyPromptTip')} style={linked ? undefined : { border: 'none', background: 'none', color: color.mutedForeground }}>{t('dsv.copyPrompt')}</CopyButton>
+      {linked
+        ? <span style={{ color: ilse.brand, fontWeight: 600, whiteSpace: 'nowrap' }}>✓ {t('dsv.linked', { file: linked })}</span>
+        : <button onClick={onLinkAgents} style={primary}>{t('dsv.link', { file: target })}</button>}
+    </span>
+  );
   const about: Record<Tab, { who: string; how: string; action?: React.ReactNode; quiet?: boolean }> = {
     'DESIGN.md': { who: t('dsv.agents'), how: linked ? t('dsv.agentsLinkedHow') : t('dsv.agentsHow', { file: target }), action: agentsAction, quiet: true },
     'tokens.json': { who: t('dsv.figma'), how: t('dsv.figmaHow'), action: modes.length > 0 && (
@@ -462,8 +724,8 @@ export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, c
       onMouseDown={(e) => e.stopPropagation()}
       style={{ position: 'fixed', inset: 0, zIndex: 100010, background: 'rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: font.sans }}
     >
-      <div role="dialog" aria-label={t('dsv.title')} style={{
-        width: 'min(720px, calc(100vw - 32px))', height: 'min(720px, calc(100vh - 64px))', display: 'flex', flexDirection: 'column',
+      <div ref={dialogRef} role="dialog" aria-label={t('dsv.title')} style={{
+        width: `min(${size?.w ?? 720}px, calc(100vw - 16px))`, height: `min(${size?.h ?? 720}px, calc(100vh - 16px))`, display: 'flex', flexDirection: 'column', position: 'relative',
         background: color.popover, border: `1px solid ${color.border}`, borderRadius: radius.xl, boxShadow: shadow.xl, overflow: 'hidden',
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '12px 14px 8px', borderBottom: `1px solid ${color.border}` }}>
@@ -497,6 +759,7 @@ export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, c
 
         <div style={{ flex: 1, overflow: 'auto', padding: 14, borderTop: `1px solid ${color.border}` }}>
           <ForWhom {...about[tab]} />
+          {tab === 'DESIGN.md' && file && data.publish && onPublish && <PublishRow publish={data.publish} error={data.publishError} onPublish={onPublish} onReveal={onReveal} />}
           {locked ? (
             <div style={{ position: 'relative' }}>
               <pre aria-hidden style={{ ...pre, filter: 'blur(3px)', userSelect: 'none' }}>{sample(tab, data)}</pre>
@@ -525,9 +788,18 @@ export function DsViewer({ data, justWritten, onClose, onExport, onLinkAgents, c
             {tab === 'DESIGN.md' && <button onClick={() => setRaw(r => !r)} style={button}>{raw ? t('dsv.visual') : t('dsv.raw')}</button>}
             <span style={{ flex: 1, fontSize: 10, color: color.mutedForeground, fontFamily: font.mono, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{data.dir}/{file.name}</span>
             <CopyButton text={file.content}>{t('dsv.copy')}</CopyButton>
-            <button onClick={() => save(file.name, file.content)} style={primary}>{t('dsv.download')}</button>
+            <DownloadMenu options={[
+              { label: file.name, hint: t(tab === 'DESIGN.md' ? 'dsv.downloadForTool' : tab === 'tokens.json' ? 'dsv.downloadForFigma' : 'dsv.downloadForShadcn'), run: () => save(file.name, file.content) },
+              ...(onZip ? [{ label: t('dsv.downloadAll'), hint: t('dsv.downloadAllHint'), run: async (): Promise<Saved | 'failed'> => {
+                const zip = await onZip();
+                if (!zip) return 'failed';
+                const bytes = Uint8Array.from(atob(zip.data), c => c.charCodeAt(0));
+                return save(zip.name, new Blob([bytes], { type: 'application/zip' }));
+              } }] : []),
+            ]} />
           </div>
         )}
+        <ResizeHandles box={() => dialogRef.current} onSize={setSize} />
       </div>
     </div>,
     document.body,

@@ -127,6 +127,12 @@ export interface WsServerOptions {
   dsSuggest?: (name: string) => Promise<{ whenToUse: string; avoid?: string } | null>;
   /** The DS block added to AGENTS.md (or CLAUDE.md) — on the person's click */
   dsAgents?: () => string | null;
+  /** The copy for people without Ilse, published to a folder the person names (null stops it); the error code when it can't */
+  dsPublish?: (to: string | null) => { error?: string };
+  /** The whole DS as one .zip, for the window's download */
+  dsZip?: () => { name: string; data: Buffer } | null;
+  /** Opens the published copy's folder in the system's file manager */
+  dsReveal?: () => void;
   /** Pro: the fresh-agent test of the DS (a minute or two) */
   dsCheck?: () => Promise<unknown>;
   /** A rule from the test the person approved: kept, and the DS written again */
@@ -314,7 +320,11 @@ function parseScope(v: unknown): Annotation['scope'] {
   const s = v as { component?: unknown; count?: unknown; choice?: unknown } | undefined;
   if (!s || typeof s.component !== 'string' || typeof s.count !== 'number' || (s.choice !== 'one' && s.choice !== 'all')) return undefined;
   const uses = (s as { uses?: unknown }).uses;
-  return { component: s.component.slice(0, 80), count: s.count, choice: s.choice, ...(typeof uses === 'number' ? { uses } : {}) };
+  const pkg = (s as { package?: unknown }).package;
+  return {
+    component: s.component.slice(0, 80), count: s.count, choice: s.choice, ...(typeof uses === 'number' ? { uses } : {}),
+    ...(typeof pkg === 'string' && /^[@\w./ -]{1,100}$/.test(pkg) ? { package: pkg } : {}),
+  };
 }
 
 function safeApplied(options: WsServerOptions): string[] {
@@ -591,6 +601,29 @@ function handleMessage(ws: WebSocket, msg: Record<string, unknown>, options: WsS
           try { view = options.dsView?.() ?? null; } catch { /* unreadable */ }
           ws.send(JSON.stringify({ type: 'ds_view', view, rules }));
         });
+      break;
+    }
+
+    case 'ds_publish': {
+      const to = msg.to === null ? null : typeof msg.to === 'string' ? msg.to.slice(0, 500) : undefined;
+      if (to === undefined) break;
+      let error: string | undefined;
+      try { error = options.dsPublish?.(to)?.error; } catch { error = 'failed'; }
+      let view: unknown = null;
+      try { view = options.dsView?.() ?? null; } catch { /* unreadable */ }
+      ws.send(JSON.stringify({ type: 'ds_view', view, ...(error ? { publishError: error } : {}) }));
+      break;
+    }
+
+    case 'ds_zip': {
+      let zip: { name: string; data: Buffer } | null = null;
+      try { zip = options.dsZip?.() ?? null; } catch { /* no DS yet */ }
+      ws.send(JSON.stringify(zip ? { type: 'ds_zip', name: zip.name, data: zip.data.toString('base64') } : { type: 'ds_zip', error: true }));
+      break;
+    }
+
+    case 'ds_reveal': {
+      try { options.dsReveal?.(); } catch { /* no file manager */ }
       break;
     }
 
